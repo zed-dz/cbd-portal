@@ -254,7 +254,7 @@ export default function App() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (session) fetchWorker(session.user.email);
+      if (session) { setAuthLoading(true); fetchWorker(session.user.email); }
       else { setCurrentWorker(null); setAuthLoading(false); }
     });
 
@@ -312,7 +312,12 @@ export default function App() {
           error={loginError} loading={loginLoading}
           onSubmit={handleLogin}
         />
-      ) : currentWorker?.role === 'admin' ? (
+      ) : !currentWorker ? (
+        <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: C.bg, gap: 16 }}>
+          <Spinner size={36} />
+          <p style={{ color: C.textMuted, fontSize: 14 }}>Loading your profile…</p>
+        </div>
+      ) : currentWorker.role === 'admin' ? (
         <AdminPortal
           currentWorker={currentWorker}
           onSignOut={handleSignOut}
