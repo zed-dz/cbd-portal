@@ -238,9 +238,9 @@ export default function App() {
   }, []);
 
   const fetchWorker = useCallback(async (email) => {
-    const { data, error } = await supabase.from('workers').select('*').eq('email', email).single();
-    if (error) { showToast('Could not load worker profile: ' + error.message, 'error'); }
-    setCurrentWorker(data || null);
+    const { data, error } = await supabase.from('workers').select('*').eq('email', email).maybeSingle();
+    if (error) { showToast('Could not load profile: ' + error.message, 'error'); }
+    setCurrentWorker(data ?? null);
     setAuthLoading(false);
   }, [showToast]);
 
@@ -313,9 +313,12 @@ export default function App() {
           onSubmit={handleLogin}
         />
       ) : !currentWorker ? (
-        <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: C.bg, gap: 16 }}>
-          <Spinner size={36} />
-          <p style={{ color: C.textMuted, fontSize: 14 }}>Loading your profile…</p>
+        <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: C.bg, gap: 16, padding: 24 }}>
+          <div style={{ color: C.error, fontSize: 18, fontWeight: 700 }}>No worker profile found</div>
+          <p style={{ color: C.textMuted, fontSize: 14, textAlign: 'center', maxWidth: 320 }}>
+            Your account is not linked to a worker profile. Contact your administrator.
+          </p>
+          <button onClick={handleSignOut} style={btnSecondary}>Sign Out</button>
         </div>
       ) : currentWorker.role === 'admin' ? (
         <AdminPortal
