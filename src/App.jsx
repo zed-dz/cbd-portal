@@ -377,12 +377,20 @@ function LoginPage({ email, setEmail, password, setPassword, error, loading, onS
 // ═══════════════════════════════════════════════════════════════════════════════
 function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpen, setSidebarOpen }) {
   const [activePage, setActivePage] = useState('dashboard');
+  const [pendingCount, setPendingCount] = useState(0);
+
+  const refreshBadge = useCallback(async () => {
+    const { count } = await supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'pending');
+    setPendingCount(count || 0);
+  }, []);
+
+  useEffect(() => { refreshBadge(); }, [refreshBadge]);
 
   const navItems = [
     { id: 'dashboard', label: '📊 Dashboard' },
     { id: 'workers', label: '👷 Workers' },
     { id: 'allocations', label: '📋 Allocations' },
-    { id: 'timesheets', label: '🕐 Timesheets' },
+    { id: 'timesheets', label: '🕐 Timesheets', badge: pendingCount || null },
     { id: 'certifications', label: '📜 Certifications' },
     { id: 'reports', label: '📁 Reports' },
   ];
@@ -405,8 +413,14 @@ function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpe
             width: '100%', textAlign: 'left', background: activePage === item.id ? C.accent : 'none',
             color: activePage === item.id ? '#fff' : C.textMuted, border: 'none', borderRadius: 6,
             padding: '10px 12px', cursor: 'pointer', fontSize: 14, marginBottom: 2, transition: 'all 0.15s',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           }}>
-            {item.label}
+            <span>{item.label}</span>
+            {item.badge ? (
+              <span style={{ background: C.error, color: '#fff', borderRadius: 10, fontSize: 11, fontWeight: 700, padding: '1px 7px', minWidth: 20, textAlign: 'center' }}>
+                {item.badge}
+              </span>
+            ) : null}
           </button>
         ))}
       </nav>
@@ -441,7 +455,7 @@ function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpe
           {activePage === 'dashboard' && <DashboardPage showToast={showToast} />}
           {activePage === 'workers' && <WorkersPage showToast={showToast} isMobile={isMobile} />}
           {activePage === 'allocations' && <AllocationsPage showToast={showToast} isMobile={isMobile} />}
-          {activePage === 'timesheets' && <TimesheetsPage showToast={showToast} isMobile={isMobile} />}
+          {activePage === 'timesheets' && <TimesheetsPage showToast={showToast} isMobile={isMobile} refreshBadge={refreshBadge} />}
           {activePage === 'certifications' && <CertificationsPage showToast={showToast} isMobile={isMobile} />}
           {activePage === 'reports' && <ReportsPage showToast={showToast} />}
         </div>
@@ -668,7 +682,7 @@ function WorkersPage({ showToast, isMobile }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ALLOCATIONS PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
-const allocDefaults = { worker_id: '', site: '', client: '', status: 'pending', start_time: '', notes: '' };
+const allocDefaults = { worker_id: '', site: '', client: '', status: 'pending', start_time: '', end_time: '', notes: '' };
 
 function AllocationsPage({ showToast }) {
   const [allocations, setAllocations] = useState([]);
@@ -695,7 +709,7 @@ function AllocationsPage({ showToast }) {
 
   const openAdd = () => { setForm(allocDefaults); setModal('add'); };
   const openEdit = (a) => {
-    setForm({ worker_id: a.worker_id || '', site: a.site || '', client: a.client || '', status: a.status, start_time: a.start_time ? a.start_time.slice(0, 16) : '', notes: a.notes || '' });
+    setForm({ worker_id: a.worker_id || '', site: a.site || '', client: a.client || '', status: a.status, start_time: a.start_time ? a.start_time.slice(0, 16) : '', end_time: a.end_time ? a.end_time.slice(0, 16) : '', notes: a.notes || '' });
     setModal(a);
   };
   const closeModal = () => { setModal(null); setForm(allocDefaults); };
@@ -703,7 +717,7 @@ function AllocationsPage({ showToast }) {
   const handleSave = async () => {
     if (!form.worker_id) { showToast('Please select a worker.', 'error'); return; }
     setSaving(true);
-    const payload = { ...form, start_time: form.start_time || null };
+    const payload = { ...form, start_time: form.start_time || null, end_time: form.end_time || null };
     if (modal === 'add') {
       const { error } = await supabase.from('allocations').insert([payload]);
       if (error) showToast(error.message, 'error');
@@ -782,6 +796,7 @@ function AllocationsPage({ showToast }) {
             </select>
           </Field>
           <Field label="Start Time"><input style={inputStyle} type="datetime-local" value={form.start_time} onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} /></Field>
+          <Field label="End Time"><input style={inputStyle} type="datetime-local" value={form.end_time} onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} /></Field>
           <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 80, resize: 'vertical' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Field>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
             <button onClick={closeModal} style={btnSecondary}>Cancel</button>
@@ -798,11 +813,12 @@ function AllocationsPage({ showToast }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 const tsDefaults = { worker_id: '', client: '', site: '', date: '', hours: '', status: 'pending', notes: '' };
 
-function TimesheetsPage({ showToast }) {
+function TimesheetsPage({ showToast, refreshBadge }) {
   const [timesheets, setTimesheets] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState('');
+  const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(tsDefaults);
   const [saving, setSaving] = useState(false);
@@ -835,11 +851,11 @@ function TimesheetsPage({ showToast }) {
     if (modal === 'add') {
       const { error } = await supabase.from('timesheets').insert([payload]);
       if (error) showToast(error.message, 'error');
-      else { showToast('Timesheet created successfully', 'success'); closeModal(); load(); }
+      else { showToast('Timesheet created successfully', 'success'); closeModal(); load(); refreshBadge?.(); }
     } else {
       const { error } = await supabase.from('timesheets').update(payload).eq('id', modal.id);
       if (error) showToast(error.message, 'error');
-      else { showToast('Timesheet updated successfully', 'success'); closeModal(); load(); }
+      else { showToast('Timesheet updated successfully', 'success'); closeModal(); load(); refreshBadge?.(); }
     }
     setSaving(false);
   };
@@ -848,33 +864,53 @@ function TimesheetsPage({ showToast }) {
     if (!window.confirm('Delete this timesheet?')) return;
     const { error } = await supabase.from('timesheets').delete().eq('id', ts.id);
     if (error) showToast(error.message, 'error');
-    else { showToast('Timesheet deleted', 'success'); load(); }
+    else { showToast('Timesheet deleted', 'success'); load(); refreshBadge?.(); }
   };
 
   const handleApprove = async (ts) => {
     const { error } = await supabase.from('timesheets').update({ status: 'approved' }).eq('id', ts.id);
     if (error) showToast(error.message, 'error');
-    else { showToast('Timesheet approved', 'success'); load(); }
+    else { showToast('Timesheet approved', 'success'); load(); refreshBadge?.(); }
   };
 
   const handleReject = async (ts) => {
     const { error } = await supabase.from('timesheets').update({ status: 'rejected' }).eq('id', ts.id);
     if (error) showToast(error.message, 'error');
-    else { showToast('Timesheet rejected', 'info'); load(); }
+    else { showToast('Timesheet rejected', 'info'); load(); refreshBadge?.(); }
   };
 
-  const filtered = timesheets.filter(ts => !filterStatus || ts.status === filterStatus);
+  const handleApproveAll = async () => {
+    const pending = timesheets.filter(ts => ts.status === 'pending');
+    if (!pending.length) { showToast('No pending timesheets to approve.', 'info'); return; }
+    if (!window.confirm(`Approve all ${pending.length} pending timesheets?`)) return;
+    const { error } = await supabase.from('timesheets').update({ status: 'approved' }).in('id', pending.map(ts => ts.id));
+    if (error) showToast(error.message, 'error');
+    else { showToast(`${pending.length} timesheets approved`, 'success'); load(); refreshBadge?.(); }
+  };
+
+  const filtered = timesheets.filter(ts => {
+    const matchStatus = !filterStatus || ts.status === filterStatus;
+    const matchSearch = !search || ts.workers?.name?.toLowerCase().includes(search.toLowerCase()) || (ts.client || '').toLowerCase().includes(search.toLowerCase()) || (ts.site || '').toLowerCase().includes(search.toLowerCase());
+    return matchStatus && matchSearch;
+  });
+  const totalHours = filtered.reduce((sum, ts) => sum + (parseFloat(ts.hours) || 0), 0);
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, gap: 12, flexWrap: 'wrap' }}>
-        <select style={{ ...inputStyle, maxWidth: 200 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-          <option value="">All Statuses</option>
-          <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-        </select>
-        <button onClick={openAdd} style={btnPrimary}>+ Add Timesheet</button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', flex: 1 }}>
+          <input style={{ ...inputStyle, maxWidth: 220 }} placeholder="Search worker, client, site…" value={search} onChange={e => setSearch(e.target.value)} />
+          <select style={{ ...inputStyle, maxWidth: 180 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+            <option value="">All Statuses</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={handleApproveAll} style={{ ...btnSmall, color: '#4ade80', borderColor: '#16653a' }}>✓ Approve All Pending</button>
+          <button onClick={openAdd} style={btnPrimary}>+ Add Timesheet</button>
+        </div>
       </div>
 
       {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : filtered.length === 0 ? (
@@ -904,6 +940,17 @@ function TimesheetsPage({ showToast }) {
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr>
+              <td colSpan={4} style={{ padding: '10px 16px', color: C.textMuted, fontSize: 13, borderTop: `2px solid ${C.border}` }}>
+                {filtered.length} record{filtered.length !== 1 ? 's' : ''}
+              </td>
+              <td style={{ padding: '10px 16px', fontWeight: 700, color: C.text, fontSize: 14, borderTop: `2px solid ${C.border}` }}>
+                {totalHours.toFixed(2)} hrs
+              </td>
+              <td colSpan={2} style={{ borderTop: `2px solid ${C.border}` }} />
+            </tr>
+          </tfoot>
         </TableWrap>
       )}
 
@@ -946,6 +993,8 @@ function CertificationsPage({ showToast }) {
   const [certs, setCerts] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(certDefaults);
   const [saving, setSaving] = useState(false);
@@ -996,17 +1045,37 @@ function CertificationsPage({ showToast }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', flex: 1 }}>
+          <input style={{ ...inputStyle, maxWidth: 220 }} placeholder="Search worker or cert name…" value={search} onChange={e => setSearch(e.target.value)} />
+          <select style={{ ...inputStyle, maxWidth: 180 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+            <option value="">All Statuses</option>
+            <option value="valid">Valid</option>
+            <option value="expiring">Expiring Soon</option>
+            <option value="expired">Expired</option>
+          </select>
+        </div>
         <button onClick={openAdd} style={btnPrimary}>+ Add Certification</button>
       </div>
 
-      {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : certs.length === 0 ? (
-        <EmptyState message="No certifications found." />
-      ) : (
+      {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : (() => {
+        const now = new Date();
+        const filtered = certs.filter(c => {
+          const matchSearch = !search || c.cert_name.toLowerCase().includes(search.toLowerCase()) || (c.workers?.name || '').toLowerCase().includes(search.toLowerCase());
+          if (!matchSearch) return false;
+          if (!filterStatus) return true;
+          if (!c.expiry) return filterStatus === 'valid';
+          const diff = (new Date(c.expiry) - now) / (1000 * 60 * 60 * 24);
+          if (filterStatus === 'expired') return diff < 0;
+          if (filterStatus === 'expiring') return diff >= 0 && diff < 30;
+          if (filterStatus === 'valid') return diff >= 30;
+          return true;
+        });
+        return filtered.length === 0 ? <EmptyState message="No certifications found." /> : (
         <TableWrap>
           <thead><tr><Th>Worker</Th><Th>Certification</Th><Th>Issuer</Th><Th>Expiry</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
           <tbody>
-            {certs.map(c => (
+            {filtered.map(c => (
               <tr key={c.id}>
                 <Td>{c.workers?.name || '—'}</Td>
                 <Td><strong>{c.cert_name}</strong></Td>
@@ -1023,7 +1092,8 @@ function CertificationsPage({ showToast }) {
             ))}
           </tbody>
         </TableWrap>
-      )}
+        );
+      })()}
 
       {modal && (
         <Modal title={modal === 'add' ? 'Add Certification' : 'Edit Certification'} onClose={closeModal}>
@@ -1077,7 +1147,7 @@ function ReportsPage({ showToast }) {
       } else if (type === 'allocations') {
         const { data, error } = await supabase.from('allocations').select('*, workers(name)');
         if (error) throw error;
-        const rows = data.map(r => ({ ...r, worker_name: r.workers?.name, workers: undefined }));
+        const rows = data.map(({ workers, ...r }) => ({ worker_name: workers?.name, ...r }));
         downloadCSV(`allocations_export_${todayISO()}.csv`, rows);
       } else if (type === 'timesheets') {
         let q = supabase.from('timesheets').select('*, workers(name)');
@@ -1085,12 +1155,12 @@ function ReportsPage({ showToast }) {
         if (dateTo) q = q.lte('date', dateTo);
         const { data, error } = await q;
         if (error) throw error;
-        const rows = data.map(r => ({ ...r, worker_name: r.workers?.name, workers: undefined }));
+        const rows = data.map(({ workers, ...r }) => ({ worker_name: workers?.name, ...r }));
         downloadCSV(`timesheets_export_${todayISO()}.csv`, rows);
       } else if (type === 'certifications') {
         const { data, error } = await supabase.from('certifications').select('*, workers(name)');
         if (error) throw error;
-        const rows = data.map(r => ({ ...r, worker_name: r.workers?.name, workers: undefined }));
+        const rows = data.map(({ workers, ...r }) => ({ worker_name: workers?.name, ...r }));
         downloadCSV(`certifications_export_${todayISO()}.csv`, rows);
       }
       showToast(`${type} exported successfully`, 'success');
@@ -1262,20 +1332,33 @@ function WorkerTimesheets({ currentWorker, showToast }) {
       {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : timesheets.length === 0 ? (
         <EmptyState message="No timesheets yet. Submit one to get started." />
       ) : (
-        <TableWrap>
-          <thead><tr><Th>Date</Th><Th>Client</Th><Th>Site</Th><Th>Hours</Th><Th>Status</Th></tr></thead>
-          <tbody>
-            {timesheets.map(ts => (
-              <tr key={ts.id}>
-                <Td>{fmtDate(ts.date)}</Td>
-                <Td>{ts.client || '—'}</Td>
-                <Td>{ts.site || '—'}</Td>
-                <Td>{ts.hours}</Td>
-                <Td>{timesheetBadge(ts.status)}</Td>
-              </tr>
-            ))}
-          </tbody>
-        </TableWrap>
+        <>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+            {['all','pending','approved','rejected'].map(s => {
+              const hrs = (s === 'all' ? timesheets : timesheets.filter(t => t.status === s)).reduce((a, t) => a + (parseFloat(t.hours) || 0), 0);
+              return (
+                <div key={s} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 16px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: s === 'approved' ? C.success : s === 'rejected' ? C.error : s === 'pending' ? C.warning : C.text }}>{hrs.toFixed(1)}</div>
+                  <div style={{ color: C.textMuted, fontSize: 11, textTransform: 'uppercase' }}>{s} hrs</div>
+                </div>
+              );
+            })}
+          </div>
+          <TableWrap>
+            <thead><tr><Th>Date</Th><Th>Client</Th><Th>Site</Th><Th>Hours</Th><Th>Status</Th></tr></thead>
+            <tbody>
+              {timesheets.map(ts => (
+                <tr key={ts.id}>
+                  <Td>{fmtDate(ts.date)}</Td>
+                  <Td>{ts.client || '—'}</Td>
+                  <Td>{ts.site || '—'}</Td>
+                  <Td>{ts.hours}</Td>
+                  <Td>{timesheetBadge(ts.status)}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableWrap>
+        </>
       )}
 
       {modal && (
@@ -1334,7 +1417,11 @@ function WorkerCertifications({ currentWorker, showToast }) {
 // ─── Worker: Clock In/Out ─────────────────────────────────────────────────────
 function WorkerClockIn({ currentWorker, showToast }) {
   const [now, setNow] = useState(new Date());
-  const [clockInTime, setClockInTime] = useState(null);
+  const storageKey = `clockIn_${currentWorker.id}`;
+  const [clockInTime, setClockInTime] = useState(() => {
+    const stored = localStorage.getItem(storageKey);
+    return stored ? new Date(stored) : null;
+  });
   const [saving, setSaving] = useState(false);
   const [todayEntries, setTodayEntries] = useState([]);
 
@@ -1354,8 +1441,10 @@ function WorkerClockIn({ currentWorker, showToast }) {
   useEffect(() => { loadToday(); }, [loadToday]);
 
   const handleClockIn = () => {
-    setClockInTime(new Date());
-    showToast(`Clocked in at ${new Date().toLocaleTimeString('en-AU', { timeStyle: 'short' })}`, 'success');
+    const t = new Date();
+    setClockInTime(t);
+    localStorage.setItem(storageKey, t.toISOString());
+    showToast(`Clocked in at ${t.toLocaleTimeString('en-AU', { timeStyle: 'short' })}`, 'success');
   };
 
   const handleClockOut = async () => {
@@ -1374,6 +1463,7 @@ function WorkerClockIn({ currentWorker, showToast }) {
     if (error) { showToast(error.message, 'error'); }
     else {
       showToast(`Clocked out — ${hours} hours logged`, 'success');
+      localStorage.removeItem(storageKey);
       setClockInTime(null);
       loadToday();
     }
