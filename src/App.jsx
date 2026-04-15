@@ -479,7 +479,7 @@ function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpe
         {/* Content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? 12 : 24 }}>
           {activePage === 'dashboard' && <DashboardPage showToast={showToast} />}
-          {activePage === 'workers' && <WorkersPage showToast={showToast} isMobile={isMobile} />}
+          {activePage === 'workers' && <WorkersPage showToast={showToast} />}
           {activePage === 'allocations' && <AllocationsPage showToast={showToast} />}
           {activePage === 'pending_workers' && <PendingWorkersPage showToast={showToast} />}
           {activePage === 'timesheets' && <TimesheetsPage showToast={showToast} isMobile={isMobile} refreshBadge={refreshBadge} />}
@@ -619,7 +619,7 @@ const JOB_TITLES = [
 
 const workerDefaults = { name: '', email: '', mobile: '', role: 'worker', job_title: '', licences: '', address: '', access_level: 'employee', status: 'available', app_status: 'Active', site: '', client: '' };
 
-function WorkersPage({ showToast, isMobile }) {
+function WorkersPage({ showToast }) {
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -1226,13 +1226,14 @@ function ReportsPage({ showToast }) {
 
   useEffect(() => {
     (async () => {
-      const [w, a, t, c] = await Promise.all([
+      const [w, a, t, c, cl] = await Promise.all([
         supabase.from('workers').select('id', { count: 'exact' }),
         supabase.from('allocations').select('id', { count: 'exact' }),
         supabase.from('timesheets').select('id', { count: 'exact' }),
         supabase.from('certifications').select('id', { count: 'exact' }),
+        supabase.from('clients').select('id', { count: 'exact' }),
       ]);
-      setCounts({ workers: w.count || 0, allocations: a.count || 0, timesheets: t.count || 0, certifications: c.count || 0 });
+      setCounts({ workers: w.count || 0, allocations: a.count || 0, timesheets: t.count || 0, certifications: c.count || 0, clients: cl.count || 0 });
     })();
   }, []);
 
@@ -1261,6 +1262,10 @@ function ReportsPage({ showToast }) {
         if (error) throw error;
         const rows = data.map(({ workers, ...r }) => ({ worker_name: workers?.name, ...r }));
         downloadCSV(`certifications_export_${todayISO()}.csv`, rows);
+      } else if (type === 'clients') {
+        const { data, error } = await supabase.from('clients').select('*');
+        if (error) throw error;
+        downloadCSV(`clients_export_${todayISO()}.csv`, data);
       }
       showToast(`${type} exported successfully`, 'success');
     } catch (err) {
@@ -1274,6 +1279,7 @@ function ReportsPage({ showToast }) {
     { key: 'allocations', label: 'Allocations Export', desc: 'All allocations with worker names' },
     { key: 'timesheets', label: 'Timesheets Export', desc: 'All timesheets with worker names (use date filter)' },
     { key: 'certifications', label: 'Certifications Export', desc: 'All certifications with worker names' },
+    { key: 'clients', label: 'Clients Export', desc: 'All client records with rates and contacts' },
   ];
 
   return (
@@ -1654,8 +1660,8 @@ function BulkMessagesPage({ showToast }) {
 
   const toggleWorker = (id) => setSelectedWorkers(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
   const toggleClient = (id) => setSelectedClients(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
-  const allWorkers = selectedWorkers.length === workers.length;
-  const allClients = selectedClients.length === clients.length;
+  const allWorkers = workers.length > 0 && selectedWorkers.length === workers.length;
+  const allClients = clients.length > 0 && selectedClients.length === clients.length;
 
   const handleSendWorkers = async () => {
     if (!workerMsg.trim()) { showToast('Enter a message first.', 'error'); return; }
@@ -1819,6 +1825,10 @@ function WorkerAllocations({ currentWorker, showToast }) {
             {allocationBadge(a.status)}
           </div>
           <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Client: {a.client || '—'}</div>
+          {a.project && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Project: {a.project}</div>}
+          {a.address && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Address: {a.address}</div>}
+          {a.site_manager && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Site Manager: {a.site_manager}{a.manager_phone ? ` · ${a.manager_phone}` : ''}</div>}
+          {a.start_date && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Date: {a.start_date}</div>}
           <div style={{ color: C.textMuted, fontSize: 13 }}>Start: {fmtDateTime(a.start_time)}</div>
           {a.notes && <div style={{ color: C.textMuted, fontSize: 12, marginTop: 10, fontStyle: 'italic' }}>{a.notes}</div>}
         </div>
