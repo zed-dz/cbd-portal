@@ -3,20 +3,20 @@ import { supabase } from './supabaseClient';
 
 // ─── THEME CONSTANTS ────────────────────────────────────────────────────────
 const C = {
-  bg: '#0f172a',
-  card: '#1e293b',
-  cardHover: '#273548',
-  border: '#334155',
-  accent: '#3b82f6',
-  accentHover: '#2563eb',
-  text: '#f1f5f9',
-  textMuted: '#94a3b8',
+  bg: '#0d0f14',
+  card: '#131620',
+  cardHover: '#1a1e28',
+  border: '#2a2f40',
+  accent: '#f97316',
+  accentHover: '#ea6a0a',
+  text: '#e8eaf2',
+  textMuted: '#8b90a8',
   success: '#22c55e',
   warning: '#eab308',
   error: '#ef4444',
-  info: '#3b82f6',
-  sidebar: '#1e293b',
-  sidebarW: 240,
+  info: '#f97316',
+  sidebar: '#13161e',
+  sidebarW: 200,
 };
 
 // ─── TOAST SYSTEM ────────────────────────────────────────────────────────────
@@ -278,20 +278,26 @@ export default function App() {
 
   // ── GLOBAL CSS ─────────────────────────────────────────────────────────────
   useEffect(() => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400&display=swap';
+    document.head.appendChild(link);
+
     const style = document.createElement('style');
     style.textContent = `
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { background: ${C.bg}; color: ${C.text}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+      body { background: ${C.bg}; color: ${C.text}; font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif; }
       @keyframes spin { to { transform: rotate(360deg); } }
       @keyframes slideIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+      input, select, textarea { font-family: 'DM Sans', sans-serif; }
       input:focus, select:focus, textarea:focus { border-color: ${C.accent} !important; }
       button:disabled { opacity: 0.5; cursor: not-allowed !important; }
-      ::-webkit-scrollbar { width: 6px; height: 6px; }
-      ::-webkit-scrollbar-track { background: ${C.bg}; }
-      ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 3px; }
+      ::-webkit-scrollbar { width: 4px; height: 4px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 4px; }
     `;
     document.head.appendChild(style);
-    return () => document.head.removeChild(style);
+    return () => { document.head.removeChild(style); document.head.removeChild(link); };
   }, []);
 
   if (authLoading) {
@@ -377,79 +383,120 @@ function LoginPage({ email, setEmail, password, setPassword, error, loading, onS
 // ═══════════════════════════════════════════════════════════════════════════════
 function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpen, setSidebarOpen }) {
   const [activePage, setActivePage] = useState('dashboard');
-  const [pendingCount, setPendingCount] = useState(0);
+  const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, client_approvals: 0, licence_agent: 0, pending_workers: 0 });
 
   const refreshBadge = useCallback(async () => {
-    const { count } = await supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'pending');
-    setPendingCount(count || 0);
+    const [w, a, ts, ca, lic, pw] = await Promise.all([
+      supabase.from('workers').select('*', { count: 'exact', head: true }),
+      supabase.from('allocations').select('*', { count: 'exact', head: true }).in('status', ['pending', 'confirmed']),
+      supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+      supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+      supabase.from('certifications').select('*', { count: 'exact', head: true }).lt('expiry', new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]),
+      supabase.from('workers').select('*', { count: 'exact', head: true }).neq('app_status', 'Active'),
+    ]);
+    setBadges({
+      workers: w.count || 0,
+      allocations: a.count || 0,
+      timesheets: ts.count || 0,
+      client_approvals: ca.count || 0,
+      licence_agent: lic.count || 0,
+      pending_workers: pw.count || 0,
+    });
   }, []);
 
   useEffect(() => { refreshBadge(); }, [refreshBadge]);
+
+  const BADGE_COLORS = {
+    green: { bg: '#22c55e', text: '#fff' },
+    orange: { bg: '#f97316', text: '#fff' },
+    red: { bg: '#ef4444', text: '#fff' },
+    yellow: { bg: '#eab308', text: '#fff' },
+  };
 
   const navSections = [
     {
       label: 'MAIN',
       items: [
         { id: 'dashboard', label: '📊 Dashboard' },
-        { id: 'workers', label: '👷 Workers' },
-        { id: 'allocations', label: '📋 Allocations' },
-        { id: 'pending_workers', label: '⏳ Pending Workers' },
+        { id: 'workers', label: '👷 Workers', badge: badges.workers || null, badgeColor: 'green' },
+        { id: 'allocations', label: '📋 Allocations', badge: badges.allocations || null, badgeColor: 'orange' },
+        { id: 'timesheets', label: '🕐 Timesheets', badge: badges.timesheets || null, badgeColor: 'red' },
+        { id: 'client_approvals', label: '✅ Client Approvals', badge: badges.client_approvals || null, badgeColor: 'yellow' },
       ],
     },
     {
       label: 'FINANCE',
       items: [
-        { id: 'timesheets', label: '🕐 Timesheets', badge: pendingCount || null },
         { id: 'clients', label: '🏗 Clients & Rates' },
-        { id: 'client_approvals', label: '✅ Client Approvals' },
-        { id: 'payroll', label: '💰 Payroll Tracker' },
+        { id: 'payroll', label: '💰 Payroll' },
       ],
     },
     {
       label: 'TOOLS',
       items: [
-        { id: 'certifications', label: '📜 Certifications' },
-        { id: 'reports', label: '📁 Reports' },
         { id: 'bulk_messages', label: '📢 Bulk Messages' },
+        { id: 'licence_agent', label: '🪪 Licence Agent', badge: badges.licence_agent || null, badgeColor: 'red' },
+        { id: 'pending_workers', label: '📱 Pending Workers', badge: badges.pending_workers || null, badgeColor: 'yellow' },
+        { id: 'app_views', label: '📲 App Views' },
+        { id: 'reports', label: '📁 Reports' },
       ],
     },
   ];
-  const navItems = navSections.flatMap(s => s.items);
 
   const navigate = (id) => { setActivePage(id); if (isMobile) setSidebarOpen(false); };
 
   const sidebar = (
     <div style={{
       width: C.sidebarW, background: C.sidebar, height: '100vh', display: 'flex',
-      flexDirection: 'column', borderRight: `1px solid ${C.border}`, flexShrink: 0,
+      flexDirection: 'column', borderRight: `1px solid ${C.border}`, flexShrink: 0, overflowY: 'auto',
       ...(isMobile ? { position: 'fixed', top: 0, left: 0, zIndex: 500, transform: sidebarOpen ? 'translateX(0)' : `translateX(-${C.sidebarW}px)`, transition: 'transform 0.25s ease' } : {}),
     }}>
-      <div style={{ padding: '20px 16px', borderBottom: `1px solid ${C.border}` }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>CBD Plant & Labour</div>
-        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>Admin Portal</div>
+      {/* Logo */}
+      <div style={{ padding: '20px 18px 18px', borderBottom: `1px solid ${C.border}`, marginBottom: 16 }}>
+        <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 26, fontWeight: 800, color: C.accent, lineHeight: 1 }}>CBD</div>
+        <div style={{ fontSize: 9, color: C.textMuted, fontFamily: '"DM Mono", monospace', letterSpacing: 2, textTransform: 'uppercase', marginTop: 2 }}>Operations Portal</div>
       </div>
-      <nav style={{ flex: 1, padding: '8px 8px', overflowY: 'auto' }}>
+      {/* Nav */}
+      <nav style={{ flex: 1, padding: '0 10px' }}>
         {navSections.map(section => (
-          <div key={section.label}>
-            <div style={{ padding: '10px 12px 4px', fontSize: 10, color: C.textMuted, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase' }}>{section.label}</div>
-            {section.items.map(item => (
-              <button key={item.id} onClick={() => navigate(item.id)} style={{
-                width: '100%', textAlign: 'left', background: activePage === item.id ? C.accent : 'none',
-                color: activePage === item.id ? '#fff' : C.textMuted, border: 'none', borderRadius: 6,
-                padding: '9px 12px', cursor: 'pointer', fontSize: 13, marginBottom: 1, transition: 'all 0.15s',
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              }}>
-                <span>{item.label}</span>
-                {item.badge ? (
-                  <span style={{ background: C.error, color: '#fff', borderRadius: 10, fontSize: 11, fontWeight: 700, padding: '1px 7px', minWidth: 20, textAlign: 'center' }}>
-                    {item.badge}
-                  </span>
-                ) : null}
-              </button>
-            ))}
+          <div key={section.label} style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 9, letterSpacing: 2, textTransform: 'uppercase', color: C.textMuted, padding: '0 8px', marginBottom: 5, fontFamily: '"DM Mono", monospace' }}>{section.label}</div>
+            {section.items.map(item => {
+              const active = activePage === item.id;
+              const bc = item.badgeColor ? BADGE_COLORS[item.badgeColor] : null;
+              return (
+                <button key={item.id} onClick={() => navigate(item.id)} style={{
+                  width: '100%', textAlign: 'left', background: active ? C.cardHover : 'transparent',
+                  color: active ? C.text : C.textMuted, border: 'none',
+                  borderLeft: `3px solid ${active ? C.accent : 'transparent'}`,
+                  borderRadius: '0 8px 8px 0', padding: '8px 10px', cursor: 'pointer',
+                  fontSize: 13, fontWeight: 500, marginBottom: 2, transition: 'all 0.15s',
+                  display: 'flex', alignItems: 'center', gap: 8,
+                }}>
+                  <span style={{ flex: 1 }}>{item.label}</span>
+                  {item.badge && bc ? (
+                    <span style={{ background: bc.bg, color: bc.text, borderRadius: 10, fontSize: 10, fontWeight: 700, padding: '1px 5px', fontFamily: '"DM Mono", monospace' }}>
+                      {item.badge}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
           </div>
         ))}
       </nav>
+      {/* User footer */}
+      <div style={{ padding: '11px 15px', background: C.cardHover, borderTop: `1px solid ${C.border}` }}>
+        <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4, fontFamily: '"DM Mono", monospace', textTransform: 'uppercase', letterSpacing: 1 }}>Signed In</div>
+        <div>
+          <span style={{ display: 'inline-block', width: 7, height: 7, background: C.success, borderRadius: '50%', marginRight: 5 }} />
+          <strong style={{ fontSize: 12, color: C.text }}>{currentWorker?.name}</strong>
+        </div>
+        <div style={{ fontSize: 10, color: C.textMuted, marginTop: 1, fontFamily: '"DM Mono", monospace' }}>ROAD · RAIL · WATER</div>
+        <button onClick={onSignOut} style={{ marginTop: 8, background: 'none', border: `1px solid ${C.border}`, color: C.textMuted, borderRadius: 6, padding: '4px 10px', fontSize: 10, cursor: 'pointer', fontFamily: '"DM Mono", monospace', width: '100%' }}>
+          Sign out →
+        </button>
+      </div>
     </div>
   );
 
@@ -464,21 +511,21 @@ function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpe
       )}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Top bar */}
-        <div style={{ background: C.card, borderBottom: `1px solid ${C.border}`, padding: '0 20px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div style={{ background: C.sidebar, borderBottom: `1px solid ${C.border}`, padding: '0 24px', height: 48, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {isMobile && (
               <button onClick={() => setSidebarOpen(o => !o)} style={{ background: 'none', border: 'none', color: C.text, cursor: 'pointer', fontSize: 22, lineHeight: 1, padding: 4 }}>☰</button>
             )}
-            <span style={{ color: C.text, fontWeight: 600, fontSize: 15 }}>{navItems.find(n => n.id === activePage)?.label}</span>
+            <span style={{ fontSize: 10, color: C.textMuted, fontFamily: '"DM Mono", monospace' }}>CBD PLANT & LABOUR · ABN: 75 663 693 070</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ color: C.textMuted, fontSize: 13 }}>👤 {currentWorker?.name}</span>
-            <button onClick={onSignOut} style={{ ...btnSecondary, padding: '6px 14px', fontSize: 13 }}>Sign Out</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button style={{ ...btnSecondary, padding: '7px 14px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📷 Scan</button>
+            <button style={{ ...btnPrimary, padding: '7px 14px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📢 Send Blast</button>
           </div>
         </div>
         {/* Content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? 12 : 24 }}>
-          {activePage === 'dashboard' && <DashboardPage showToast={showToast} />}
+          {activePage === 'dashboard' && <DashboardPage showToast={showToast} currentWorker={currentWorker} onNavigate={navigate} />}
           {activePage === 'workers' && <WorkersPage showToast={showToast} />}
           {activePage === 'allocations' && <AllocationsPage showToast={showToast} />}
           {activePage === 'pending_workers' && <PendingWorkersPage showToast={showToast} />}
@@ -486,9 +533,10 @@ function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpe
           {activePage === 'clients' && <ClientsPage showToast={showToast} />}
           {activePage === 'client_approvals' && <ClientApprovalsPage showToast={showToast} />}
           {activePage === 'payroll' && <PayrollTrackerPage showToast={showToast} />}
-          {activePage === 'certifications' && <CertificationsPage showToast={showToast} isMobile={isMobile} />}
+          {activePage === 'licence_agent' && <LicenceAgentPage showToast={showToast} />}
           {activePage === 'reports' && <ReportsPage showToast={showToast} />}
           {activePage === 'bulk_messages' && <BulkMessagesPage showToast={showToast} />}
+          {activePage === 'app_views' && <AppViewsPage showToast={showToast} />}
         </div>
       </div>
     </div>
@@ -498,10 +546,11 @@ function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpe
 // ═══════════════════════════════════════════════════════════════════════════════
 // DASHBOARD PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
-function DashboardPage({ showToast }) {
+function DashboardPage({ showToast, currentWorker, onNavigate }) {
   const [stats, setStats] = useState(null);
-  const [recentTimesheets, setRecentTimesheets] = useState([]);
+  const [pendingTimesheets, setPendingTimesheets] = useState([]);
   const [expiredCerts, setExpiredCerts] = useState([]);
+  const [todayAllocs, setTodayAllocs] = useState([]);
   const [dismissedAlerts, setDismissedAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -509,26 +558,31 @@ function DashboardPage({ showToast }) {
     let mounted = true;
     (async () => {
       try {
-        const [onSite, available, pendingTs, expiringCerts, recent, expired] = await Promise.all([
+        const today = todayISO();
+        const in30 = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+        const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+        const [onSite, available, pendingTs, licAlerts, weekHours, pendingList, expired, allocs] = await Promise.all([
           supabase.from('workers').select('id', { count: 'exact' }).eq('status', 'on_site'),
           supabase.from('workers').select('id', { count: 'exact' }).eq('status', 'available'),
           supabase.from('timesheets').select('id', { count: 'exact' }).eq('status', 'pending'),
-          supabase.from('certifications').select('id', { count: 'exact' })
-            .lte('expiry', new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0])
-            .gte('expiry', todayISO()),
-          supabase.from('timesheets').select('*, workers(name)').order('created_at', { ascending: false }).limit(5),
-          supabase.from('certifications').select('*, workers(name)').lt('expiry', todayISO()),
+          supabase.from('certifications').select('id', { count: 'exact' }).lt('expiry', in30),
+          supabase.from('timesheets').select('hours').eq('status', 'approved').gte('date', weekAgo),
+          supabase.from('timesheets').select('*, workers(name)').eq('status', 'pending').order('created_at', { ascending: false }).limit(5),
+          supabase.from('certifications').select('*, workers(name)').lt('expiry', today),
+          supabase.from('allocations').select('*, workers(name, job_title)').eq('start_date', today).order('created_at', { ascending: false }),
         ]);
-
         if (!mounted) return;
+        const totalWeekHrs = (weekHours.data || []).reduce((s, r) => s + (r.hours || 0), 0);
         setStats({
           onSite: onSite.count || 0,
           available: available.count || 0,
           pendingTs: pendingTs.count || 0,
-          expiringCerts: expiringCerts.count || 0,
+          licAlerts: licAlerts.count || 0,
+          weekHours: totalWeekHrs,
         });
-        setRecentTimesheets(recent.data || []);
+        setPendingTimesheets(pendingList.data || []);
         setExpiredCerts(expired.data || []);
+        setTodayAllocs(allocs.data || []);
       } catch (err) {
         showToast(err.message, 'error');
       } finally {
@@ -538,67 +592,140 @@ function DashboardPage({ showToast }) {
     return () => { mounted = false; };
   }, [showToast]);
 
-  const statCards = [
-    { label: 'Workers On Site', value: stats?.onSite, color: C.success },
-    { label: 'Available Pool', value: stats?.available, color: C.accent },
-    { label: 'Pending Timesheets', value: stats?.pendingTs, color: C.warning },
-    { label: 'Expiring Certs (30d)', value: stats?.expiringCerts, color: C.error },
-  ];
-
   if (loading) return <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 60 }}><Spinner size={36} /></div>;
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const firstName = (currentWorker?.name || 'Admin').split(' ')[0];
+  const dateLabel = new Date().toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
   const visibleAlerts = expiredCerts.filter(c => !dismissedAlerts.includes(c.id));
 
+  const statCards = [
+    { label: 'On Site Today', value: stats?.onSite, color: C.accent, sub: null },
+    { label: 'Available Pool', value: stats?.available, color: C.warning, sub: 'Not yet placed' },
+    { label: 'Awaiting Approval', value: stats?.pendingTs, color: C.error, sub: 'Timesheets pending' },
+    { label: 'Licence Alerts', value: stats?.licAlerts > 0 ? stats.licAlerts : '⚡', color: C.error, sub: 'See Licence Agent', onClick: () => onNavigate('licence_agent') },
+    { label: 'Week Billing', value: stats?.weekHours > 0 ? `${stats.weekHours}h` : '✓', color: C.success, sub: 'See Payroll', onClick: () => onNavigate('payroll') },
+  ];
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 6 }}>
+        <div>
+          <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 23, fontWeight: 700, color: C.text }}>
+            {greeting}, <span style={{ color: C.accent }}>{firstName}</span>
+          </div>
+          <div style={{ color: C.textMuted, fontSize: 12, marginTop: 3 }}>Operations overview · {dateLabel}</div>
+        </div>
+        <div style={{ fontSize: 11, color: C.textMuted, textAlign: 'right', fontFamily: '"DM Mono", monospace' }}>
+          ABN: 75 663 693 070<br />Ops: Matt 0413 962 001
+        </div>
+      </div>
+
+      {/* Stat cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 11 }}>
         {statCards.map(sc => (
-          <div key={sc.label} style={{ background: C.card, borderRadius: 10, padding: '20px 24px', border: `1px solid ${C.border}`, borderLeft: `3px solid ${sc.color}` }}>
-            <div style={{ fontSize: 36, fontWeight: 800, color: sc.color }}>{sc.value ?? '—'}</div>
-            <div style={{ color: C.textMuted, fontSize: 13, marginTop: 4 }}>{sc.label}</div>
+          <div key={sc.label} onClick={sc.onClick} style={{
+            background: C.card, border: `1px solid ${C.border}`, borderRadius: 11, padding: '16px 18px',
+            cursor: sc.onClick ? 'pointer' : 'default', transition: sc.onClick ? 'border-color 0.15s' : undefined,
+          }}>
+            <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 28, fontWeight: 800, color: sc.color, lineHeight: 1 }}>{sc.value ?? '—'}</div>
+            <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: C.textMuted, marginTop: 4, fontFamily: '"DM Mono", monospace' }}>{sc.label}</div>
+            {sc.sub && <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>{sc.sub}</div>}
           </div>
         ))}
       </div>
 
-      {visibleAlerts.length > 0 && (
-        <div style={{ background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 10, padding: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <span>🚨</span>
-            <span style={{ fontWeight: 700, color: C.error, fontSize: 14 }}>Expired Certifications</span>
-            <Badge label={`${visibleAlerts.length} REQUIRES ACTION`} color="red" />
+      {/* 2-col panels */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        {/* Urgent Alerts */}
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 11, padding: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 13 }}>
+            <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 14, fontWeight: 700, color: C.text }}>⚠ Urgent Alerts</div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {visibleAlerts.map(c => (
-              <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: C.card, borderRadius: 8, padding: '10px 14px' }}>
-                <div>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{c.workers?.name || '—'}</span>
-                  <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 8 }}>{c.cert_name} — expired {fmtDate(c.expiry)}</span>
+          {visibleAlerts.length === 0 ? (
+            <div style={{ color: C.textMuted, fontSize: 12, padding: '12px 0' }}>No profile alerts.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+              {visibleAlerts.slice(0, 4).map(c => (
+                <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(239,68,68,0.07)', borderRadius: 7, padding: '8px 10px' }}>
+                  <div>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{c.workers?.name || '—'}</span>
+                    <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 6 }}>{c.cert_name}</span>
+                  </div>
+                  <button onClick={() => setDismissedAlerts(d => [...d, c.id])} style={{ ...btnSecondary, padding: '2px 8px', fontSize: 11 }}>✕</button>
                 </div>
-                <button onClick={() => setDismissedAlerts(d => [...d, c.id])} style={{ ...btnSecondary, padding: '4px 10px', fontSize: 12 }}>Dismiss</button>
-              </div>
-            ))}
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Pending Timesheets */}
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 11, padding: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 13 }}>
+            <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 14, fontWeight: 700, color: C.text }}>🕐 Pending Timesheets</div>
+            <span style={{ background: 'rgba(249,115,22,0.15)', color: C.accent, padding: '2px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600, fontFamily: '"DM Mono", monospace' }}>
+              {stats?.pendingTs || 0}
+            </span>
+          </div>
+          {pendingTimesheets.length === 0 ? (
+            <div style={{ color: C.textMuted, fontSize: 12, padding: '12px 0' }}>No pending timesheets.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+              {pendingTimesheets.map(ts => (
+                <div key={ts.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: C.bg, borderRadius: 7, padding: '8px 10px' }}>
+                  <div>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{ts.workers?.name || '—'}</span>
+                    <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 6 }}>{fmtDate(ts.date)} · {ts.hours}h</span>
+                  </div>
+                  {timesheetBadge(ts.status)}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Today's Allocations */}
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 11, padding: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 13 }}>
+          <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 14, fontWeight: 700, color: C.text }}>📋 Today's Allocations</div>
+          <div style={{ display: 'flex', gap: 7 }}>
+            <button onClick={() => { const rows = todayAllocs.map(a => ({ worker: a.workers?.name || '', role: a.workers?.job_title || '', client: a.client || '', site: a.site || '', status: a.status })); downloadCSV(`allocations_today_${todayISO()}.csv`, rows.length ? rows : [{ note: 'No allocations today' }]); }} style={{ ...btnSecondary, padding: '5px 11px', fontSize: 11, fontWeight: 600 }}>📤 Export</button>
+            <button onClick={() => onNavigate('allocations')} style={{ ...btnPrimary, padding: '5px 11px', fontSize: 11, fontWeight: 600 }}>Manage →</button>
           </div>
         </div>
-      )}
-
-      <div style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: 24 }}>
-        <h3 style={{ color: C.text, marginBottom: 16, fontSize: 16 }}>Recent Timesheets</h3>
-        {recentTimesheets.length === 0 ? (
-          <EmptyState message="No timesheets yet." />
+        {todayAllocs.length === 0 ? (
+          <div style={{ color: C.textMuted, fontSize: 12, padding: '8px 0' }}>No allocations scheduled for today.</div>
         ) : (
-          <TableWrap>
-            <thead><tr><Th>Worker</Th><Th>Date</Th><Th>Hours</Th><Th>Status</Th></tr></thead>
-            <tbody>
-              {recentTimesheets.map(ts => (
-                <tr key={ts.id}>
-                  <Td>{ts.workers?.name || '—'}</Td>
-                  <Td>{fmtDate(ts.date)}</Td>
-                  <Td>{ts.hours ?? '—'}</Td>
-                  <Td>{timesheetBadge(ts.status)}</Td>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 500 }}>
+              <thead>
+                <tr>
+                  {['Worker', 'Role', 'Client', 'Site', 'Status'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.5, color: C.textMuted, padding: '8px 12px', borderBottom: `1px solid ${C.border}`, fontFamily: '"DM Mono", monospace' }}>{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </TableWrap>
+              </thead>
+              <tbody>
+                {todayAllocs.map(a => (
+                  <tr key={a.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: '10px 12px', fontWeight: 600, fontSize: 13 }}>{a.workers?.name || '—'}</td>
+                    <td style={{ padding: '10px 12px' }}>
+                      {a.workers?.job_title ? (
+                        <span style={{ display: 'inline-block', padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 600, background: C.cardHover, color: C.textMuted, fontFamily: '"DM Mono", monospace' }}>{a.workers.job_title}</span>
+                      ) : '—'}
+                    </td>
+                    <td style={{ padding: '10px 12px', fontSize: 12, color: C.textMuted }}>{a.client || '—'}</td>
+                    <td style={{ padding: '10px 12px', fontSize: 12, color: C.textMuted }}>{a.site || '—'}</td>
+                    <td style={{ padding: '10px 12px' }}>{allocationBadge(a.status)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>
@@ -1073,138 +1200,6 @@ function TimesheetsPage({ showToast, refreshBadge }) {
             </select>
           </Field>
           <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 80, resize: 'vertical' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Field>
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
-            <button onClick={closeModal} style={btnSecondary}>Cancel</button>
-            <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// CERTIFICATIONS PAGE
-// ═══════════════════════════════════════════════════════════════════════════════
-const certDefaults = { worker_id: '', cert_name: '', issuer: '', expiry: '' };
-
-function CertificationsPage({ showToast }) {
-  const [certs, setCerts] = useState([]);
-  const [workers, setWorkers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
-  const [modal, setModal] = useState(null);
-  const [form, setForm] = useState(certDefaults);
-  const [saving, setSaving] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const [c, w] = await Promise.all([
-      supabase.from('certifications').select('*, workers(name)').order('expiry', { ascending: true }),
-      supabase.from('workers').select('id, name').order('name'),
-    ]);
-    if (c.error) showToast(c.error.message, 'error');
-    else setCerts(c.data || []);
-    if (w.data) setWorkers(w.data);
-    setLoading(false);
-  }, [showToast]);
-
-  useEffect(() => { load(); }, [load]);
-
-  const openAdd = () => { setForm(certDefaults); setModal('add'); };
-  const openEdit = (c) => {
-    setForm({ worker_id: c.worker_id || '', cert_name: c.cert_name, issuer: c.issuer || '', expiry: c.expiry || '' });
-    setModal(c);
-  };
-  const closeModal = () => { setModal(null); setForm(certDefaults); };
-
-  const handleSave = async () => {
-    if (!form.worker_id || !form.cert_name.trim()) { showToast('Worker and certification name are required.', 'error'); return; }
-    setSaving(true);
-    const payload = { ...form, expiry: form.expiry || null };
-    if (modal === 'add') {
-      const { error } = await supabase.from('certifications').insert([payload]);
-      if (error) showToast(error.message, 'error');
-      else { showToast('Certification added successfully', 'success'); closeModal(); load(); }
-    } else {
-      const { error } = await supabase.from('certifications').update(payload).eq('id', modal.id);
-      if (error) showToast(error.message, 'error');
-      else { showToast('Certification updated successfully', 'success'); closeModal(); load(); }
-    }
-    setSaving(false);
-  };
-
-  const handleDelete = async (c) => {
-    if (!window.confirm('Delete this certification?')) return;
-    const { error } = await supabase.from('certifications').delete().eq('id', c.id);
-    if (error) showToast(error.message, 'error');
-    else { showToast('Certification deleted', 'success'); load(); }
-  };
-
-  return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', flex: 1 }}>
-          <input style={{ ...inputStyle, maxWidth: 220 }} placeholder="Search worker or cert name…" value={search} onChange={e => setSearch(e.target.value)} />
-          <select style={{ ...inputStyle, maxWidth: 180 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-            <option value="">All Statuses</option>
-            <option value="valid">Valid</option>
-            <option value="expiring">Expiring Soon</option>
-            <option value="expired">Expired</option>
-          </select>
-        </div>
-        <button onClick={openAdd} style={btnPrimary}>+ Add Certification</button>
-      </div>
-
-      {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : (() => {
-        const now = new Date();
-        const filtered = certs.filter(c => {
-          const matchSearch = !search || c.cert_name.toLowerCase().includes(search.toLowerCase()) || (c.workers?.name || '').toLowerCase().includes(search.toLowerCase());
-          if (!matchSearch) return false;
-          if (!filterStatus) return true;
-          if (!c.expiry) return filterStatus === 'valid';
-          const diff = (new Date(c.expiry) - now) / (1000 * 60 * 60 * 24);
-          if (filterStatus === 'expired') return diff < 0;
-          if (filterStatus === 'expiring') return diff >= 0 && diff < 30;
-          if (filterStatus === 'valid') return diff >= 30;
-          return true;
-        });
-        return filtered.length === 0 ? <EmptyState message="No certifications found." /> : (
-        <TableWrap>
-          <thead><tr><Th>Worker</Th><Th>Certification</Th><Th>Issuer</Th><Th>Expiry</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
-          <tbody>
-            {filtered.map(c => (
-              <tr key={c.id}>
-                <Td>{c.workers?.name || '—'}</Td>
-                <Td><strong>{c.cert_name}</strong></Td>
-                <Td>{c.issuer || '—'}</Td>
-                <Td>{fmtDate(c.expiry)}</Td>
-                <Td>{certBadge(c.expiry)}</Td>
-                <Td>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button onClick={() => openEdit(c)} style={btnSmall}>Edit</button>
-                    <button onClick={() => handleDelete(c)} style={btnDanger}>Delete</button>
-                  </div>
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </TableWrap>
-        );
-      })()}
-
-      {modal && (
-        <Modal title={modal === 'add' ? 'Add Certification' : 'Edit Certification'} onClose={closeModal}>
-          <Field label="Worker *">
-            <select style={inputStyle} value={form.worker_id} onChange={e => setForm(f => ({ ...f, worker_id: e.target.value }))}>
-              <option value="">Select a worker…</option>
-              {workers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Certification Name *"><input style={inputStyle} value={form.cert_name} onChange={e => setForm(f => ({ ...f, cert_name: e.target.value }))} /></Field>
-          <Field label="Issuer"><input style={inputStyle} value={form.issuer} onChange={e => setForm(f => ({ ...f, issuer: e.target.value }))} /></Field>
-          <Field label="Expiry Date"><input style={inputStyle} type="date" value={form.expiry} onChange={e => setForm(f => ({ ...f, expiry: e.target.value }))} /></Field>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
             <button onClick={closeModal} style={btnSecondary}>Cancel</button>
             <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
@@ -2051,6 +2046,208 @@ function WorkerClockIn({ currentWorker, showToast }) {
                 {e.start_time && <span style={{ color: C.textMuted, fontSize: 12, marginLeft: 8 }}>{fmtDateTime(e.start_time)} → {fmtDateTime(e.end_time)}</span>}
               </div>
               {timesheetBadge(e.status)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LICENCE AGENT PAGE (enhanced certifications management)
+// ═══════════════════════════════════════════════════════════════════════════════
+const certDefaultsLA = { worker_id: '', cert_name: '', issuer: '', expiry: '' };
+
+function LicenceAgentPage({ showToast }) {
+  const [certs, setCerts] = useState([]);
+  const [workers, setWorkers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [modal, setModal] = useState(null);
+  const [form, setForm] = useState(certDefaultsLA);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [c, w] = await Promise.all([
+      supabase.from('certifications').select('*, workers(name)').order('expiry', { ascending: true }),
+      supabase.from('workers').select('id, name').order('name'),
+    ]);
+    if (c.error) showToast(c.error.message, 'error');
+    else setCerts(c.data || []);
+    if (w.data) setWorkers(w.data);
+    setLoading(false);
+  }, [showToast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openAdd = () => { setForm(certDefaultsLA); setModal('add'); };
+  const openEdit = (c) => { setForm({ worker_id: c.worker_id || '', cert_name: c.cert_name, issuer: c.issuer || '', expiry: c.expiry || '' }); setModal(c); };
+  const closeModal = () => { setModal(null); setForm(certDefaultsLA); };
+
+  const handleSave = async () => {
+    if (!form.worker_id || !form.cert_name.trim()) { showToast('Worker and licence name are required.', 'error'); return; }
+    setSaving(true);
+    const payload = { ...form, expiry: form.expiry || null };
+    if (modal === 'add') {
+      const { error } = await supabase.from('certifications').insert([payload]);
+      if (error) showToast(error.message, 'error');
+      else { showToast('Licence added successfully', 'success'); closeModal(); load(); }
+    } else {
+      const { error } = await supabase.from('certifications').update(payload).eq('id', modal.id);
+      if (error) showToast(error.message, 'error');
+      else { showToast('Licence updated successfully', 'success'); closeModal(); load(); }
+    }
+    setSaving(false);
+  };
+
+  const handleDelete = async (c) => {
+    if (!window.confirm('Delete this licence/certification?')) return;
+    const { error } = await supabase.from('certifications').delete().eq('id', c.id);
+    if (error) showToast(error.message, 'error');
+    else { showToast('Licence deleted', 'success'); load(); }
+  };
+
+  const now = new Date();
+  const in30 = new Date(Date.now() + 30 * 86400000);
+  const today = new Date(todayISO());
+
+  const filtered = certs.filter(c => {
+    const matchSearch = !search || c.cert_name.toLowerCase().includes(search.toLowerCase()) || (c.workers?.name || '').toLowerCase().includes(search.toLowerCase());
+    if (!matchSearch) return false;
+    if (!filterStatus) return true;
+    if (!c.expiry) return filterStatus === 'valid';
+    const exp = new Date(c.expiry);
+    const diff = (exp - now) / (1000 * 60 * 60 * 24);
+    if (filterStatus === 'expired') return diff < 0;
+    if (filterStatus === 'expiring') return diff >= 0 && diff < 30;
+    if (filterStatus === 'valid') return diff >= 30;
+    return true;
+  });
+
+  const expiredCount = certs.filter(c => c.expiry && new Date(c.expiry) < today).length;
+  const expiringCount = certs.filter(c => c.expiry && new Date(c.expiry) >= today && new Date(c.expiry) <= in30).length;
+
+  return (
+    <div>
+      {/* Alert banner */}
+      {(expiredCount > 0 || expiringCount > 0) && (
+        <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 10, padding: '12px 16px', marginBottom: 16, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+          {expiredCount > 0 && <span style={{ color: C.error, fontSize: 13, fontWeight: 600 }}>🚨 {expiredCount} expired licence{expiredCount > 1 ? 's' : ''}</span>}
+          {expiringCount > 0 && <span style={{ color: C.warning, fontSize: 13, fontWeight: 600 }}>⚡ {expiringCount} expiring within 30 days</span>}
+          <button onClick={() => setFilterStatus('expired')} style={{ ...btnSecondary, padding: '4px 12px', fontSize: 12, marginLeft: 'auto' }}>Show Expired</button>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', flex: 1 }}>
+          <input style={{ ...inputStyle, maxWidth: 220 }} placeholder="Search worker or licence…" value={search} onChange={e => setSearch(e.target.value)} />
+          <select style={{ ...inputStyle, maxWidth: 180 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+            <option value="">All Statuses</option>
+            <option value="valid">Valid</option>
+            <option value="expiring">Expiring Soon (30d)</option>
+            <option value="expired">Expired</option>
+          </select>
+        </div>
+        <button onClick={openAdd} style={btnPrimary}>+ Add Licence</button>
+      </div>
+
+      {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> :
+        filtered.length === 0 ? <EmptyState message="No licences found." /> : (
+        <TableWrap>
+          <thead><tr><Th>Worker</Th><Th>Licence / Certification</Th><Th>Issuer</Th><Th>Expiry</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
+          <tbody>
+            {filtered.map(c => (
+              <tr key={c.id}>
+                <Td>{c.workers?.name || '—'}</Td>
+                <Td><strong>{c.cert_name}</strong></Td>
+                <Td>{c.issuer || '—'}</Td>
+                <Td>{fmtDate(c.expiry)}</Td>
+                <Td>{certBadge(c.expiry)}</Td>
+                <Td>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button onClick={() => openEdit(c)} style={btnSmall}>Edit</button>
+                    <button onClick={() => handleDelete(c)} style={btnDanger}>Delete</button>
+                  </div>
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </TableWrap>
+      )}
+
+      {modal && (
+        <Modal title={modal === 'add' ? 'Add Licence / Certification' : 'Edit Licence / Certification'} onClose={closeModal}>
+          <Field label="Worker *">
+            <select style={inputStyle} value={form.worker_id} onChange={e => setForm(f => ({ ...f, worker_id: e.target.value }))}>
+              <option value="">Select a worker…</option>
+              {workers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Licence / Certification Name *"><input style={inputStyle} value={form.cert_name} onChange={e => setForm(f => ({ ...f, cert_name: e.target.value }))} placeholder="e.g. White Card, RIW, High Risk" /></Field>
+          <Field label="Issuer / Authority"><input style={inputStyle} value={form.issuer} onChange={e => setForm(f => ({ ...f, issuer: e.target.value }))} /></Field>
+          <Field label="Expiry Date"><input style={inputStyle} type="date" value={form.expiry} onChange={e => setForm(f => ({ ...f, expiry: e.target.value }))} /></Field>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+            <button onClick={closeModal} style={btnSecondary}>Cancel</button>
+            <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// APP VIEWS PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+function AppViewsPage({ showToast }) {
+  const [workers, setWorkers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const { data, error } = await supabase.from('workers').select('id, name, email, job_title, status, app_status, mobile').order('name');
+      if (!mounted) return;
+      if (error) showToast(error.message, 'error');
+      else setWorkers(data || []);
+      setLoading(false);
+    })();
+    return () => { mounted = false; };
+  }, [showToast]);
+
+  const statusColor = { available: C.success, on_site: C.accent, inactive: C.textMuted };
+
+  return (
+    <div>
+      <div style={{ background: 'rgba(249,115,22,0.07)', border: '1px solid rgba(249,115,22,0.2)', borderRadius: 10, padding: '12px 16px', marginBottom: 20, fontSize: 13, color: C.textMuted }}>
+        📲 <strong style={{ color: C.text }}>App Views</strong> — shows each worker's portal view and current status. Click a worker to preview their allocation and timesheet data.
+      </div>
+
+      {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
+          {workers.map(w => (
+            <div key={w.id} onClick={() => setSelected(selected?.id === w.id ? null : w)} style={{ background: C.card, borderRadius: 10, border: `1px solid ${selected?.id === w.id ? C.accent : C.border}`, padding: 18, cursor: 'pointer', transition: 'border-color 0.15s' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.cardHover, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>👷</div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{w.name}</div>
+                  <div style={{ fontSize: 11, color: C.textMuted }}>{w.job_title || 'No role set'}</div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: 'rgba(249,115,22,0.12)', color: C.accent, fontFamily: '"DM Mono", monospace' }}>{w.app_status || 'Active'}</span>
+                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: C.cardHover, color: statusColor[w.status] || C.textMuted, fontFamily: '"DM Mono", monospace' }}>{w.status || '—'}</span>
+              </div>
+              {selected?.id === w.id && (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.border}`, fontSize: 12, color: C.textMuted }}>
+                  <div>📧 {w.email || '—'}</div>
+                  <div style={{ marginTop: 4 }}>📱 {w.mobile || '—'}</div>
+                </div>
+              )}
             </div>
           ))}
         </div>
