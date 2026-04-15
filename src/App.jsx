@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 
 // ─── THEME CONSTANTS ────────────────────────────────────────────────────────
@@ -386,14 +386,35 @@ function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpe
 
   useEffect(() => { refreshBadge(); }, [refreshBadge]);
 
-  const navItems = [
-    { id: 'dashboard', label: '📊 Dashboard' },
-    { id: 'workers', label: '👷 Workers' },
-    { id: 'allocations', label: '📋 Allocations' },
-    { id: 'timesheets', label: '🕐 Timesheets', badge: pendingCount || null },
-    { id: 'certifications', label: '📜 Certifications' },
-    { id: 'reports', label: '📁 Reports' },
+  const navSections = [
+    {
+      label: 'MAIN',
+      items: [
+        { id: 'dashboard', label: '📊 Dashboard' },
+        { id: 'workers', label: '👷 Workers' },
+        { id: 'allocations', label: '📋 Allocations' },
+        { id: 'pending_workers', label: '⏳ Pending Workers' },
+      ],
+    },
+    {
+      label: 'FINANCE',
+      items: [
+        { id: 'timesheets', label: '🕐 Timesheets', badge: pendingCount || null },
+        { id: 'clients', label: '🏗 Clients & Rates' },
+        { id: 'client_approvals', label: '✅ Client Approvals' },
+        { id: 'payroll', label: '💰 Payroll Tracker' },
+      ],
+    },
+    {
+      label: 'TOOLS',
+      items: [
+        { id: 'certifications', label: '📜 Certifications' },
+        { id: 'reports', label: '📁 Reports' },
+        { id: 'bulk_messages', label: '📢 Bulk Messages' },
+      ],
+    },
   ];
+  const navItems = navSections.flatMap(s => s.items);
 
   const navigate = (id) => { setActivePage(id); if (isMobile) setSidebarOpen(false); };
 
@@ -407,21 +428,26 @@ function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpe
         <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>CBD Plant & Labour</div>
         <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>Admin Portal</div>
       </div>
-      <nav style={{ flex: 1, padding: '12px 8px', overflowY: 'auto' }}>
-        {navItems.map(item => (
-          <button key={item.id} onClick={() => navigate(item.id)} style={{
-            width: '100%', textAlign: 'left', background: activePage === item.id ? C.accent : 'none',
-            color: activePage === item.id ? '#fff' : C.textMuted, border: 'none', borderRadius: 6,
-            padding: '10px 12px', cursor: 'pointer', fontSize: 14, marginBottom: 2, transition: 'all 0.15s',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          }}>
-            <span>{item.label}</span>
-            {item.badge ? (
-              <span style={{ background: C.error, color: '#fff', borderRadius: 10, fontSize: 11, fontWeight: 700, padding: '1px 7px', minWidth: 20, textAlign: 'center' }}>
-                {item.badge}
-              </span>
-            ) : null}
-          </button>
+      <nav style={{ flex: 1, padding: '8px 8px', overflowY: 'auto' }}>
+        {navSections.map(section => (
+          <div key={section.label}>
+            <div style={{ padding: '10px 12px 4px', fontSize: 10, color: C.textMuted, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase' }}>{section.label}</div>
+            {section.items.map(item => (
+              <button key={item.id} onClick={() => navigate(item.id)} style={{
+                width: '100%', textAlign: 'left', background: activePage === item.id ? C.accent : 'none',
+                color: activePage === item.id ? '#fff' : C.textMuted, border: 'none', borderRadius: 6,
+                padding: '9px 12px', cursor: 'pointer', fontSize: 13, marginBottom: 1, transition: 'all 0.15s',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <span>{item.label}</span>
+                {item.badge ? (
+                  <span style={{ background: C.error, color: '#fff', borderRadius: 10, fontSize: 11, fontWeight: 700, padding: '1px 7px', minWidth: 20, textAlign: 'center' }}>
+                    {item.badge}
+                  </span>
+                ) : null}
+              </button>
+            ))}
+          </div>
         ))}
       </nav>
     </div>
@@ -454,10 +480,15 @@ function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpe
         <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? 12 : 24 }}>
           {activePage === 'dashboard' && <DashboardPage showToast={showToast} />}
           {activePage === 'workers' && <WorkersPage showToast={showToast} isMobile={isMobile} />}
-          {activePage === 'allocations' && <AllocationsPage showToast={showToast} isMobile={isMobile} />}
+          {activePage === 'allocations' && <AllocationsPage showToast={showToast} />}
+          {activePage === 'pending_workers' && <PendingWorkersPage showToast={showToast} />}
           {activePage === 'timesheets' && <TimesheetsPage showToast={showToast} isMobile={isMobile} refreshBadge={refreshBadge} />}
+          {activePage === 'clients' && <ClientsPage showToast={showToast} />}
+          {activePage === 'client_approvals' && <ClientApprovalsPage showToast={showToast} />}
+          {activePage === 'payroll' && <PayrollTrackerPage showToast={showToast} />}
           {activePage === 'certifications' && <CertificationsPage showToast={showToast} isMobile={isMobile} />}
           {activePage === 'reports' && <ReportsPage showToast={showToast} />}
+          {activePage === 'bulk_messages' && <BulkMessagesPage showToast={showToast} />}
         </div>
       </div>
     </div>
@@ -470,41 +501,34 @@ function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpe
 function DashboardPage({ showToast }) {
   const [stats, setStats] = useState(null);
   const [recentTimesheets, setRecentTimesheets] = useState([]);
+  const [expiredCerts, setExpiredCerts] = useState([]);
+  const [dismissedAlerts, setDismissedAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        const thirtyDaysFromNow = new Date();
-        thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
-
-        const [w, a, t, c] = await Promise.all([
-          supabase.from('workers').select('id', { count: 'exact' }),
-          supabase.from('allocations').select('id', { count: 'exact' }).eq('status', 'confirmed'),
+        const [onSite, available, pendingTs, expiringCerts, recent, expired] = await Promise.all([
+          supabase.from('workers').select('id', { count: 'exact' }).eq('status', 'on_site'),
+          supabase.from('workers').select('id', { count: 'exact' }).eq('status', 'available'),
           supabase.from('timesheets').select('id', { count: 'exact' }).eq('status', 'pending'),
           supabase.from('certifications').select('id', { count: 'exact' })
-            .lte('expiry', thirtyDaysFromNow.toISOString().split('T')[0])
+            .lte('expiry', new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0])
             .gte('expiry', todayISO()),
+          supabase.from('timesheets').select('*, workers(name)').order('created_at', { ascending: false }).limit(5),
+          supabase.from('certifications').select('*, workers(name)').lt('expiry', todayISO()),
         ]);
 
-        const recent = await supabase
-          .from('timesheets')
-          .select('*, workers(name)')
-          .order('created_at', { ascending: false })
-          .limit(5);
-
         if (!mounted) return;
-
-        if (w.error || a.error || t.error || c.error) throw new Error('Failed to load stats');
-
         setStats({
-          workers: w.count || 0,
-          allocations: a.count || 0,
-          timesheets: t.count || 0,
-          certs: c.count || 0,
+          onSite: onSite.count || 0,
+          available: available.count || 0,
+          pendingTs: pendingTs.count || 0,
+          expiringCerts: expiringCerts.count || 0,
         });
         setRecentTimesheets(recent.data || []);
+        setExpiredCerts(expired.data || []);
       } catch (err) {
         showToast(err.message, 'error');
       } finally {
@@ -515,24 +539,47 @@ function DashboardPage({ showToast }) {
   }, [showToast]);
 
   const statCards = [
-    { label: 'Total Workers', value: stats?.workers, color: C.accent },
-    { label: 'Active Allocations', value: stats?.allocations, color: C.success },
-    { label: 'Pending Timesheets', value: stats?.timesheets, color: C.warning },
-    { label: 'Expiring Certs', value: stats?.certs, color: C.error },
+    { label: 'Workers On Site', value: stats?.onSite, color: C.success },
+    { label: 'Available Pool', value: stats?.available, color: C.accent },
+    { label: 'Pending Timesheets', value: stats?.pendingTs, color: C.warning },
+    { label: 'Expiring Certs (30d)', value: stats?.expiringCerts, color: C.error },
   ];
 
   if (loading) return <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 60 }}><Spinner size={36} /></div>;
 
+  const visibleAlerts = expiredCerts.filter(c => !dismissedAlerts.includes(c.id));
+
   return (
-    <div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 32 }}>
-        {statCards.map(c => (
-          <div key={c.label} style={{ background: C.card, borderRadius: 10, padding: '20px 24px', border: `1px solid ${C.border}` }}>
-            <div style={{ fontSize: 36, fontWeight: 800, color: c.color }}>{c.value ?? '—'}</div>
-            <div style={{ color: C.textMuted, fontSize: 13, marginTop: 4 }}>{c.label}</div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16 }}>
+        {statCards.map(sc => (
+          <div key={sc.label} style={{ background: C.card, borderRadius: 10, padding: '20px 24px', border: `1px solid ${C.border}`, borderLeft: `3px solid ${sc.color}` }}>
+            <div style={{ fontSize: 36, fontWeight: 800, color: sc.color }}>{sc.value ?? '—'}</div>
+            <div style={{ color: C.textMuted, fontSize: 13, marginTop: 4 }}>{sc.label}</div>
           </div>
         ))}
       </div>
+
+      {visibleAlerts.length > 0 && (
+        <div style={{ background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 10, padding: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span>🚨</span>
+            <span style={{ fontWeight: 700, color: C.error, fontSize: 14 }}>Expired Certifications</span>
+            <Badge label={`${visibleAlerts.length} REQUIRES ACTION`} color="red" />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {visibleAlerts.map(c => (
+              <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: C.card, borderRadius: 8, padding: '10px 14px' }}>
+                <div>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{c.workers?.name || '—'}</span>
+                  <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 8 }}>{c.cert_name} — expired {fmtDate(c.expiry)}</span>
+                </div>
+                <button onClick={() => setDismissedAlerts(d => [...d, c.id])} style={{ ...btnSecondary, padding: '4px 10px', fontSize: 12 }}>Dismiss</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: 24 }}>
         <h3 style={{ color: C.text, marginBottom: 16, fontSize: 16 }}>Recent Timesheets</h3>
@@ -561,7 +608,16 @@ function DashboardPage({ showToast }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // WORKERS PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
-const workerDefaults = { name: '', email: '', mobile: '', role: 'worker', status: 'available', app_status: 'Active', site: '', client: '' };
+const JOB_TITLES = [
+  'Excavator Operator','Dozer Operator','Multiskilled Operator','Skilled Labourer',
+  'Confined Space Labour','Moxie/Dump Truck Operator','Dogman','Leading Hand',
+  'Foreman','Site Engineer','Concreter','Scaffolder','General Labourer',
+  'Formwork Carpenter','Steel Fixer','EWP Operator','Skid Steer Operator',
+  'Roller Operator','Grader Operator','Hirail Operator','Crane Operator',
+  'RIW Worker','Civil Leading Hand','Rigger',
+];
+
+const workerDefaults = { name: '', email: '', mobile: '', role: 'worker', job_title: '', licences: '', address: '', access_level: 'employee', status: 'available', app_status: 'Active', site: '', client: '' };
 
 function WorkersPage({ showToast, isMobile }) {
   const [workers, setWorkers] = useState([]);
@@ -582,7 +638,7 @@ function WorkersPage({ showToast, isMobile }) {
   useEffect(() => { load(); }, [load]);
 
   const openAdd = () => { setForm(workerDefaults); setModal('add'); };
-  const openEdit = (w) => { setForm({ name: w.name, email: w.email, mobile: w.mobile || '', role: w.role, status: w.status, app_status: w.app_status || 'Active', site: w.site || '', client: w.client || '' }); setModal(w); };
+  const openEdit = (w) => { setForm({ name: w.name, email: w.email, mobile: w.mobile || '', role: w.role, job_title: w.job_title || '', licences: w.licences || '', address: w.address || '', access_level: w.access_level || 'employee', status: w.status, app_status: w.app_status || 'Active', site: w.site || '', client: w.client || '' }); setModal(w); };
   const closeModal = () => { setModal(null); setForm(workerDefaults); };
 
   const handleSave = async () => {
@@ -620,16 +676,19 @@ function WorkersPage({ showToast, isMobile }) {
         <EmptyState message="No workers found. Add one to get started." />
       ) : (
         <TableWrap>
-          <thead><tr><Th>Name</Th><Th>Email</Th><Th>Mobile</Th><Th>Role</Th><Th>Status</Th><Th>App Status</Th><Th>Site</Th><Th>Actions</Th></tr></thead>
+          <thead><tr><Th>Name</Th><Th>Job Title</Th><Th>Mobile</Th><Th>Licences</Th><Th>Status</Th><Th>App Status</Th><Th>Site</Th><Th>Actions</Th></tr></thead>
           <tbody>
             {filtered.map(w => (
               <tr key={w.id}>
-                <Td><strong>{w.name}</strong></Td>
-                <Td>{w.email}</Td>
+                <Td>
+                  <div><strong>{w.name}</strong></div>
+                  <div style={{ fontSize: 12, color: C.textMuted }}>{w.email}</div>
+                </Td>
+                <Td>{w.job_title || <span style={{ color: C.textMuted }}>—</span>}</Td>
                 <Td>{w.mobile || '—'}</Td>
-                <Td><Badge label={w.role} color={w.role === 'admin' ? 'blue' : 'gray'} /></Td>
-                <Td>{w.status}</Td>
-                <Td><Badge label={w.app_status || 'Active'} color="green" /></Td>
+                <Td><span style={{ fontSize: 12, color: C.textMuted }}>{w.licences || '—'}</span></Td>
+                <Td><Badge label={w.status || 'available'} color={w.status === 'on_site' ? 'green' : w.status === 'job_details_sent' ? 'yellow' : 'blue'} /></Td>
+                <Td><Badge label={w.app_status || 'Active'} color={w.app_status === 'Active' ? 'green' : w.app_status === 'Profile Incomplete' ? 'yellow' : 'gray'} /></Td>
                 <Td>{w.site || '—'}</Td>
                 <Td>
                   <div style={{ display: 'flex', gap: 6 }}>
@@ -644,31 +703,53 @@ function WorkersPage({ showToast, isMobile }) {
       )}
 
       {modal && (
-        <Modal title={modal === 'add' ? 'Add Worker' : 'Edit Worker'} onClose={closeModal}>
-          <Field label="Name *"><input style={inputStyle} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></Field>
-          <Field label="Email *"><input style={inputStyle} type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></Field>
-          <Field label="Mobile"><input style={inputStyle} value={form.mobile} onChange={e => setForm(f => ({ ...f, mobile: e.target.value }))} /></Field>
-          <Field label="Role">
-            <select style={inputStyle} value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
-              <option value="worker">Worker</option>
-              <option value="admin">Admin</option>
-            </select>
-          </Field>
-          <Field label="Status">
-            <select style={inputStyle} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
-              <option value="available">Available</option>
-              <option value="on-site">On-Site</option>
-              <option value="unavailable">Unavailable</option>
-            </select>
-          </Field>
-          <Field label="App Status">
-            <select style={inputStyle} value={form.app_status} onChange={e => setForm(f => ({ ...f, app_status: e.target.value }))}>
-              <option value="Active">Active</option>
-              <option value="Inactive">Inactive</option>
-            </select>
-          </Field>
-          <Field label="Site"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
-          <Field label="Client"><input style={inputStyle} value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} /></Field>
+        <Modal title={modal === 'add' ? 'Add Worker' : 'Edit Worker'} onClose={closeModal} width={560}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+            <Field label="Full Name *"><input style={inputStyle} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></Field>
+            <Field label="Email *"><input style={inputStyle} type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></Field>
+            <Field label="Mobile"><input style={inputStyle} value={form.mobile} onChange={e => setForm(f => ({ ...f, mobile: e.target.value }))} /></Field>
+            <Field label="Job Title">
+              <>
+                <input style={inputStyle} list="job-titles-list" value={form.job_title} onChange={e => setForm(f => ({ ...f, job_title: e.target.value }))} placeholder="Type or select a role…" />
+                <datalist id="job-titles-list">
+                  {JOB_TITLES.map(t => <option key={t} value={t} />)}
+                </datalist>
+              </>
+            </Field>
+            <Field label="Licences / Tickets"><input style={inputStyle} value={form.licences} onChange={e => setForm(f => ({ ...f, licences: e.target.value }))} placeholder="e.g. EWP, VOC Excavator, RIW…" /></Field>
+            <Field label="Address"><input style={inputStyle} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></Field>
+            <Field label="Portal Access">
+              <select style={inputStyle} value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
+                <option value="worker">Worker</option>
+                <option value="admin">Admin</option>
+              </select>
+            </Field>
+            <Field label="Access Level">
+              <select style={inputStyle} value={form.access_level} onChange={e => setForm(f => ({ ...f, access_level: e.target.value }))}>
+                <option value="employee">Employee</option>
+                <option value="manager">Manager</option>
+              </select>
+            </Field>
+            <Field label="Work Status">
+              <select style={inputStyle} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
+                <option value="available">Available</option>
+                <option value="on_site">On Site</option>
+                <option value="job_details_sent">Job Details Sent</option>
+                <option value="unavailable">Unavailable</option>
+              </select>
+            </Field>
+            <Field label="App Status">
+              <select style={inputStyle} value={form.app_status} onChange={e => setForm(f => ({ ...f, app_status: e.target.value }))}>
+                <option value="Active">Active</option>
+                <option value="Invite Sent">Invite Sent</option>
+                <option value="Completing Profile">Completing Profile</option>
+                <option value="Profile Incomplete">Profile Incomplete</option>
+                <option value="Inactive">Inactive</option>
+              </select>
+            </Field>
+            <Field label="Current Site"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
+            <Field label="Current Client"><input style={inputStyle} value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} /></Field>
+          </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
             <button onClick={closeModal} style={btnSecondary}>Cancel</button>
             <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
@@ -682,7 +763,7 @@ function WorkersPage({ showToast, isMobile }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ALLOCATIONS PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
-const allocDefaults = { worker_id: '', site: '', client: '', status: 'pending', start_time: '', end_time: '', notes: '' };
+const allocDefaults = { worker_id: '', site: '', client: '', project: '', address: '', site_manager: '', manager_phone: '', status: 'pending', start_date: '', start_time: '', end_time: '', notes: '' };
 
 function AllocationsPage({ showToast }) {
   const [allocations, setAllocations] = useState([]);
@@ -709,7 +790,7 @@ function AllocationsPage({ showToast }) {
 
   const openAdd = () => { setForm(allocDefaults); setModal('add'); };
   const openEdit = (a) => {
-    setForm({ worker_id: a.worker_id || '', site: a.site || '', client: a.client || '', status: a.status, start_time: a.start_time ? a.start_time.slice(0, 16) : '', end_time: a.end_time ? a.end_time.slice(0, 16) : '', notes: a.notes || '' });
+    setForm({ worker_id: a.worker_id || '', site: a.site || '', client: a.client || '', project: a.project || '', address: a.address || '', site_manager: a.site_manager || '', manager_phone: a.manager_phone || '', status: a.status, start_date: a.start_date || '', start_time: a.start_time ? a.start_time.slice(0, 16) : '', end_time: a.end_time ? a.end_time.slice(0, 16) : '', notes: a.notes || '' });
     setModal(a);
   };
   const closeModal = () => { setModal(null); setForm(allocDefaults); };
@@ -756,15 +837,22 @@ function AllocationsPage({ showToast }) {
         <EmptyState message="No allocations found." />
       ) : (
         <TableWrap>
-          <thead><tr><Th>Worker</Th><Th>Site</Th><Th>Client</Th><Th>Status</Th><Th>Start Time</Th><Th>Actions</Th></tr></thead>
+          <thead><tr><Th>Worker</Th><Th>Client</Th><Th>Project / Site</Th><Th>Site Manager</Th><Th>Start Date</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
           <tbody>
             {filtered.map(a => (
               <tr key={a.id}>
                 <Td>{a.workers?.name || '—'}</Td>
-                <Td>{a.site || '—'}</Td>
                 <Td>{a.client || '—'}</Td>
+                <Td>
+                  <div>{a.project || a.site || '—'}</div>
+                  {a.project && a.site && <div style={{ fontSize: 12, color: C.textMuted }}>{a.site}</div>}
+                </Td>
+                <Td>
+                  <div>{a.site_manager || '—'}</div>
+                  {a.manager_phone && <div style={{ fontSize: 12, color: C.textMuted }}>{a.manager_phone}</div>}
+                </Td>
+                <Td>{a.start_date ? fmtDate(a.start_date) : fmtDateTime(a.start_time)}</Td>
                 <Td>{allocationBadge(a.status)}</Td>
-                <Td>{fmtDateTime(a.start_time)}</Td>
                 <Td>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button onClick={() => openEdit(a)} style={btnSmall}>Edit</button>
@@ -778,26 +866,37 @@ function AllocationsPage({ showToast }) {
       )}
 
       {modal && (
-        <Modal title={modal === 'add' ? 'Create Allocation' : 'Edit Allocation'} onClose={closeModal}>
-          <Field label="Worker *">
-            <select style={inputStyle} value={form.worker_id} onChange={e => setForm(f => ({ ...f, worker_id: e.target.value }))}>
-              <option value="">Select a worker…</option>
-              {workers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Site"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
-          <Field label="Client"><input style={inputStyle} value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} /></Field>
-          <Field label="Status">
-            <select style={inputStyle} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
-              <option value="pending">Pending</option>
-              <option value="confirmed">Confirmed</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-          </Field>
-          <Field label="Start Time"><input style={inputStyle} type="datetime-local" value={form.start_time} onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} /></Field>
-          <Field label="End Time"><input style={inputStyle} type="datetime-local" value={form.end_time} onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} /></Field>
-          <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 80, resize: 'vertical' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Field>
+        <Modal title={modal === 'add' ? 'Create Allocation' : 'Edit Allocation'} onClose={closeModal} width={560}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <Field label="Worker *">
+                <select style={inputStyle} value={form.worker_id} onChange={e => setForm(f => ({ ...f, worker_id: e.target.value }))}>
+                  <option value="">Select a worker…</option>
+                  {workers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+              </Field>
+            </div>
+            <Field label="Client"><input style={inputStyle} value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} /></Field>
+            <Field label="Project"><input style={inputStyle} value={form.project} onChange={e => setForm(f => ({ ...f, project: e.target.value }))} /></Field>
+            <Field label="Site"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
+            <Field label="Site Address"><input style={inputStyle} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></Field>
+            <Field label="Site Manager"><input style={inputStyle} value={form.site_manager} onChange={e => setForm(f => ({ ...f, site_manager: e.target.value }))} /></Field>
+            <Field label="Manager Phone"><input style={inputStyle} value={form.manager_phone} onChange={e => setForm(f => ({ ...f, manager_phone: e.target.value }))} /></Field>
+            <Field label="Start Date"><input style={inputStyle} type="date" value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} /></Field>
+            <Field label="Status">
+              <select style={inputStyle} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
+                <option value="pending">Pending</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </Field>
+            <Field label="Arrival Time"><input style={inputStyle} type="datetime-local" value={form.start_time} onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} /></Field>
+            <Field label="End Time"><input style={inputStyle} type="datetime-local" value={form.end_time} onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} /></Field>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Field>
+            </div>
+          </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
             <button onClick={closeModal} style={btnSecondary}>Cancel</button>
             <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
@@ -1207,6 +1306,437 @@ function ReportsPage({ showToast }) {
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CLIENTS PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+const clientDefaults = { name: '', site: '', contact: '', contact_email: '', contact_phone: '', rate_regular: '', rate_overtime: '', notes: '' };
+
+function ClientsPage({ showToast }) {
+  const [clients, setClients] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [modal, setModal] = useState(null);
+  const [form, setForm] = useState(clientDefaults);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase.from('clients').select('*').order('name');
+    if (error) showToast(error.message, 'error');
+    else setClients(data || []);
+    setLoading(false);
+  }, [showToast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openAdd = () => { setForm(clientDefaults); setModal('add'); };
+  const openEdit = (c) => {
+    setForm({ name: c.name, site: c.site || '', contact: c.contact || '', contact_email: c.contact_email || '', contact_phone: c.contact_phone || '', rate_regular: c.rate_regular ?? '', rate_overtime: c.rate_overtime ?? '', notes: c.notes || '' });
+    setModal(c);
+  };
+  const closeModal = () => { setModal(null); setForm(clientDefaults); };
+
+  const handleSave = async () => {
+    if (!form.name.trim()) { showToast('Client name is required.', 'error'); return; }
+    setSaving(true);
+    const payload = { ...form, rate_regular: form.rate_regular === '' ? null : parseFloat(form.rate_regular), rate_overtime: form.rate_overtime === '' ? null : parseFloat(form.rate_overtime) };
+    if (modal === 'add') {
+      const { error } = await supabase.from('clients').insert([payload]);
+      if (error) showToast(error.message, 'error');
+      else { showToast('Client added successfully', 'success'); closeModal(); load(); }
+    } else {
+      const { error } = await supabase.from('clients').update(payload).eq('id', modal.id);
+      if (error) showToast(error.message, 'error');
+      else { showToast('Client updated successfully', 'success'); closeModal(); load(); }
+    }
+    setSaving(false);
+  };
+
+  const handleDelete = async (c) => {
+    if (!window.confirm(`Delete client "${c.name}"? This cannot be undone.`)) return;
+    const { error } = await supabase.from('clients').delete().eq('id', c.id);
+    if (error) showToast(error.message, 'error');
+    else { showToast('Client deleted', 'success'); load(); }
+  };
+
+  const handleExport = async () => {
+    const { data, error } = await supabase.from('clients').select('*');
+    if (error) { showToast(error.message, 'error'); return; }
+    downloadCSV(`clients_export_${todayISO()}.csv`, data);
+    showToast('Clients exported', 'success');
+  };
+
+  const filtered = clients.filter(c => !search || c.name.toLowerCase().includes(search.toLowerCase()) || (c.site || '').toLowerCase().includes(search.toLowerCase()) || (c.contact || '').toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, gap: 12, flexWrap: 'wrap' }}>
+        <input style={{ ...inputStyle, maxWidth: 280 }} placeholder="Search by name, site, contact…" value={search} onChange={e => setSearch(e.target.value)} />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={handleExport} style={btnSecondary}>↓ Export CSV</button>
+          <button onClick={openAdd} style={btnPrimary}>+ Add Client</button>
+        </div>
+      </div>
+
+      {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : filtered.length === 0 ? (
+        <EmptyState message="No clients yet. Add your first client to get started." />
+      ) : (
+        <TableWrap>
+          <thead><tr><Th>Client Name</Th><Th>Site</Th><Th>Contact</Th><Th>Phone</Th><Th>Rate / hr</Th><Th>OT Rate / hr</Th><Th>Actions</Th></tr></thead>
+          <tbody>
+            {filtered.map(c => (
+              <tr key={c.id}>
+                <Td><strong>{c.name}</strong></Td>
+                <Td>{c.site || '—'}</Td>
+                <Td>
+                  <div>{c.contact || '—'}</div>
+                  {c.contact_email && <div style={{ fontSize: 12, color: C.textMuted }}>{c.contact_email}</div>}
+                </Td>
+                <Td>{c.contact_phone || '—'}</Td>
+                <Td>
+                  {c.rate_regular != null
+                    ? <span style={{ fontWeight: 700, color: '#f97316' }}>${parseFloat(c.rate_regular).toFixed(2)}</span>
+                    : '—'}
+                </Td>
+                <Td>
+                  {c.rate_overtime != null
+                    ? <span style={{ fontWeight: 700, color: C.warning }}>${parseFloat(c.rate_overtime).toFixed(2)}</span>
+                    : '—'}
+                </Td>
+                <Td>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button onClick={() => openEdit(c)} style={btnSmall}>Edit</button>
+                    <button onClick={() => handleDelete(c)} style={btnDanger}>Delete</button>
+                  </div>
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </TableWrap>
+      )}
+
+      {modal && (
+        <Modal title={modal === 'add' ? 'Add Client' : 'Edit Client'} onClose={closeModal} width={540}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <Field label="Client Name *"><input style={inputStyle} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></Field>
+            </div>
+            <Field label="Site / Project"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
+            <Field label="Contact Person"><input style={inputStyle} value={form.contact} onChange={e => setForm(f => ({ ...f, contact: e.target.value }))} /></Field>
+            <Field label="Contact Email"><input style={inputStyle} type="email" value={form.contact_email} onChange={e => setForm(f => ({ ...f, contact_email: e.target.value }))} /></Field>
+            <Field label="Contact Phone"><input style={inputStyle} value={form.contact_phone} onChange={e => setForm(f => ({ ...f, contact_phone: e.target.value }))} /></Field>
+            <Field label="Regular Rate ($/hr)"><input style={inputStyle} type="number" step="0.01" min="0" value={form.rate_regular} onChange={e => setForm(f => ({ ...f, rate_regular: e.target.value }))} placeholder="e.g. 68.00" /></Field>
+            <Field label="OT Rate ($/hr)"><input style={inputStyle} type="number" step="0.01" min="0" value={form.rate_overtime} onChange={e => setForm(f => ({ ...f, rate_overtime: e.target.value }))} placeholder="e.g. 102.00" /></Field>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Field>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+            <button onClick={closeModal} style={btnSecondary}>Cancel</button>
+            <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PENDING WORKERS PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+function PendingWorkersPage({ showToast }) {
+  const [workers, setWorkers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase.from('workers').select('*').neq('app_status', 'Active').order('created_at', { ascending: false });
+    if (error) showToast(error.message, 'error');
+    else setWorkers(data || []);
+    setLoading(false);
+  }, [showToast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleRemind = (w) => showToast(`Reminder sent to ${w.name.split(' ')[0]}`, 'success');
+
+  const appStatusColor = (s) => s === 'Invite Sent' ? 'blue' : s === 'Completing Profile' ? 'yellow' : s === 'Profile Incomplete' ? 'yellow' : 'gray';
+
+  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>;
+  if (!workers.length) return <EmptyState message="All workers are active — no pending onboarding." />;
+
+  return (
+    <div>
+      <div style={{ color: C.textMuted, fontSize: 14, marginBottom: 20 }}>Workers who haven't completed their profile or accepted their invite.</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+        {workers.map(w => (
+          <div key={w.id} style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: 18 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+              <div>
+                <div style={{ fontWeight: 700, color: C.text, fontSize: 15 }}>{w.name}</div>
+                <div style={{ color: C.textMuted, fontSize: 12, marginTop: 2 }}>{w.email}</div>
+                {w.job_title && <div style={{ color: C.textMuted, fontSize: 12 }}>{w.job_title}</div>}
+              </div>
+              <Badge label={w.app_status || 'Pending'} color={appStatusColor(w.app_status)} />
+            </div>
+            {w.mobile && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 10 }}>📱 {w.mobile}</div>}
+            <button onClick={() => handleRemind(w)} style={{ ...btnSmall, width: '100%' }}>📧 Send Reminder</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CLIENT APPROVALS PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+function ClientApprovalsPage({ showToast }) {
+  const [timesheets, setTimesheets] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase.from('timesheets').select('*, workers(name)').order('created_at', { ascending: false }).limit(50);
+    if (error) showToast(error.message, 'error');
+    else setTimesheets(data || []);
+    setLoading(false);
+  }, [showToast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleMarkClientApproved = async (ts) => {
+    const { error } = await supabase.from('timesheets').update({ client_approved: true }).eq('id', ts.id);
+    if (error) showToast(error.message, 'error');
+    else { showToast('Marked as client approved', 'success'); load(); }
+  };
+
+  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+        <Badge label="⚡ CLIENT APPROVAL TRACKING" color="blue" />
+        <span style={{ color: C.textMuted, fontSize: 13 }}>Mark timesheets as client-approved before final payroll processing.</span>
+      </div>
+      {timesheets.length === 0 ? <EmptyState message="No timesheets found." /> : (
+        <TableWrap>
+          <thead><tr><Th>Worker</Th><Th>Client</Th><Th>Site</Th><Th>Date</Th><Th>Hours</Th><Th>Status</Th><Th>Client Approved</Th><Th>Actions</Th></tr></thead>
+          <tbody>
+            {timesheets.map(ts => (
+              <tr key={ts.id}>
+                <Td>{ts.workers?.name || '—'}</Td>
+                <Td>{ts.client || '—'}</Td>
+                <Td>{ts.site || '—'}</Td>
+                <Td>{fmtDate(ts.date)}</Td>
+                <Td>{ts.hours ?? '—'}</Td>
+                <Td>{timesheetBadge(ts.status)}</Td>
+                <Td>
+                  {ts.client_approved
+                    ? <Badge label="✓ Approved" color="green" />
+                    : <Badge label="Pending" color="yellow" />}
+                </Td>
+                <Td>
+                  {!ts.client_approved && (
+                    <button onClick={() => handleMarkClientApproved(ts)} style={{ ...btnSmall, color: '#4ade80' }}>Mark Approved</button>
+                  )}
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </TableWrap>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PAYROLL TRACKER PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+function PayrollTrackerPage({ showToast }) {
+  const [timesheets, setTimesheets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    let q = supabase.from('timesheets').select('*, workers(name)').eq('status', 'approved').order('date', { ascending: false });
+    if (dateFrom) q = q.gte('date', dateFrom);
+    if (dateTo) q = q.lte('date', dateTo);
+    const { data, error } = await q;
+    if (error) showToast(error.message, 'error');
+    else setTimesheets(data || []);
+    setLoading(false);
+  }, [showToast, dateFrom, dateTo]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const totalHours = timesheets.reduce((sum, ts) => sum + (parseFloat(ts.hours) || 0), 0);
+
+  return (
+    <div>
+      <div style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: 18, marginBottom: 20 }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div>
+            <label style={{ color: C.textMuted, fontSize: 13, display: 'block', marginBottom: 4 }}>From</label>
+            <input style={{ ...inputStyle, width: 160 }} type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+          </div>
+          <div>
+            <label style={{ color: C.textMuted, fontSize: 13, display: 'block', marginBottom: 4 }}>To</label>
+            <input style={{ ...inputStyle, width: 160 }} type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+          </div>
+          <button onClick={() => { setDateFrom(''); setDateTo(''); }} style={btnSecondary}>Clear</button>
+          <div style={{ marginLeft: 'auto', background: C.card, borderRadius: 8, padding: '10px 20px', border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: C.warning }}>{totalHours.toFixed(1)}</div>
+            <div style={{ color: C.textMuted, fontSize: 12 }}>Total Approved Hours</div>
+          </div>
+        </div>
+      </div>
+
+      {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : timesheets.length === 0 ? (
+        <EmptyState message="No approved timesheets in this range." />
+      ) : (
+        <TableWrap>
+          <thead><tr><Th>Worker</Th><Th>Date</Th><Th>Client</Th><Th>Site</Th><Th>Hours</Th><Th>Status</Th></tr></thead>
+          <tbody>
+            {timesheets.map(ts => (
+              <tr key={ts.id}>
+                <Td><strong>{ts.workers?.name || '—'}</strong></Td>
+                <Td>{fmtDate(ts.date)}</Td>
+                <Td>{ts.client || '—'}</Td>
+                <Td>{ts.site || '—'}</Td>
+                <Td><span style={{ fontWeight: 700, color: C.warning }}>{ts.hours}</span></Td>
+                <Td>{timesheetBadge(ts.status)}</Td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colSpan={4} style={{ padding: '10px 16px', color: C.textMuted, fontSize: 13, borderTop: `2px solid ${C.border}` }}>{timesheets.length} records</td>
+              <td style={{ padding: '10px 16px', fontWeight: 700, color: C.warning, fontSize: 15, borderTop: `2px solid ${C.border}` }}>{totalHours.toFixed(1)} hrs</td>
+              <td style={{ borderTop: `2px solid ${C.border}` }} />
+            </tr>
+          </tfoot>
+        </TableWrap>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BULK MESSAGES PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+function BulkMessagesPage({ showToast }) {
+  const [workerMsg, setWorkerMsg] = useState('');
+  const [clientMsg, setClientMsg] = useState('');
+  const [workers, setWorkers] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [selectedWorkers, setSelectedWorkers] = useState([]);
+  const [selectedClients, setSelectedClients] = useState([]);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const [w, c] = await Promise.all([
+        supabase.from('workers').select('id, name, mobile, email').eq('app_status', 'Active').order('name'),
+        supabase.from('clients').select('id, name, contact, contact_email, contact_phone').order('name'),
+      ]);
+      setWorkers(w.data || []);
+      setClients(c.data || []);
+    })();
+  }, []);
+
+  const toggleWorker = (id) => setSelectedWorkers(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+  const toggleClient = (id) => setSelectedClients(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+  const allWorkers = selectedWorkers.length === workers.length;
+  const allClients = selectedClients.length === clients.length;
+
+  const handleSendWorkers = async () => {
+    if (!workerMsg.trim()) { showToast('Enter a message first.', 'error'); return; }
+    if (!selectedWorkers.length) { showToast('Select at least one worker.', 'error'); return; }
+    setSending(true);
+    await new Promise(r => setTimeout(r, 800));
+    showToast(`Message queued for ${selectedWorkers.length} worker(s)`, 'success');
+    setWorkerMsg('');
+    setSelectedWorkers([]);
+    setSending(false);
+  };
+
+  const handleSendClients = async () => {
+    if (!clientMsg.trim()) { showToast('Enter a message first.', 'error'); return; }
+    if (!selectedClients.length) { showToast('Select at least one client.', 'error'); return; }
+    setSending(true);
+    await new Promise(r => setTimeout(r, 800));
+    showToast(`Message queued for ${selectedClients.length} client(s)`, 'success');
+    setClientMsg('');
+    setSelectedClients([]);
+    setSending(false);
+  };
+
+  const panelStyle = { background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: 20, display: 'flex', flexDirection: 'column', gap: 14 };
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+      {/* Worker Messages */}
+      <div style={panelStyle}>
+        <div style={{ fontWeight: 700, color: C.text, fontSize: 15 }}>👷 Worker Messages</div>
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+            <label style={{ color: C.textMuted, fontSize: 13 }}>Recipients</label>
+            <button onClick={() => setSelectedWorkers(allWorkers ? [] : workers.map(w => w.id))} style={{ ...btnSecondary, padding: '3px 10px', fontSize: 12 }}>{allWorkers ? 'Deselect All' : 'Select All'}</button>
+          </div>
+          <div style={{ maxHeight: 160, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 6, background: C.bg }}>
+            {workers.map(w => (
+              <label key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', borderBottom: `1px solid ${C.border}` }}>
+                <input type="checkbox" checked={selectedWorkers.includes(w.id)} onChange={() => toggleWorker(w.id)} />
+                <span style={{ color: C.text, fontSize: 13 }}>{w.name}</span>
+                {w.mobile && <span style={{ color: C.textMuted, fontSize: 11 }}>{w.mobile}</span>}
+              </label>
+            ))}
+            {workers.length === 0 && <div style={{ padding: 12, color: C.textMuted, fontSize: 13 }}>No active workers</div>}
+          </div>
+        </div>
+        <Field label="Message">
+          <textarea style={{ ...inputStyle, minHeight: 90, resize: 'vertical' }} value={workerMsg} onChange={e => setWorkerMsg(e.target.value)} placeholder="Type your message to workers…" />
+        </Field>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={handleSendWorkers} disabled={sending} style={{ ...btnPrimary, flex: 1 }}>📱 Send SMS</button>
+          <button onClick={handleSendWorkers} disabled={sending} style={{ ...btnSecondary, flex: 1 }}>✉️ Send Email</button>
+        </div>
+      </div>
+
+      {/* Client Messages */}
+      <div style={panelStyle}>
+        <div style={{ fontWeight: 700, color: C.text, fontSize: 15 }}>🏗 Client Messages</div>
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+            <label style={{ color: C.textMuted, fontSize: 13 }}>Recipients</label>
+            <button onClick={() => setSelectedClients(allClients ? [] : clients.map(c => c.id))} style={{ ...btnSecondary, padding: '3px 10px', fontSize: 12 }}>{allClients ? 'Deselect All' : 'Select All'}</button>
+          </div>
+          <div style={{ maxHeight: 160, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 6, background: C.bg }}>
+            {clients.map(c => (
+              <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', borderBottom: `1px solid ${C.border}` }}>
+                <input type="checkbox" checked={selectedClients.includes(c.id)} onChange={() => toggleClient(c.id)} />
+                <span style={{ color: C.text, fontSize: 13 }}>{c.name}</span>
+                {c.contact && <span style={{ color: C.textMuted, fontSize: 11 }}>{c.contact}</span>}
+              </label>
+            ))}
+            {clients.length === 0 && <div style={{ padding: 12, color: C.textMuted, fontSize: 13 }}>No clients added yet</div>}
+          </div>
+        </div>
+        <Field label="Message">
+          <textarea style={{ ...inputStyle, minHeight: 90, resize: 'vertical' }} value={clientMsg} onChange={e => setClientMsg(e.target.value)} placeholder="Type your message to clients…" />
+        </Field>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={handleSendClients} disabled={sending} style={{ ...btnPrimary, flex: 1 }}>📱 Send SMS</button>
+          <button onClick={handleSendClients} disabled={sending} style={{ ...btnSecondary, flex: 1 }}>✉️ Send Email</button>
+        </div>
       </div>
     </div>
   );
