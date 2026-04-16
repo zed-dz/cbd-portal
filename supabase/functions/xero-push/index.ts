@@ -274,7 +274,7 @@ function json(data: unknown, status = 200) {
 
 function corsHeaders() {
   return {
-    'Access-Control-Allow-Origin': 'https://cbd-portal-zeta.vercel.app',
+    'Access-Control-Allow-Origin': 'https://cbd-portal-gray.vercel.app',
     'Access-Control-Allow-Headers': 'Authorization, Content-Type',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
   };

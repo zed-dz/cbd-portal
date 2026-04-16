@@ -9,7 +9,7 @@ const XERO_CLIENT_ID     = Deno.env.get('XERO_CLIENT_ID')!;
 const XERO_CLIENT_SECRET = Deno.env.get('XERO_CLIENT_SECRET')!;
 const SUPABASE_URL       = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const PORTAL_URL         = 'https://cbd-portal-zeta.vercel.app';
+const PORTAL_URL         = 'https://cbd-portal-gray.vercel.app';
 const REDIRECT_URI       = `https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-callback`;
 
 serve(async (req) => {
