@@ -44,6 +44,18 @@ export default function App() {
     setAuthLoading(false);
   }, [showToast]);
 
+  // Handle Xero OAuth redirect back to portal
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('xero_connected') === '1') {
+      showToast('Xero connected successfully!', 'success');
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (params.get('xero_error')) {
+      showToast(`Xero connection failed: ${params.get('xero_error')}`, 'error');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [showToast]);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);

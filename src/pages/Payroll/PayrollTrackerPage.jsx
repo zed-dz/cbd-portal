@@ -9,7 +9,7 @@ import { Spinner, TableWrap, Th, Td, EmptyState } from '../../components';
 const XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize';
 const XERO_CLIENT_ID = process.env.REACT_APP_XERO_CLIENT_ID || '';
 const REDIRECT_URI = 'https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-callback';
-const XERO_SCOPES = 'openid profile email accounting.transactions payroll.employees payroll.payruns offline_access';
+const XERO_SCOPES = 'openid profile email accounting.transactions payroll.employees payroll.payruns payroll.payslip offline_access';
 
 export function PayrollTrackerPage({ showToast }) {
   const [timesheets, setTimesheets] = useState([]);
@@ -24,17 +24,8 @@ export function PayrollTrackerPage({ showToast }) {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [pushing, setPushing] = useState(false);
 
-  // Check Xero connection status + handle redirect back from Xero OAuth
+  // Check Xero connection status on mount
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('xero_connected') === '1') {
-      showToast('Xero connected successfully!', 'success');
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-    if (params.get('xero_error')) {
-      showToast(`Xero connection failed: ${params.get('xero_error')}`, 'error');
-      window.history.replaceState({}, '', window.location.pathname);
-    }
     checkXeroConnection();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
