@@ -123,6 +123,20 @@ export function PayrollTrackerPage({ showToast }) {
     }
   };
 
+  // One-click: select all staff that haven't been pushed to Xero yet
+  const selectAllUnexported = () => {
+    const ids = filtered
+      .filter(r => r.worker_type !== 'subcontractor' && !r._xero_exported)
+      .map(r => r._id);
+    setSelectedIds(new Set(ids));
+  };
+
+  // Stats for the push summary bar
+  const selectedRows = filtered.filter(r => selectedIds.has(r._id));
+  const selectedHours = selectedRows.reduce((s, r) => s + (parseFloat(r.pay_hours) || 0), 0);
+  const selectedPay   = selectedRows.reduce((s, r) => s + (parseFloat(r.total_pay) || 0), 0);
+  const unexportedCount = filtered.filter(r => r.worker_type !== 'subcontractor' && !r._xero_exported).length;
+
   const handlePushToXero = async () => {
     if (!selectedIds.size) { showToast('Select at least one timesheet to push.', 'info'); return; }
     if (!xeroConnected) { showToast('Connect Xero first.', 'error'); return; }
@@ -160,60 +174,78 @@ export function PayrollTrackerPage({ showToast }) {
 
   return (
     <div>
-      {/* Xero connection banner */}
+
+      {/* ── Workflow guide ────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 16, background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', flexWrap: 'wrap' }}>
+        {[
+          { n: '1', label: 'Approve timesheets', hint: 'Go to Timesheets → Approve All Pending', done: true },
+          { n: '2', label: 'Set pay period', hint: 'Pick From / To dates below', done: !!(dateFrom && dateTo) },
+          { n: '3', label: 'Select staff', hint: `Click "Select Unexported" or tick rows`, done: selectedIds.size > 0 },
+          { n: '4', label: 'Push to Xero', hint: xeroConnected ? 'Click the blue Push button' : 'Connect Xero first ↑', done: false },
+        ].map((step, i) => (
+          <div key={i} style={{
+            flex: '1 1 140px', padding: '10px 14px',
+            borderRight: i < 3 ? `1px solid ${C.border}` : 'none',
+            background: step.done ? 'rgba(34,197,94,0.06)' : 'transparent',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+              <span style={{
+                width: 20, height: 20, borderRadius: '50%', display: 'inline-flex',
+                alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 800,
+                background: step.done ? C.success : C.border,
+                color: step.done ? '#fff' : C.textMuted, flexShrink: 0,
+              }}>{step.done ? '✓' : step.n}</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: step.done ? C.success : C.text }}>{step.label}</span>
+            </div>
+            <div style={{ fontSize: 11, color: C.textMuted, paddingLeft: 26 }}>{step.hint}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Xero connection bar ───────────────────────────────────────────── */}
       <div style={{
-        background: xeroConnected ? 'rgba(34,197,94,0.08)' : 'rgba(249,115,22,0.07)',
-        border: `1px solid ${xeroConnected ? 'rgba(34,197,94,0.25)' : 'rgba(249,115,22,0.25)'}`,
+        background: xeroConnected ? 'rgba(19,181,234,0.07)' : 'rgba(249,115,22,0.07)',
+        border: `1px solid ${xeroConnected ? 'rgba(19,181,234,0.25)' : 'rgba(249,115,22,0.25)'}`,
         borderRadius: 10, padding: '10px 16px', marginBottom: 16,
         display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
       }}>
-        <span style={{ fontSize: 13, color: xeroConnected ? C.success : C.textMuted }}>
-          {xeroConnected ? '✓ Xero connected' : '⚠ Xero not connected'}
+        <span style={{ fontSize: 13, color: xeroConnected ? '#13B5EA' : C.textMuted }}>
+          {xeroConnected ? '✓ Xero connected' : '⚠ Xero not connected — connect before pushing'}
         </span>
         {!xeroConnected && (
-          <button
-            onClick={connectXero}
-            disabled={!XERO_CLIENT_ID}
-            style={{
-              background: '#13B5EA', color: '#fff', border: 'none', borderRadius: 6,
-              padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: XERO_CLIENT_ID ? 'pointer' : 'not-allowed',
-              opacity: XERO_CLIENT_ID ? 1 : 0.5,
-            }}
-          >
+          <button onClick={connectXero} disabled={!XERO_CLIENT_ID} style={{
+            background: '#13B5EA', color: '#fff', border: 'none', borderRadius: 6,
+            padding: '6px 14px', fontSize: 12, fontWeight: 700,
+            cursor: XERO_CLIENT_ID ? 'pointer' : 'not-allowed', opacity: XERO_CLIENT_ID ? 1 : 0.5,
+          }}>
             {XERO_CLIENT_ID ? 'Connect Xero' : 'Set REACT_APP_XERO_CLIENT_ID first'}
           </button>
         )}
-        {xeroConnected && (
-          <button onClick={connectXero} style={{ ...btnSmall, fontSize: 11 }}>Reconnect</button>
+        {xeroConnected && <button onClick={connectXero} style={{ ...btnSmall, fontSize: 11 }}>Reconnect</button>}
+        {xeroConnected && unexportedCount > 0 && (
+          <span style={{ fontSize: 12, color: C.textMuted }}>
+            {unexportedCount} timesheet{unexportedCount !== 1 ? 's' : ''} ready to push
+          </span>
         )}
-        {xeroConnected && selectedIds.size > 0 && (
-          <button
-            onClick={handlePushToXero}
-            disabled={pushing}
-            style={{
-              background: '#13B5EA', color: '#fff', border: 'none', borderRadius: 6,
-              padding: '6px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-              marginLeft: 'auto',
-            }}
-          >
-            {pushing ? 'Pushing…' : `↑ Push ${selectedIds.size} to Xero`}
-          </button>
+        {xeroConnected && unexportedCount === 0 && !loading && filtered.length > 0 && (
+          <span style={{ fontSize: 12, color: C.success }}>All timesheets in this range already pushed</span>
         )}
       </div>
 
-      <div style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: 18, marginBottom: 20 }}>
+      {/* ── Filters + totals ──────────────────────────────────────────────── */}
+      <div style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: 18, marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
-            <label style={{ color: C.textMuted, fontSize: 13, display: 'block', marginBottom: 4 }}>From</label>
-            <input style={{ ...inputStyle, width: 160 }} type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+            <label style={{ color: C.textMuted, fontSize: 12, display: 'block', marginBottom: 4 }}>Pay period from</label>
+            <input style={{ ...inputStyle, width: 155 }} type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
           </div>
           <div>
-            <label style={{ color: C.textMuted, fontSize: 13, display: 'block', marginBottom: 4 }}>To</label>
-            <input style={{ ...inputStyle, width: 160 }} type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+            <label style={{ color: C.textMuted, fontSize: 12, display: 'block', marginBottom: 4 }}>Pay period to</label>
+            <input style={{ ...inputStyle, width: 155 }} type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
           </div>
           <div>
-            <label style={{ color: C.textMuted, fontSize: 13, display: 'block', marginBottom: 4 }}>Worker Type</label>
-            <select style={{ ...inputStyle, width: 180 }} value={filterType} onChange={e => setFilterType(e.target.value)}>
+            <label style={{ color: C.textMuted, fontSize: 12, display: 'block', marginBottom: 4 }}>Worker type</label>
+            <select style={{ ...inputStyle, width: 170 }} value={filterType} onChange={e => setFilterType(e.target.value)}>
               <option value="all">All Types</option>
               <option value="full-time">Full-Time</option>
               <option value="casual">Casual</option>
@@ -221,24 +253,80 @@ export function PayrollTrackerPage({ showToast }) {
             </select>
           </div>
           <button onClick={() => { setDateFrom(''); setDateTo(''); }} style={btnSecondary}>Clear</button>
-          <div style={{ marginLeft: 'auto', background: C.card, borderRadius: 8, padding: '10px 20px', border: `1px solid ${C.border}` }}>
-            <div style={{ fontSize: 22, fontWeight: 800, color: C.warning }}>{totals.pay_hours.toFixed(1)}</div>
-            <div style={{ color: C.textMuted, fontSize: 12 }}>Total Pay Hours</div>
+          <div style={{ marginLeft: 'auto', background: C.bg, borderRadius: 8, padding: '10px 18px', border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.warning }}>{totals.pay_hours.toFixed(1)}h</div>
+            <div style={{ color: C.textMuted, fontSize: 11 }}>Total pay hours</div>
           </div>
-          <div style={{ background: C.card, borderRadius: 8, padding: '10px 20px', border: `1px solid ${C.border}` }}>
-            <div style={{ fontSize: 22, fontWeight: 800, color: C.success }}>${totals.total_pay.toFixed(2)}</div>
-            <div style={{ color: C.textMuted, fontSize: 12 }}>Total Pay Amount</div>
+          <div style={{ background: C.bg, borderRadius: 8, padding: '10px 18px', border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.success }}>${totals.total_pay.toFixed(2)}</div>
+            <div style={{ color: C.textMuted, fontSize: 11 }}>Total pay amount</div>
+          </div>
+          <div style={{ background: C.bg, borderRadius: 8, padding: '10px 18px', border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.accent }}>${totals.charge_amount.toFixed(2)}</div>
+            <div style={{ color: C.textMuted, fontSize: 11 }}>Total charge amount</div>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
           <button onClick={handleXeroExport} style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }}>↓ Export Xero CSV (Staff)</button>
           <button onClick={handleSubExport} style={{ ...btnSmall, color: '#fde047', borderColor: '#713f12' }}>↓ Export Subcontractors CSV</button>
         </div>
       </div>
 
+      {/* ── Push action bar (shows when timesheets are selected) ──────────── */}
+      {selectedIds.size > 0 && (
+        <div style={{
+          background: 'rgba(19,181,234,0.1)', border: '1px solid rgba(19,181,234,0.35)',
+          borderRadius: 10, padding: '12px 18px', marginBottom: 16,
+          display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+        }}>
+          <div>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#13B5EA' }}>{selectedIds.size} timesheet{selectedIds.size !== 1 ? 's' : ''} selected</span>
+            <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 12 }}>{selectedHours.toFixed(1)} hrs · ${selectedPay.toFixed(2)} total pay</span>
+            {dateFrom && dateTo && (
+              <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 12 }}>Pay period: {dateFrom} → {dateTo}</span>
+            )}
+          </div>
+          {!dateFrom || !dateTo ? (
+            <span style={{ fontSize: 12, color: C.warning, marginLeft: 'auto' }}>Set pay period dates first</span>
+          ) : (
+            <button onClick={handlePushToXero} disabled={pushing || !xeroConnected} style={{
+              background: '#13B5EA', color: '#fff', border: 'none', borderRadius: 7,
+              padding: '8px 20px', fontSize: 13, fontWeight: 700,
+              cursor: xeroConnected ? 'pointer' : 'not-allowed', marginLeft: 'auto',
+              opacity: xeroConnected ? 1 : 0.5,
+            }}>
+              {pushing ? 'Pushing to Xero…' : `↑ Push ${selectedIds.size} to Xero`}
+            </button>
+          )}
+          <button onClick={() => setSelectedIds(new Set())} style={{ ...btnSmall, fontSize: 11 }}>Clear selection</button>
+        </div>
+      )}
+
       {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : filtered.length === 0 ? (
-        <EmptyState message="No approved timesheets in this range." />
+        <EmptyState message={dateFrom || dateTo ? 'No approved timesheets in this date range.' : 'No approved timesheets yet. Approve timesheets first, then come back here.'} />
       ) : (
+        <>
+          {/* Quick-select row above table */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+            {unexportedCount > 0 && (
+              <button onClick={selectAllUnexported} style={{
+                background: 'rgba(19,181,234,0.12)', border: '1px solid rgba(19,181,234,0.3)',
+                color: '#13B5EA', borderRadius: 6, padding: '5px 12px', fontSize: 12,
+                fontWeight: 600, cursor: 'pointer',
+              }}>
+                Select {unexportedCount} unexported staff
+              </button>
+            )}
+            <button onClick={toggleSelectAll} style={{ ...btnSmall, fontSize: 11 }}>
+              {filtered.filter(r => r.worker_type !== 'subcontractor').every(r => selectedIds.has(r._id)) ? 'Deselect all' : 'Select all staff'}
+            </button>
+            {selectedIds.size > 0 && (
+              <span style={{ fontSize: 12, color: C.textMuted }}>{selectedIds.size} selected</span>
+            )}
+            <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 'auto' }}>
+              Rows with <span style={{ color: C.success }}>✓ sent</span> are already in Xero — you can skip those
+            </span>
+          </div>
         <TableWrap>
           <thead>
             <tr>
@@ -306,6 +394,7 @@ export function PayrollTrackerPage({ showToast }) {
             </tr>
           </tfoot>
         </TableWrap>
+        </>
       )}
     </div>
   );

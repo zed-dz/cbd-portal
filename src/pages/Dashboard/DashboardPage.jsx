@@ -20,7 +20,7 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
         const today = todayISO();
         const in30 = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
         const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
-        const [onSite, available, pendingTs, licAlerts, weekHours, pendingList, expired, allocs] = await Promise.all([
+        const [onSite, available, pendingTs, licAlerts, weekHours, pendingList, expired, allocs, payrollReady] = await Promise.all([
           supabase.from('workers').select('id', { count: 'exact' }).eq('status', 'on_site'),
           supabase.from('workers').select('id', { count: 'exact' }).eq('status', 'available'),
           supabase.from('timesheets').select('id', { count: 'exact' }).eq('status', 'pending'),
@@ -29,6 +29,7 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
           supabase.from('timesheets').select('*, workers(name)').eq('status', 'pending').order('created_at', { ascending: false }).limit(5),
           supabase.from('certifications').select('*, workers(name)').lt('expiry', today),
           supabase.from('allocations').select('*, workers(name, job_title)').eq('start_date', today).order('created_at', { ascending: false }),
+          supabase.from('timesheets').select('id', { count: 'exact' }).eq('status', 'approved').eq('xero_exported', false),
         ]);
         if (!mounted) return;
         const totalWeekHrs = (weekHours.data || []).reduce((s, r) => s + (r.hours || 0), 0);
@@ -38,6 +39,7 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
           pendingTs: pendingTs.count || 0,
           licAlerts: licAlerts.count || 0,
           weekHours: totalWeekHrs,
+          payrollReady: payrollReady.count || 0,
         });
         setPendingTimesheets(pendingList.data || []);
         setExpiredCerts(expired.data || []);
@@ -66,6 +68,7 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
     { label: 'Awaiting Approval', value: stats?.pendingTs, color: C.error, sub: 'Timesheets pending' },
     { label: 'Licence Alerts', value: stats?.licAlerts > 0 ? stats.licAlerts : '⚡', color: C.error, sub: 'See Licence Agent', onClick: () => onNavigate('licence_agent') },
     { label: 'Week Billing', value: stats?.weekHours > 0 ? `${stats.weekHours}h` : '✓', color: C.success, sub: 'See Payroll', onClick: () => onNavigate('payroll') },
+    { label: 'Ready for Payroll', value: stats?.payrollReady || '✓', color: stats?.payrollReady > 0 ? '#13B5EA' : C.success, sub: stats?.payrollReady > 0 ? 'Approved, not sent' : 'All up to date', onClick: () => onNavigate('payroll') },
   ];
 
   return (

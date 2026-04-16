@@ -18,16 +18,17 @@ import { PendingWorkersPage } from '../pages/PendingWorkers/PendingWorkersPage';
 
 export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpen, setSidebarOpen }) {
   const [activePage, setActivePage] = useState('dashboard');
-  const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, client_approvals: 0, licence_agent: 0, pending_workers: 0 });
+  const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, client_approvals: 0, licence_agent: 0, pending_workers: 0, payroll: 0 });
 
   const refreshBadge = useCallback(async () => {
-    const [w, a, ts, ca, lic, pw] = await Promise.all([
+    const [w, a, ts, ca, lic, pw, pr] = await Promise.all([
       supabase.from('workers').select('*', { count: 'exact', head: true }),
       supabase.from('allocations').select('*', { count: 'exact', head: true }).in('status', ['pending', 'confirmed']),
       supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('certifications').select('*', { count: 'exact', head: true }).lt('expiry', new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]),
       supabase.from('workers').select('*', { count: 'exact', head: true }).neq('app_status', 'Active'),
+      supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'approved').eq('xero_exported', false),
     ]);
     setBadges({
       workers: w.count || 0,
@@ -36,6 +37,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       client_approvals: ca.count || 0,
       licence_agent: lic.count || 0,
       pending_workers: pw.count || 0,
+      payroll: pr.count || 0,
     });
   }, []);
 
@@ -64,7 +66,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       label: 'FINANCE',
       items: [
         { id: 'clients', label: '🏗 Clients & Rates' },
-        { id: 'payroll', label: '💰 Payroll' },
+        { id: 'payroll', label: '💰 Payroll', badge: badges.payroll || null, badgeColor: 'green' },
         { id: 'payroll_config', label: '⚙ Payroll Config' },
       ],
     },
