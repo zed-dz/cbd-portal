@@ -19,7 +19,7 @@ const SUPABASE_URL         = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const SUPABASE_ANON_KEY    = Deno.env.get('SUPABASE_ANON_KEY')!;
 
-const XERO_PAYROLL_BASE = 'https://api.xero.com/payroll/2.0';
+const XERO_PAYROLL_BASE = 'https://api.xero.com/payroll.xro/1.0';
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
