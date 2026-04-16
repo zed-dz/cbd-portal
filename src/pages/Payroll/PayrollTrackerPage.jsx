@@ -9,7 +9,7 @@ import { Spinner, TableWrap, Th, Td, EmptyState } from '../../components';
 const XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize';
 const XERO_CLIENT_ID = process.env.REACT_APP_XERO_CLIENT_ID || '';
 const REDIRECT_URI = 'https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-callback';
-const XERO_SCOPES = 'openid profile email offline_access payroll.employees payroll.payruns payroll.payslip';
+const XERO_SCOPES = 'openid profile email offline_access payroll.employees payroll.payruns payroll.payslip accounting.contacts.read';
 
 export function PayrollTrackerPage({ showToast }) {
   const [timesheets, setTimesheets] = useState([]);
