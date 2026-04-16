@@ -6,6 +6,11 @@ import { downloadCSV } from '../../utils/csv';
 import { computePayrollRow, buildXeroCSV } from '../../utils/payroll';
 import { Spinner, TableWrap, Th, Td, EmptyState } from '../../components';
 
+const XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize';
+const XERO_CLIENT_ID = process.env.REACT_APP_XERO_CLIENT_ID || '';
+const REDIRECT_URI = 'https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-callback';
+const XERO_SCOPES = 'openid profile email accounting.transactions payroll.employees payroll.payruns offline_access';
+
 export function PayrollTrackerPage({ showToast }) {
   const [timesheets, setTimesheets] = useState([]);
   const [workers, setWorkers] = useState([]);
@@ -15,6 +20,42 @@ export function PayrollTrackerPage({ showToast }) {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [filterType, setFilterType] = useState('all');
+  const [xeroConnected, setXeroConnected] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [pushing, setPushing] = useState(false);
+
+  // Check Xero connection status + handle redirect back from Xero OAuth
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('xero_connected') === '1') {
+      showToast('Xero connected successfully!', 'success');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    if (params.get('xero_error')) {
+      showToast(`Xero connection failed: ${params.get('xero_error')}`, 'error');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    checkXeroConnection();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const checkXeroConnection = async () => {
+    const { data } = await supabase.from('xero_tokens').select('id, expires_at').eq('id', 1).single();
+    setXeroConnected(!!data?.id);
+  };
+
+  const connectXero = () => {
+    const state = Math.random().toString(36).slice(2);
+    sessionStorage.setItem('xero_oauth_state', state);
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id:     XERO_CLIENT_ID,
+      redirect_uri:  REDIRECT_URI,
+      scope:         XERO_SCOPES,
+      state,
+    });
+    window.location.href = `${XERO_AUTH_URL}?${params}`;
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -44,7 +85,7 @@ export function PayrollTrackerPage({ showToast }) {
   const payrollRows = timesheets.map(ts => {
     const worker = workers.find(w => w.id === ts.worker_id) || {};
     const client = clients.find(c => c.name === ts.client) || null;
-    return computePayrollRow(ts, { ...worker, name: ts.workers?.name || worker.name }, client, configMap);
+    return { ...computePayrollRow(ts, { ...worker, name: ts.workers?.name || worker.name }, client, configMap), _id: ts.id, _xero_exported: ts.xero_exported };
   });
 
   const filtered = filterType === 'all' ? payrollRows : payrollRows.filter(r => r.worker_type === filterType);
@@ -74,8 +115,101 @@ export function PayrollTrackerPage({ showToast }) {
     showToast('Subcontractor CSV exported', 'success');
   };
 
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const staffIds = filtered.filter(r => r.worker_type !== 'subcontractor').map(r => r._id);
+    if (staffIds.every(id => selectedIds.has(id))) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(staffIds));
+    }
+  };
+
+  const handlePushToXero = async () => {
+    if (!selectedIds.size) { showToast('Select at least one timesheet to push.', 'info'); return; }
+    if (!xeroConnected) { showToast('Connect Xero first.', 'error'); return; }
+    if (!dateFrom || !dateTo) { showToast('Set a date range for the pay period first.', 'error'); return; }
+
+    setPushing(true);
+    showToast('Pushing to Xero…', 'info');
+
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch(
+      'https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-push',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session?.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          timesheetIds: [...selectedIds],
+          periodFrom: dateFrom,
+          periodTo: dateTo,
+        }),
+      }
+    );
+
+    const result = await res.json();
+    if (!res.ok) {
+      showToast(result.error || 'Push failed', 'error');
+    } else {
+      showToast(`Pushed ${result.pushed} timesheets to Xero${result.skipped ? ` (${result.skipped} skipped — no matching Xero employee)` : ''}`, result.errors ? 'error' : 'success');
+      if (result.pushed > 0) { setSelectedIds(new Set()); load(); }
+    }
+    setPushing(false);
+  };
+
   return (
     <div>
+      {/* Xero connection banner */}
+      <div style={{
+        background: xeroConnected ? 'rgba(34,197,94,0.08)' : 'rgba(249,115,22,0.07)',
+        border: `1px solid ${xeroConnected ? 'rgba(34,197,94,0.25)' : 'rgba(249,115,22,0.25)'}`,
+        borderRadius: 10, padding: '10px 16px', marginBottom: 16,
+        display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+      }}>
+        <span style={{ fontSize: 13, color: xeroConnected ? C.success : C.textMuted }}>
+          {xeroConnected ? '✓ Xero connected' : '⚠ Xero not connected'}
+        </span>
+        {!xeroConnected && (
+          <button
+            onClick={connectXero}
+            disabled={!XERO_CLIENT_ID}
+            style={{
+              background: '#13B5EA', color: '#fff', border: 'none', borderRadius: 6,
+              padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: XERO_CLIENT_ID ? 'pointer' : 'not-allowed',
+              opacity: XERO_CLIENT_ID ? 1 : 0.5,
+            }}
+          >
+            {XERO_CLIENT_ID ? 'Connect Xero' : 'Set REACT_APP_XERO_CLIENT_ID first'}
+          </button>
+        )}
+        {xeroConnected && (
+          <button onClick={connectXero} style={{ ...btnSmall, fontSize: 11 }}>Reconnect</button>
+        )}
+        {xeroConnected && selectedIds.size > 0 && (
+          <button
+            onClick={handlePushToXero}
+            disabled={pushing}
+            style={{
+              background: '#13B5EA', color: '#fff', border: 'none', borderRadius: 6,
+              padding: '6px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              marginLeft: 'auto',
+            }}
+          >
+            {pushing ? 'Pushing…' : `↑ Push ${selectedIds.size} to Xero`}
+          </button>
+        )}
+      </div>
+
       <div style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: 18, marginBottom: 20 }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
@@ -108,7 +242,6 @@ export function PayrollTrackerPage({ showToast }) {
         <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
           <button onClick={handleXeroExport} style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }}>↓ Export Xero CSV (Staff)</button>
           <button onClick={handleSubExport} style={{ ...btnSmall, color: '#fde047', borderColor: '#713f12' }}>↓ Export Subcontractors CSV</button>
-          <button onClick={() => showToast('Payroll run marked (Xero integration coming soon)', 'info')} style={{ ...btnSmall }}>✓ Mark as Payroll Run</button>
         </div>
       </div>
 
@@ -118,14 +251,31 @@ export function PayrollTrackerPage({ showToast }) {
         <TableWrap>
           <thead>
             <tr>
+              <Th>
+                <input type="checkbox"
+                  onChange={toggleSelectAll}
+                  checked={filtered.filter(r => r.worker_type !== 'subcontractor').length > 0 &&
+                    filtered.filter(r => r.worker_type !== 'subcontractor').every(r => selectedIds.has(r._id))}
+                  style={{ cursor: 'pointer' }}
+                />
+              </Th>
               <Th>Worker</Th><Th>Type</Th><Th>Date</Th><Th>Scenario</Th>
               <Th>Pay Hrs</Th><Th>Charge Hrs</Th><Th>OT Hrs</Th>
-              <Th>Allowances</Th><Th>Total Pay</Th><Th>Charge Amt</Th><Th>AWJ Ref</Th>
+              <Th>Allowances</Th><Th>Total Pay</Th><Th>Charge Amt</Th><Th>AWJ Ref</Th><Th>Xero</Th>
             </tr>
           </thead>
           <tbody>
             {filtered.map((r, i) => (
-              <tr key={i}>
+              <tr key={i} style={{ opacity: r._xero_exported ? 0.6 : 1 }}>
+                <Td>
+                  {r.worker_type !== 'subcontractor' && (
+                    <input type="checkbox"
+                      checked={selectedIds.has(r._id)}
+                      onChange={() => toggleSelect(r._id)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  )}
+                </Td>
                 <Td><strong>{r.worker_name}</strong></Td>
                 <Td><span style={{ fontSize: 11, color: C.textMuted, fontFamily: '"DM Mono", monospace' }}>{r.worker_type}</span></Td>
                 <Td>{fmtDate(r.date)}</Td>
@@ -145,17 +295,23 @@ export function PayrollTrackerPage({ showToast }) {
                 <Td><span style={{ fontWeight: 700, color: C.success }}>${r.total_pay}</span></Td>
                 <Td><span style={{ color: C.warning }}>${r.charge_amount}</span></Td>
                 <Td><span style={{ fontSize: 11, color: C.textMuted }}>{r.awj_reference || '—'}</span></Td>
+                <Td>
+                  {r._xero_exported
+                    ? <span style={{ fontSize: 11, color: C.success }}>✓ sent</span>
+                    : <span style={{ fontSize: 11, color: C.textMuted }}>—</span>}
+                </Td>
               </tr>
             ))}
           </tbody>
           <tfoot>
             <tr>
+              <td style={{ borderTop: `2px solid ${C.border}` }} />
               <td colSpan={4} style={{ padding: '10px 16px', color: C.textMuted, fontSize: 13, borderTop: `2px solid ${C.border}` }}>{filtered.length} records</td>
               <td style={{ padding: '10px 16px', fontWeight: 700, color: C.text, borderTop: `2px solid ${C.border}` }}>{totals.pay_hours.toFixed(2)}</td>
               <td colSpan={3} style={{ borderTop: `2px solid ${C.border}` }} />
               <td style={{ padding: '10px 16px', fontWeight: 700, color: C.success, borderTop: `2px solid ${C.border}` }}>${totals.total_pay.toFixed(2)}</td>
               <td style={{ padding: '10px 16px', fontWeight: 700, color: C.warning, borderTop: `2px solid ${C.border}` }}>${totals.charge_amount.toFixed(2)}</td>
-              <td style={{ borderTop: `2px solid ${C.border}` }} />
+              <td colSpan={2} style={{ borderTop: `2px solid ${C.border}` }} />
             </tr>
           </tfoot>
         </TableWrap>
