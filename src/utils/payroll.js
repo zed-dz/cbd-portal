@@ -61,7 +61,7 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}) {
   const GEO_PCT      = parseFloat(config.geo_loading_pct             ?? 0.10);
   const SUB_NIGHT    = parseFloat(config.subcontractor_night_loading  ?? 10.00);
   const SAT_THRESH   = parseFloat(config.saturday_threshold_hours     ?? 2);
-  const NIGHT_THRESH = parseFloat(config.night_threshold_hours        ?? 3);
+  const NIGHT_THRESH = parseFloat(config.night_threshold_hours        ?? 8);
 
   const payRate    = parseFloat(worker.pay_rate_regular || 0);
   const payRateOT  = parseFloat(worker.pay_rate_overtime || payRate * OT_MULT);
