@@ -84,7 +84,7 @@ export function WorkersPage({ showToast }) {
         <EmptyState message="No workers found. Add one to get started." />
       ) : (
         <TableWrap>
-          <thead><tr><Th>Name</Th><Th>Job Title</Th><Th>Type</Th><Th>Mobile</Th><Th>Licences</Th><Th>Status</Th><Th>App Status</Th><Th>Actions</Th></tr></thead>
+          <thead><tr><Th>Name</Th><Th>Job Title</Th><Th>Type</Th><Th>Pay Rate</Th><Th>Mobile</Th><Th>Licences</Th><Th>Status</Th><Th>App Status</Th><Th>Actions</Th></tr></thead>
           <tbody>
             {filtered.map(w => (
               <tr key={w.id}>
@@ -97,6 +97,11 @@ export function WorkersPage({ showToast }) {
                   <span style={{ fontSize: 11, color: C.textMuted, fontFamily: '"DM Mono", monospace' }}>
                     {w.worker_type || 'casual'}
                   </span>
+                </Td>
+                <Td>
+                  {w.pay_rate_regular != null
+                    ? <span style={{ fontFamily: '"DM Mono", monospace', fontSize: 12, color: C.success, fontWeight: 600 }}>${parseFloat(w.pay_rate_regular).toFixed(2)}/hr</span>
+                    : <span style={{ color: C.textMuted, fontSize: 12 }}>Not set</span>}
                 </Td>
                 <Td>{w.mobile || '—'}</Td>
                 <Td><span style={{ fontSize: 12, color: C.textMuted }}>{w.licences || '—'}</span></Td>

@@ -226,20 +226,27 @@ export function XeroSyncPage({ showToast }) {
             <TableWrap>
               <thead>
                 <tr>
-                  <Th>Name</Th><Th>Email</Th><Th>DOB</Th><Th>Start Date</Th>
-                  <Th>Employment</Th><Th>Pay Method</Th><Th>Status</Th><Th>Details</Th>
+                  <Th>Name</Th><Th>Email</Th><Th>Pay Rate</Th><Th>DOB</Th><Th>Start Date</Th>
+                  <Th>Employment</Th><Th>Status</Th><Th>Details</Th>
                 </tr>
               </thead>
               <tbody>
-                {data.employees.map(e => (
+                {data.employees.map(e => {
+                  const payLine = (e.PayTemplate?.EarningsLines || []).find(l => l.RatePerUnit != null);
+                  const rate = payLine?.RatePerUnit;
+                  return (
                   <>
                     <tr key={e.EmployeeID} style={{ cursor: 'pointer' }} onClick={() => setExpandedEmp(expandedEmp === e.EmployeeID ? null : e.EmployeeID)}>
                       <Td><strong>{e.FirstName} {e.LastName}</strong></Td>
                       <Td><span style={{ fontSize: 12, color: C.textMuted }}>{e.Email || '—'}</span></Td>
+                      <Td>
+                        {rate != null
+                          ? <span style={{ fontFamily: '"DM Mono", monospace', fontSize: 12, color: C.success, fontWeight: 600 }}>${parseFloat(rate).toFixed(2)}/hr</span>
+                          : <span style={{ fontSize: 11, color: C.textMuted }}>—</span>}
+                      </Td>
                       <Td><span style={{ fontFamily: '"DM Mono", monospace', fontSize: 11 }}>{fmt(e.DateOfBirth)}</span></Td>
                       <Td><span style={{ fontFamily: '"DM Mono", monospace', fontSize: 11 }}>{fmt(e.StartDate)}</span></Td>
                       <Td><span style={{ fontSize: 11, color: C.textMuted }}>{e.EmploymentBasis || '—'}</span></Td>
-                      <Td><span style={{ fontSize: 11, color: C.textMuted }}>{e.PaymentMethod || '—'}</span></Td>
                       <Td>{statusBadge(e.Status)}</Td>
                       <Td>
                         <button style={{ ...btnSmall, fontSize: 10 }}>{expandedEmp === e.EmployeeID ? '▲ Hide' : '▼ More'}</button>
@@ -247,7 +254,7 @@ export function XeroSyncPage({ showToast }) {
                     </tr>
                     {expandedEmp === e.EmployeeID && (
                       <tr key={`${e.EmployeeID}-detail`}>
-                        <td colSpan={8} style={{ padding: 0 }}>
+                        <td colSpan={9} style={{ padding: 0 }}>
                           <div style={{ background: C.bg, borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`, padding: '14px 20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
                             <Section label="Personal">
                               <Row label="Gender" val={e.Gender} />
@@ -291,7 +298,8 @@ export function XeroSyncPage({ showToast }) {
                       </tr>
                     )}
                   </>
-                ))}
+                  );
+                })}
               </tbody>
             </TableWrap>
             </>
