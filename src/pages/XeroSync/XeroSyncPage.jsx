@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../supabaseClient';
-import { C, btnSmall, btnSecondary } from '../../theme';
+import { C, btnSmall, btnSecondary, btnPrimary } from '../../theme';
 import { Spinner, TableWrap, Th, Td, EmptyState } from '../../components';
 
 const EDGE = 'https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-data';
@@ -53,6 +53,7 @@ export function XeroSyncPage({ showToast }) {
   const [payslips, setPayslips] = useState({});
   const [loadingSlips, setLoadingSlips] = useState(null);
   const [expandedEmp, setExpandedEmp] = useState(null);
+  const [syncingRates, setSyncingRates] = useState(false);
 
   const callEdge = useCallback(async (params = '') => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -91,6 +92,47 @@ export function XeroSyncPage({ showToast }) {
     }
     setLoadingSlips(null);
   };
+
+  const syncPayRates = useCallback(async () => {
+    if (!data?.employees?.length) return;
+    setSyncingRates(true);
+    try {
+      // Build a name → rate map from Xero employees
+      const xeroRates = {};
+      for (const e of data.employees) {
+        const fullName = `${e.FirstName} ${e.LastName}`.trim().toLowerCase();
+        const line = (e.PayTemplate?.EarningsLines || []).find(l => l.RatePerUnit != null);
+        if (line?.RatePerUnit) xeroRates[fullName] = parseFloat(line.RatePerUnit);
+      }
+      if (Object.keys(xeroRates).length === 0) {
+        showToast('No pay rates found in Xero Pay Templates.', 'error');
+        setSyncingRates(false);
+        return;
+      }
+
+      // Fetch portal workers
+      const { data: workers, error } = await supabase.from('workers').select('id, name');
+      if (error) throw error;
+
+      let updated = 0;
+      const unmatched = [];
+      for (const w of workers) {
+        const key = (w.name || '').trim().toLowerCase();
+        if (xeroRates[key] != null) {
+          await supabase.from('workers').update({ pay_rate_regular: xeroRates[key] }).eq('id', w.id);
+          updated++;
+        } else {
+          unmatched.push(w.name);
+        }
+      }
+
+      const msg = `Updated ${updated} worker${updated !== 1 ? 's' : ''}.${unmatched.length ? ` No Xero match for: ${unmatched.join(', ')}.` : ''}`;
+      showToast(msg, updated > 0 ? 'success' : 'error');
+    } catch (e) {
+      showToast('Sync failed: ' + e.message, 'error');
+    }
+    setSyncingRates(false);
+  }, [data, showToast]);
 
   const tabCount = (key) => {
     if (!data || !key) return null;
@@ -167,6 +209,20 @@ export function XeroSyncPage({ showToast }) {
         data.employees.length === 0
           ? <EmptyState message="No employees found in Xero Payroll." />
           : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+                <div style={{ fontSize: 12, color: C.textMuted }}>
+                  Click any row to expand full employee details.
+                </div>
+                <button
+                  onClick={syncPayRates}
+                  disabled={syncingRates}
+                  style={{ ...btnPrimary, padding: '7px 14px', fontSize: 12, fontWeight: 600 }}
+                  title="Reads the hourly rate from each employee's Xero Pay Template and updates the matching portal worker's pay rate"
+                >
+                  {syncingRates ? 'Syncing…' : '💸 Sync Pay Rates → Workers'}
+                </button>
+              </div>
             <TableWrap>
               <thead>
                 <tr>
@@ -238,6 +294,7 @@ export function XeroSyncPage({ showToast }) {
                 ))}
               </tbody>
             </TableWrap>
+            </>
           )
       )}
 

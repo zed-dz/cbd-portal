@@ -57,23 +57,52 @@ export function computeTimesheetHours(form, workerType, config = {}) {
 }
 
 export function computePayrollRow(ts, worker, clientRecord, config = {}) {
-  const OT_MULT    = parseFloat(config.ot_multiplier              ?? 1.5);
-  const WE_MULT    = parseFloat(config.weekend_multiplier         ?? 1.5);
-  const NIGHT_MULT = parseFloat(config.night_multiplier           ?? 1.15);
-  const GEO_PCT    = parseFloat(config.geo_loading_pct            ?? 0.10);
-  const SUB_NIGHT  = parseFloat(config.subcontractor_night_loading ?? 10.00);
+  const OT_MULT      = parseFloat(config.ot_multiplier               ?? 1.5);
+  const GEO_PCT      = parseFloat(config.geo_loading_pct             ?? 0.10);
+  const SUB_NIGHT    = parseFloat(config.subcontractor_night_loading  ?? 10.00);
+  const SAT_THRESH   = parseFloat(config.saturday_threshold_hours     ?? 2);
+  const NIGHT_THRESH = parseFloat(config.night_threshold_hours        ?? 3);
 
-  const payRate   = parseFloat(worker.pay_rate_regular || 0);
-  const payRateOT = parseFloat(worker.pay_rate_overtime || payRate * OT_MULT);
+  const payRate    = parseFloat(worker.pay_rate_regular || 0);
+  const payRateOT  = parseFloat(worker.pay_rate_overtime || payRate * OT_MULT);
   const chargeRate = parseFloat(clientRecord?.rate_regular || 0);
 
-  const normalH = Math.max(0, (ts.pay_hours || 0) - (ts.overtime_hours || 0));
-  let basePay   = normalH * payRate + (ts.overtime_hours || 0) * payRateOT;
+  // Detect day type from date (use noon to avoid DST edge cases)
+  const d   = ts.date ? new Date(ts.date + 'T12:00:00') : null;
+  const dow = d ? d.getDay() : -1; // 0=Sun, 6=Sat
+  const isPH         = !!(ts.date && PUBLIC_HOLIDAYS.has(ts.date));
+  const isSaturday   = dow === 6;
+  const isSundayOrPH = dow === 0 || isPH;
+  const hours        = ts.pay_hours || 0;
 
-  if (ts.is_weekend || ts.is_night_shift) {
-    if (worker.worker_type === 'subcontractor') basePay += SUB_NIGHT;
-    else basePay *= (ts.is_night_shift ? NIGHT_MULT : WE_MULT);
+  let basePay;
+  if (worker.worker_type === 'subcontractor') {
+    // Subcontractors: flat rate + flat night/weekend loading
+    const normalH = Math.max(0, hours - (ts.overtime_hours || 0));
+    basePay = normalH * payRate + (ts.overtime_hours || 0) * payRateOT;
+    if (ts.is_night_shift || ts.is_weekend || isSaturday || isSundayOrPH) basePay += SUB_NIGHT;
+  } else if (ts.is_night_shift && (isSaturday || isSundayOrPH)) {
+    // Saturday/Sunday/PH night → double time all hours
+    basePay = hours * payRate * 2;
+  } else if (ts.is_night_shift) {
+    // Weekday night → first NIGHT_THRESH hrs at 1.5x, rest at 2x
+    const h1 = Math.min(hours, NIGHT_THRESH);
+    const h2 = Math.max(0, hours - NIGHT_THRESH);
+    basePay = h1 * payRate * 1.5 + h2 * payRate * 2;
+  } else if (isSaturday) {
+    // Saturday → first SAT_THRESH hrs at 1.5x, rest at 2x
+    const h1 = Math.min(hours, SAT_THRESH);
+    const h2 = Math.max(0, hours - SAT_THRESH);
+    basePay = h1 * payRate * 1.5 + h2 * payRate * 2;
+  } else if (isSundayOrPH) {
+    // Sunday / public holiday → double time all hours
+    basePay = hours * payRate * 2;
+  } else {
+    // Standard weekday → normal hours + OT
+    const normalH = Math.max(0, hours - (ts.overtime_hours || 0));
+    basePay = normalH * payRate + (ts.overtime_hours || 0) * payRateOT;
   }
+
   if (ts.geo_loading) basePay *= (1 + GEO_PCT);
 
   const totalPay    = basePay + (ts.travel_allowance || 0) + (ts.meal_allowance || 0);
