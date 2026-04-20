@@ -16,6 +16,9 @@ export function WorkersPage({ showToast }) {
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [filterType, setFilterType] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterAppStatus, setFilterAppStatus] = useState('');
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(workerDefaults);
   const [saving, setSaving] = useState(false);
@@ -71,12 +74,41 @@ export function WorkersPage({ showToast }) {
     else { showToast('Worker deleted', 'success'); load(); }
   };
 
-  const filtered = workers.filter(w => w.name.toLowerCase().includes(search.toLowerCase()) || w.email.toLowerCase().includes(search.toLowerCase()));
+  const filtered = workers.filter(w => {
+    const matchSearch = !search || w.name.toLowerCase().includes(search.toLowerCase()) || w.email.toLowerCase().includes(search.toLowerCase()) || (w.licences || '').toLowerCase().includes(search.toLowerCase());
+    const matchType = !filterType || (w.worker_type || 'casual') === filterType;
+    const matchStatus = !filterStatus || w.status === filterStatus;
+    const matchAppStatus = !filterAppStatus || (w.app_status || 'Active') === filterAppStatus;
+    return matchSearch && matchType && matchStatus && matchAppStatus;
+  });
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, gap: 12, flexWrap: 'wrap' }}>
-        <input style={{ ...inputStyle, maxWidth: 280 }} placeholder="Search by name or email…" value={search} onChange={e => setSearch(e.target.value)} />
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', flex: 1 }}>
+          <input style={{ ...inputStyle, maxWidth: 220 }} placeholder="Search name, email, licence…" value={search} onChange={e => setSearch(e.target.value)} />
+          <select style={{ ...inputStyle, maxWidth: 160 }} value={filterType} onChange={e => setFilterType(e.target.value)}>
+            <option value="">All Types</option>
+            <option value="casual">Casual</option>
+            <option value="full-time">Full-Time</option>
+            <option value="subcontractor">Subcontractor</option>
+          </select>
+          <select style={{ ...inputStyle, maxWidth: 160 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+            <option value="">All Statuses</option>
+            <option value="available">Available</option>
+            <option value="on_site">On Site</option>
+            <option value="job_details_sent">Job Details Sent</option>
+            <option value="unavailable">Unavailable</option>
+          </select>
+          <select style={{ ...inputStyle, maxWidth: 180 }} value={filterAppStatus} onChange={e => setFilterAppStatus(e.target.value)}>
+            <option value="">All App Statuses</option>
+            <option value="Active">Active</option>
+            <option value="Invite Sent">Invite Sent</option>
+            <option value="Completing Profile">Completing Profile</option>
+            <option value="Profile Incomplete">Profile Incomplete</option>
+            <option value="Inactive">Inactive</option>
+          </select>
+        </div>
         <button onClick={openAdd} style={btnPrimary}>+ Add Worker</button>
       </div>
 
@@ -87,7 +119,7 @@ export function WorkersPage({ showToast }) {
           <thead><tr><Th>Name</Th><Th>Job Title</Th><Th>Type</Th><Th>Pay Rate</Th><Th>Mobile</Th><Th>Licences</Th><Th>Status</Th><Th>App Status</Th><Th>Actions</Th></tr></thead>
           <tbody>
             {filtered.map(w => (
-              <tr key={w.id}>
+              <tr key={w.id} onClick={() => openEdit(w)} style={{ cursor: 'pointer' }}>
                 <Td>
                   <div><strong>{w.name}</strong></div>
                   <div style={{ fontSize: 12, color: C.textMuted }}>{w.email}</div>

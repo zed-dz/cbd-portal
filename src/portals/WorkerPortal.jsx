@@ -76,7 +76,7 @@ function WorkerAllocations({ currentWorker, showToast }) {
           <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Client: {a.client || '—'}</div>
           {a.project && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Project: {a.project}</div>}
           {a.address && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Address: {a.address}</div>}
-          {a.site_manager && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Site Manager: {a.site_manager}{a.manager_phone ? ` · ${a.manager_phone}` : ''}</div>}
+          {a.site_manager && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Site Supervisor: {a.site_manager}{a.manager_phone ? ` · ${a.manager_phone}` : ''}</div>}
           {a.start_date && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Date: {a.start_date}</div>}
           <div style={{ color: C.textMuted, fontSize: 13 }}>Start: {fmtDateTime(a.start_time)}</div>
           {a.notes && <div style={{ color: C.textMuted, fontSize: 12, marginTop: 10, fontStyle: 'italic' }}>{a.notes}</div>}
@@ -86,11 +86,16 @@ function WorkerAllocations({ currentWorker, showToast }) {
   );
 }
 
+const WORKER_SCENARIOS = [
+  { value: 'standard', label: 'Standard Shift' },
+  { value: 'rain_off_cancelled', label: 'Rain Day' },
+];
+
 function WorkerTimesheets({ currentWorker, showToast }) {
   const [timesheets, setTimesheets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
-  const [form, setForm] = useState({ client: '', site: '', date: todayISO(), hours: '', notes: '' });
+  const [form, setForm] = useState({ scenario: 'standard', client: '', site: '', date: todayISO(), hours: '', notes: '' });
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -108,7 +113,7 @@ function WorkerTimesheets({ currentWorker, showToast }) {
     setSaving(true);
     const { error } = await supabase.from('timesheets').insert([{ ...form, worker_id: currentWorker.id, status: 'pending', hours: parseFloat(form.hours) }]);
     if (error) showToast(error.message, 'error');
-    else { showToast('Timesheet submitted successfully', 'success'); setModal(false); setForm({ client: '', site: '', date: todayISO(), hours: '', notes: '' }); load(); }
+    else { showToast('Timesheet submitted successfully', 'success'); setModal(false); setForm({ scenario: 'standard', client: '', site: '', date: todayISO(), hours: '', notes: '' }); load(); }
     setSaving(false);
   };
 
@@ -150,14 +155,19 @@ function WorkerTimesheets({ currentWorker, showToast }) {
       )}
 
       {modal && (
-        <Modal title="Submit Timesheet" onClose={() => { setModal(false); setForm({ client: '', site: '', date: todayISO(), hours: '', notes: '' }); }}>
+        <Modal title="Submit Timesheet" onClose={() => { setModal(false); setForm({ scenario: 'standard', client: '', site: '', date: todayISO(), hours: '', notes: '' }); }}>
+          <Field label="Shift Type">
+            <select style={inputStyle} value={form.scenario} onChange={e => setForm(f => ({ ...f, scenario: e.target.value }))}>
+              {WORKER_SCENARIOS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </Field>
           <Field label="Date *"><input style={inputStyle} type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} /></Field>
           <Field label="Client"><input style={inputStyle} value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} /></Field>
           <Field label="Site"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
           <Field label="Hours *"><input style={inputStyle} type="number" step="0.5" min="0" value={form.hours} onChange={e => setForm(f => ({ ...f, hours: e.target.value }))} /></Field>
           <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 80, resize: 'vertical' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Field>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
-            <button onClick={() => { setModal(false); setForm({ client: '', site: '', date: todayISO(), hours: '', notes: '' }); }} style={btnSecondary}>Cancel</button>
+            <button onClick={() => { setModal(false); setForm({ scenario: 'standard', client: '', site: '', date: todayISO(), hours: '', notes: '' }); }} style={btnSecondary}>Cancel</button>
             <button onClick={handleSubmit} disabled={saving} style={btnPrimary}>{saving ? 'Submitting…' : 'Submit'}</button>
           </div>
         </Modal>

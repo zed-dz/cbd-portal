@@ -16,9 +16,11 @@ import { ReportsPage } from '../pages/Reports/ReportsPage';
 import { BulkMessagesPage } from '../pages/BulkMessages/BulkMessagesPage';
 import { AppViewsPage } from '../pages/AppViews/AppViewsPage';
 import { PendingWorkersPage } from '../pages/PendingWorkers/PendingWorkersPage';
+import { WorkerPortal } from './WorkerPortal';
 
 export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpen, setSidebarOpen }) {
   const [activePage, setActivePage] = useState('dashboard');
+  const [previewMode, setPreviewMode] = useState(false);
   const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, client_approvals: 0, licence_agent: 0, pending_workers: 0, payroll: 0 });
 
   const refreshBadge = useCallback(async () => {
@@ -156,6 +158,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
             <span style={{ fontSize: 10, color: C.textMuted, fontFamily: '"DM Mono", monospace' }}>CBD PLANT & LABOUR · ABN: 75 663 693 070</span>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => setPreviewMode(true)} style={{ ...btnSecondary, padding: '7px 14px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>👁 Worker View</button>
             <button style={{ ...btnSecondary, padding: '7px 14px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📷 Scan</button>
             <button style={{ ...btnPrimary, padding: '7px 14px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📢 Send Blast</button>
           </div>
@@ -178,6 +181,20 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'app_views'        && <AppViewsPage showToast={showToast} />}
         </div>
       </div>
+
+      {/* ── Preview Worker View overlay ──────────────────────────────────── */}
+      {previewMode && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: C.bg, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ background: '#1a1a2e', borderBottom: `2px solid ${C.accent}`, padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+            <span style={{ fontSize: 11, color: C.accent, fontFamily: '"DM Mono", monospace', fontWeight: 700, letterSpacing: 1 }}>PREVIEW MODE — Worker Portal</span>
+            <span style={{ fontSize: 11, color: C.textMuted }}>Viewing as: {currentWorker?.name}</span>
+            <button onClick={() => setPreviewMode(false)} style={{ ...btnPrimary, marginLeft: 'auto', padding: '5px 14px', fontSize: 12 }}>✕ Exit Preview</button>
+          </div>
+          <div style={{ flex: 1, overflow: 'auto' }}>
+            <WorkerPortal currentWorker={currentWorker} onSignOut={() => setPreviewMode(false)} showToast={showToast} isMobile={isMobile} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

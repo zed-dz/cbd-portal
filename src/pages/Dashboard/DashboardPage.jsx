@@ -63,9 +63,9 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
   const visibleAlerts = expiredCerts.filter(c => !dismissedAlerts.includes(c.id));
 
   const statCards = [
-    { label: 'On Site Today', value: stats?.onSite, color: C.accent, sub: null },
-    { label: 'Available Pool', value: stats?.available, color: C.warning, sub: 'Not yet placed' },
-    { label: 'Awaiting Approval', value: stats?.pendingTs, color: C.error, sub: 'Timesheets pending' },
+    { label: 'On Site Today', value: stats?.onSite, color: C.accent, sub: null, onClick: () => onNavigate('workers') },
+    { label: 'Available Pool', value: stats?.available, color: C.warning, sub: 'Not yet placed', onClick: () => onNavigate('workers') },
+    { label: 'Awaiting Approval', value: stats?.pendingTs, color: C.error, sub: 'Timesheets pending', onClick: () => onNavigate('timesheets') },
     { label: 'Licence Alerts', value: stats?.licAlerts > 0 ? stats.licAlerts : '⚡', color: C.error, sub: 'See Licence Agent', onClick: () => onNavigate('licence_agent') },
     { label: 'Week Billing', value: stats?.weekHours > 0 ? `${stats.weekHours}h` : '✓', color: C.success, sub: 'See Payroll', onClick: () => onNavigate('payroll') },
     { label: 'Ready for Payroll', value: stats?.payrollReady || '✓', color: stats?.payrollReady > 0 ? '#13B5EA' : C.success, sub: stats?.payrollReady > 0 ? 'Approved, not sent' : 'All up to date', onClick: () => onNavigate('payroll') },

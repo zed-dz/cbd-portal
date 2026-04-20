@@ -5,13 +5,15 @@ import { fmtDate, fmtDateTime } from '../../utils/dates';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge } from '../../components';
 
 const allocDefaults = {
-  worker_id: '', site: '', client: '', project: '', address: '', site_manager: '',
-  manager_phone: '', status: 'pending', start_date: '', end_date: '', start_time: '', end_time: '', notes: '',
+  worker_id: '', site: '', client: '', project: '', address: '', site_supervisor: '',
+  manager_phone: '', status: 'pending', start_date: '', end_date: '',
+  arrival_time: '', end_time: '', notes: '',
 };
 
 export function AllocationsPage({ showToast }) {
   const [allocations, setAllocations] = useState([]);
   const [workers, setWorkers] = useState([]);
+  const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState('');
   const [modal, setModal] = useState(null);
@@ -20,13 +22,15 @@ export function AllocationsPage({ showToast }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [a, w] = await Promise.all([
+    const [a, w, c] = await Promise.all([
       supabase.from('allocations').select('*, workers(name)').order('created_at', { ascending: false }),
       supabase.from('workers').select('id, name').order('name'),
+      supabase.from('clients').select('id, name').order('name'),
     ]);
     if (a.error) showToast(a.error.message, 'error');
     else setAllocations(a.data || []);
     if (w.data) setWorkers(w.data);
+    if (c.data) setClients(c.data);
     setLoading(false);
   }, [showToast]);
 
@@ -36,10 +40,14 @@ export function AllocationsPage({ showToast }) {
   const openEdit = (a) => {
     setForm({
       worker_id: a.worker_id || '', site: a.site || '', client: a.client || '',
-      project: a.project || '', address: a.address || '', site_manager: a.site_manager || '',
+      project: a.project || '', address: a.address || '',
+      site_supervisor: a.site_manager || a.site_supervisor || '',
       manager_phone: a.manager_phone || '', status: a.status, start_date: a.start_date || '',
-      end_date: a.end_date || '', start_time: a.start_time ? a.start_time.slice(0, 16) : '',
-      end_time: a.end_time ? a.end_time.slice(0, 16) : '', notes: a.notes || '',
+      end_date: a.end_date || '',
+      // Extract time-only from stored datetime
+      arrival_time: a.start_time ? a.start_time.slice(11, 16) : '',
+      end_time: a.end_time ? a.end_time.slice(11, 16) : '',
+      notes: a.notes || '',
     });
     setModal(a);
   };
@@ -49,10 +57,20 @@ export function AllocationsPage({ showToast }) {
     if (!form.worker_id) { showToast('Please select a worker.', 'error'); return; }
     setSaving(true);
     const payload = {
-      ...form,
-      start_time: form.start_time || null,
-      end_time: form.end_time || null,
+      worker_id: form.worker_id,
+      site: form.site, client: form.client, project: form.project,
+      address: form.address,
+      site_manager: form.site_supervisor,   // DB column stays site_manager
+      manager_phone: form.manager_phone,
+      status: form.status,
+      start_date: form.start_date || null,
       end_date: form.end_date || null,
+      // Combine date + time into full timestamp
+      start_time: form.arrival_time && form.start_date
+        ? `${form.start_date}T${form.arrival_time}` : null,
+      end_time: form.end_time && form.start_date
+        ? `${form.start_date}T${form.end_time}` : null,
+      notes: form.notes || null,
     };
     if (modal === 'add') {
       const { error } = await supabase.from('allocations').insert([payload]);
@@ -92,7 +110,7 @@ export function AllocationsPage({ showToast }) {
         <EmptyState message="No allocations found." />
       ) : (
         <TableWrap>
-          <thead><tr><Th>Worker</Th><Th>Client</Th><Th>Project / Site</Th><Th>Site Manager</Th><Th>Start Date</Th><Th>End Date</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
+          <thead><tr><Th>Worker</Th><Th>Client</Th><Th>Project / Site</Th><Th>Site Supervisor</Th><Th>Start Date</Th><Th>End Date</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
           <tbody>
             {filtered.map(a => (
               <tr key={a.id}>
@@ -132,13 +150,20 @@ export function AllocationsPage({ showToast }) {
                 </select>
               </Field>
             </div>
-            <Field label="Client"><input style={inputStyle} value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} /></Field>
+            <Field label="Client">
+              <>
+                <input style={inputStyle} list="alloc-clients-list" value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} placeholder="Type or select…" />
+                <datalist id="alloc-clients-list">
+                  {clients.map(c => <option key={c.id} value={c.name} />)}
+                </datalist>
+              </>
+            </Field>
             <Field label="Project"><input style={inputStyle} value={form.project} onChange={e => setForm(f => ({ ...f, project: e.target.value }))} /></Field>
             <Field label="Site"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
             <Field label="Site Address"><input style={inputStyle} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></Field>
-            <Field label="Site Manager"><input style={inputStyle} value={form.site_manager} onChange={e => setForm(f => ({ ...f, site_manager: e.target.value }))} /></Field>
-            <Field label="Manager Phone"><input style={inputStyle} value={form.manager_phone} onChange={e => setForm(f => ({ ...f, manager_phone: e.target.value }))} /></Field>
-            <Field label="Start Date"><input style={inputStyle} type="date" value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} /></Field>
+            <Field label="Site Supervisor"><input style={inputStyle} value={form.site_supervisor} onChange={e => setForm(f => ({ ...f, site_supervisor: e.target.value }))} /></Field>
+            <Field label="Supervisor Phone"><input style={inputStyle} value={form.manager_phone} onChange={e => setForm(f => ({ ...f, manager_phone: e.target.value }))} /></Field>
+            <Field label="Start Date *"><input style={inputStyle} type="date" value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} /></Field>
             <Field label="End Date"><input style={inputStyle} type="date" value={form.end_date} onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))} /></Field>
             <Field label="Status">
               <select style={inputStyle} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
@@ -148,8 +173,13 @@ export function AllocationsPage({ showToast }) {
                 <option value="cancelled">Cancelled</option>
               </select>
             </Field>
-            <Field label="Arrival Time"><input style={inputStyle} type="datetime-local" value={form.start_time} onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} /></Field>
-            <Field label="End Time"><input style={inputStyle} type="datetime-local" value={form.end_time} onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} /></Field>
+            <Field label="Arrival Time">
+              <input style={inputStyle} type="time" value={form.arrival_time} onChange={e => setForm(f => ({ ...f, arrival_time: e.target.value }))} />
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>Date is taken from Start Date above</div>
+            </Field>
+            <Field label="End Time">
+              <input style={inputStyle} type="time" value={form.end_time} onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} />
+            </Field>
             <div style={{ gridColumn: '1 / -1' }}>
               <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Field>
             </div>

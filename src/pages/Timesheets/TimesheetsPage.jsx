@@ -28,12 +28,15 @@ export function TimesheetsPage({ showToast, refreshBadge }) {
   const [form, setForm] = useState(tsDefaults);
   const [saving, setSaving] = useState(false);
 
+  const [clients, setClients] = useState([]);
+
   const load = useCallback(async () => {
     setLoading(true);
-    const [t, w, cfg] = await Promise.all([
+    const [t, w, cfg, c] = await Promise.all([
       supabase.from('timesheets').select('*, workers(name)').order('created_at', { ascending: false }),
       supabase.from('workers').select('id, name, worker_type, pay_rate_regular').order('name'),
       supabase.from('payroll_config').select('config_key, config_value'),
+      supabase.from('clients').select('id, name').order('name'),
     ]);
     if (t.error) showToast(t.error.message, 'error');
     else setTimesheets(t.data || []);
@@ -43,6 +46,7 @@ export function TimesheetsPage({ showToast, refreshBadge }) {
       cfg.data.forEach(r => { map[r.config_key] = r.config_value; });
       setConfigMap(map);
     }
+    if (c.data) setClients(c.data);
     setLoading(false);
   }, [showToast]);
 
@@ -272,13 +276,26 @@ export function TimesheetsPage({ showToast, refreshBadge }) {
             </select>
           </Field>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
-            <Field label="Client"><input style={inputStyle} value={form.client} onChange={e => handleFormChange({ client: e.target.value })} /></Field>
+            <Field label="Client">
+              <>
+                <input style={inputStyle} list="ts-clients-list" value={form.client} onChange={e => handleFormChange({ client: e.target.value })} placeholder="Type or select…" />
+                <datalist id="ts-clients-list">
+                  {clients.map(c => <option key={c.id} value={c.name} />)}
+                </datalist>
+              </>
+            </Field>
             <Field label="Site"><input style={inputStyle} value={form.site} onChange={e => handleFormChange({ site: e.target.value })} /></Field>
             <Field label="Date *">
               <input style={inputStyle} type="date" value={form.date} onChange={e => handleFormChange({ date: e.target.value })} />
             </Field>
-            <Field label="Break (minutes)">
-              <input style={inputStyle} type="number" min="0" step="5" value={form.break_minutes} onChange={e => handleFormChange({ break_minutes: parseInt(e.target.value) || 0 })} />
+            <Field label="Break">
+              <select style={inputStyle} value={form.break_minutes} onChange={e => handleFormChange({ break_minutes: parseInt(e.target.value) || 0 })}>
+                <option value={0}>No break</option>
+                <option value={15}>15 min</option>
+                <option value={30}>30 min</option>
+                <option value={45}>45 min</option>
+                <option value={60}>60 min</option>
+              </select>
             </Field>
             <Field label="Start Time">
               <input style={inputStyle} type="datetime-local" value={form.start_time} onChange={e => handleFormChange({ start_time: e.target.value })} />
@@ -311,15 +328,16 @@ export function TimesheetsPage({ showToast, refreshBadge }) {
             <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 20, marginBottom: 16 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: C.text, fontSize: 14 }}>
                 <input type="checkbox" checked={form.is_night_shift} onChange={e => handleFormChange({ is_night_shift: e.target.checked })} />
-                Night Shift (+15%)
+                Night Shift (1.5x / 2x after 8h)
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: C.text, fontSize: 14 }}>
                 <input type="checkbox" checked={form.geo_loading} onChange={e => handleFormChange({ geo_loading: e.target.checked })} />
                 Geographic Loading (+10%)
               </label>
             </div>
-            <Field label="AWJ Reference">
+            <Field label="Work Order / Job Ref">
               <input style={inputStyle} value={form.awj_reference} onChange={e => handleFormChange({ awj_reference: e.target.value })} placeholder="e.g. AWJ-2025-001" />
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>Internal job reference — used to match this timesheet in Xero</div>
             </Field>
             <Field label="Admin Override Hours">
               <input style={inputStyle} type="number" step="0.25" min="0" value={form.admin_override_hours} onChange={e => handleFormChange({ admin_override_hours: e.target.value })} placeholder="Overrides computed hours" />
