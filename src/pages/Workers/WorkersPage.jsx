@@ -1,9 +1,25 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
-import { Spinner, Badge, Modal, Field, TableWrap, Th, Td, EmptyState } from '../../components';
+import { fmtDate } from '../../utils/dates';
+import { Spinner, Badge, Modal, Field, TableWrap, Th, Td, EmptyState, certBadge } from '../../components';
 import { JOB_TITLES } from '../../constants/jobTitles';
 import { WORKER_TYPES } from '../../constants/scenarios';
+
+function dedupeLicences(s) {
+  if (!s) return '';
+  const seen = new Set();
+  return s.split(',')
+    .map(l => l.trim())
+    .filter(l => {
+      if (!l) return false;
+      const k = l.toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .join(', ');
+}
 
 const workerDefaults = {
   name: '', email: '', mobile: '', role: 'worker', job_title: '', licences: '',
@@ -19,7 +35,9 @@ export function WorkersPage({ showToast }) {
   const [filterType, setFilterType] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterAppStatus, setFilterAppStatus] = useState('');
+  const [filterLicence, setFilterLicence] = useState('');
   const [modal, setModal] = useState(null);
+  const [editCerts, setEditCerts] = useState([]);
   const [form, setForm] = useState(workerDefaults);
   const [saving, setSaving] = useState(false);
 
@@ -33,19 +51,21 @@ export function WorkersPage({ showToast }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const openAdd = () => { setForm(workerDefaults); setModal('add'); };
-  const openEdit = (w) => {
+  const openAdd = () => { setForm(workerDefaults); setEditCerts([]); setModal('add'); };
+  const openEdit = async (w) => {
     setForm({
       name: w.name, email: w.email, mobile: w.mobile || '', role: w.role,
-      job_title: w.job_title || '', licences: w.licences || '', address: w.address || '',
+      job_title: w.job_title || '', licences: dedupeLicences(w.licences || ''), address: w.address || '',
       access_level: w.access_level || 'employee', status: w.status,
       app_status: w.app_status || 'Active', site: w.site || '', client: w.client || '',
       worker_type: w.worker_type || 'casual', pay_rate_regular: w.pay_rate_regular ?? '',
       pay_rate_overtime: w.pay_rate_overtime ?? '', subcontractor_abn: w.subcontractor_abn || '',
     });
     setModal(w);
+    const { data } = await supabase.from('certifications').select('*').eq('worker_id', w.id).order('expiry', { ascending: true });
+    setEditCerts(data || []);
   };
-  const closeModal = () => { setModal(null); setForm(workerDefaults); };
+  const closeModal = () => { setModal(null); setForm(workerDefaults); setEditCerts([]); };
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.email.trim()) { showToast('Name and email are required.', 'error'); return; }
@@ -79,8 +99,14 @@ export function WorkersPage({ showToast }) {
     const matchType = !filterType || (w.worker_type || 'casual') === filterType;
     const matchStatus = !filterStatus || w.status === filterStatus;
     const matchAppStatus = !filterAppStatus || (w.app_status || 'Active') === filterAppStatus;
-    return matchSearch && matchType && matchStatus && matchAppStatus;
+    const matchLicence = !filterLicence || (w.licences || '').toLowerCase().includes(filterLicence.toLowerCase());
+    return matchSearch && matchType && matchStatus && matchAppStatus && matchLicence;
   });
+
+  // Build distinct licence keyword list from all workers' licence strings
+  const allLicences = [...new Set(
+    workers.flatMap(w => (w.licences || '').split(',').map(l => l.trim()).filter(Boolean).map(l => l.toLowerCase()))
+  )].sort();
 
   return (
     <div>
@@ -107,6 +133,10 @@ export function WorkersPage({ showToast }) {
             <option value="Completing Profile">Completing Profile</option>
             <option value="Profile Incomplete">Profile Incomplete</option>
             <option value="Inactive">Inactive</option>
+          </select>
+          <select style={{ ...inputStyle, maxWidth: 200 }} value={filterLicence} onChange={e => setFilterLicence(e.target.value)} title="Filter workers by licence/ticket keyword">
+            <option value="">🪪 All Licences</option>
+            {allLicences.map(l => <option key={l} value={l}>{l}</option>)}
           </select>
         </div>
         <button onClick={openAdd} style={btnPrimary}>+ Add Worker</button>
@@ -136,7 +166,11 @@ export function WorkersPage({ showToast }) {
                     : <span style={{ color: C.textMuted, fontSize: 12 }}>Not set</span>}
                 </Td>
                 <Td>{w.mobile || '—'}</Td>
-                <Td><span style={{ fontSize: 12, color: C.textMuted }}>{w.licences || '—'}</span></Td>
+                <Td title={dedupeLicences(w.licences)}>
+                  <span style={{ fontSize: 12, color: C.textMuted, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', maxWidth: 240 }}>
+                    {dedupeLicences(w.licences) || '—'}
+                  </span>
+                </Td>
                 <Td><Badge label={w.status || 'available'} color={w.status === 'on_site' ? 'green' : w.status === 'job_details_sent' ? 'yellow' : 'blue'} /></Td>
                 <Td><Badge label={w.app_status || 'Active'} color={w.app_status === 'Active' ? 'green' : w.app_status === 'Profile Incomplete' ? 'yellow' : 'gray'} /></Td>
                 <Td>
@@ -215,7 +249,37 @@ export function WorkersPage({ showToast }) {
             <Field label="Current Site"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
             <Field label="Current Client"><input style={inputStyle} value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} /></Field>
           </div>
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+
+          {modal !== 'add' && (
+            <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.text, letterSpacing: 1 }}>🪪 TICKETS / CERTIFICATIONS</div>
+                <span style={{ fontSize: 11, color: C.textMuted }}>Manage in <strong>Licence Agent</strong> page</span>
+              </div>
+              {editCerts.length === 0 ? (
+                <div style={{ fontSize: 12, color: C.textMuted, padding: '6px 0' }}>No tickets recorded for this worker yet.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 200, overflowY: 'auto' }}>
+                  {editCerts.map(c => (
+                    <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.bg, borderRadius: 7, padding: '7px 10px' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{c.cert_name}</div>
+                        {c.issuer && <div style={{ fontSize: 11, color: C.textMuted }}>{c.issuer}</div>}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 11, color: C.textMuted, fontFamily: '"DM Mono", monospace' }}>
+                          {c.expiry ? fmtDate(c.expiry) : 'No expiry'}
+                        </span>
+                        {certBadge(c.expiry)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 14 }}>
             <button onClick={closeModal} style={btnSecondary}>Cancel</button>
             <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
           </div>

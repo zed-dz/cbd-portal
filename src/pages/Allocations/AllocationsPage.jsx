@@ -23,7 +23,7 @@ export function AllocationsPage({ showToast }) {
   const load = useCallback(async () => {
     setLoading(true);
     const [a, w, c] = await Promise.all([
-      supabase.from('allocations').select('*, workers(name)').order('created_at', { ascending: false }),
+      supabase.from('allocations').select('*, workers(name, job_title)').order('created_at', { ascending: false }),
       supabase.from('workers').select('id, name').order('name'),
       supabase.from('clients').select('id, name').order('name'),
     ]);
@@ -110,11 +110,16 @@ export function AllocationsPage({ showToast }) {
         <EmptyState message="No allocations found." />
       ) : (
         <TableWrap>
-          <thead><tr><Th>Worker</Th><Th>Client</Th><Th>Project / Site</Th><Th>Site Supervisor</Th><Th>Start Date</Th><Th>End Date</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
+          <thead><tr><Th>Worker</Th><Th>Role</Th><Th>Client</Th><Th>Project / Site</Th><Th>Site Supervisor</Th><Th>Start Date</Th><Th>End Date</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
           <tbody>
             {filtered.map(a => (
               <tr key={a.id}>
                 <Td>{a.workers?.name || '—'}</Td>
+                <Td>
+                  {a.workers?.job_title
+                    ? <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600, background: 'rgba(249,115,22,0.12)', color: '#f97316', fontFamily: '"DM Mono", monospace' }}>{a.workers.job_title}</span>
+                    : <span style={{ color: C.textMuted }}>—</span>}
+                </Td>
                 <Td>{a.client || '—'}</Td>
                 <Td>
                   <div>{a.project || a.site || '—'}</div>
