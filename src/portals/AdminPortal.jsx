@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
-import { C, btnPrimary, btnSecondary } from '../theme';
+import { C, R, MONO, btnPrimary, btnSecondary } from '../theme';
+import { SendBlastModal } from '../components/blast/SendBlastModal';
+import { ScanModal } from '../components/scan/ScanModal';
 import { DashboardPage } from '../pages/Dashboard/DashboardPage';
 import { WorkersPage } from '../pages/Workers/WorkersPage';
 import { AllocationsPage } from '../pages/Allocations/AllocationsPage';
@@ -21,6 +23,8 @@ import { WorkerPortal } from './WorkerPortal';
 export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpen, setSidebarOpen }) {
   const [activePage, setActivePage] = useState('dashboard');
   const [previewMode, setPreviewMode] = useState(false);
+  const [blastOpen, setBlastOpen] = useState(false);
+  const [scanOpen, setScanOpen]   = useState(false);
   const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, client_approvals: 0, licence_agent: 0, pending_workers: 0, payroll: 0 });
 
   const refreshBadge = useCallback(async () => {
@@ -92,31 +96,39 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
     <div style={{
       width: C.sidebarW, background: C.sidebar, height: '100vh', display: 'flex',
       flexDirection: 'column', borderRight: `1px solid ${C.border}`, flexShrink: 0, overflowY: 'auto',
-      ...(isMobile ? { position: 'fixed', top: 0, left: 0, zIndex: 500, transform: sidebarOpen ? 'translateX(0)' : `translateX(-${C.sidebarW}px)`, transition: 'transform 0.25s ease' } : {}),
+      ...(isMobile ? { position: 'fixed', top: 0, left: 0, zIndex: 500, transform: sidebarOpen ? 'translateX(0)' : `translateX(-${C.sidebarW}px)`, transition: 'transform 0.25s ease', boxShadow: sidebarOpen ? '8px 0 32px rgba(0,0,0,0.5)' : 'none' } : {}),
     }}>
-      <div style={{ padding: '20px 18px 18px', borderBottom: `1px solid ${C.border}`, marginBottom: 16 }}>
-        <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 26, fontWeight: 800, color: C.accent, lineHeight: 1 }}>CBD</div>
-        <div style={{ fontSize: 9, color: C.textMuted, fontFamily: '"DM Mono", monospace', letterSpacing: 2, textTransform: 'uppercase', marginTop: 2 }}>Operations Portal</div>
+      <div style={{ padding: '22px 18px 18px', borderBottom: `1px solid ${C.border}`, marginBottom: 14 }}>
+        <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 28, fontWeight: 800, color: C.accent, lineHeight: 1, letterSpacing: -0.5 }}>CBD</div>
+        <div style={{ fontSize: 9, color: C.textMuted, fontFamily: MONO, letterSpacing: 2.2, textTransform: 'uppercase', marginTop: 4, fontWeight: 600 }}>Operations Portal</div>
       </div>
       <nav style={{ flex: 1, padding: '0 10px' }}>
         {navSections.map(section => (
           <div key={section.label} style={{ marginBottom: 18 }}>
-            <div style={{ fontSize: 9, letterSpacing: 2, textTransform: 'uppercase', color: C.textMuted, padding: '0 8px', marginBottom: 5, fontFamily: '"DM Mono", monospace' }}>{section.label}</div>
+            <div style={{ fontSize: 9, letterSpacing: 2.2, textTransform: 'uppercase', color: C.textDim, padding: '0 10px', marginBottom: 6, fontFamily: MONO, fontWeight: 700 }}>{section.label}</div>
             {section.items.map(item => {
               const active = activePage === item.id;
               const bc = item.badgeColor ? BADGE_COLORS[item.badgeColor] : null;
               return (
-                <button key={item.id} onClick={() => navigate(item.id)} style={{
-                  width: '100%', textAlign: 'left', background: active ? C.cardHover : 'transparent',
-                  color: active ? C.text : C.textMuted, border: 'none',
-                  borderLeft: `3px solid ${active ? C.accent : 'transparent'}`,
-                  borderRadius: '0 8px 8px 0', padding: '8px 10px', cursor: 'pointer',
-                  fontSize: 13, fontWeight: 500, marginBottom: 2, transition: 'all 0.15s',
-                  display: 'flex', alignItems: 'center', gap: 8,
-                }}>
+                <button
+                  key={item.id}
+                  onClick={() => navigate(item.id)}
+                  onMouseEnter={e => { if (!active) e.currentTarget.style.background = C.cardHover; }}
+                  onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent'; }}
+                  style={{
+                    width: '100%', textAlign: 'left',
+                    background: active ? C.cardHover : 'transparent',
+                    color: active ? C.text : C.textMuted, border: 'none',
+                    borderLeft: `3px solid ${active ? C.accent : 'transparent'}`,
+                    borderRadius: `0 ${R.md}px ${R.md}px 0`,
+                    padding: '8px 11px', cursor: 'pointer',
+                    fontSize: 13, fontWeight: active ? 600 : 500,
+                    marginBottom: 2, transition: 'all 120ms',
+                    display: 'flex', alignItems: 'center', gap: 8,
+                  }}>
                   <span style={{ flex: 1 }}>{item.label}</span>
                   {item.badge && bc ? (
-                    <span style={{ background: bc.bg, color: bc.text, borderRadius: 10, fontSize: 10, fontWeight: 700, padding: '1px 5px', fontFamily: '"DM Mono", monospace' }}>
+                    <span style={{ background: bc.bg, color: bc.text, borderRadius: R.pill, fontSize: 10, fontWeight: 700, padding: '1px 7px', fontFamily: MONO, minWidth: 18, textAlign: 'center' }}>
                       {item.badge}
                     </span>
                   ) : null}
@@ -126,14 +138,17 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           </div>
         ))}
       </nav>
-      <div style={{ padding: '11px 15px', background: C.cardHover, borderTop: `1px solid ${C.border}` }}>
-        <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4, fontFamily: '"DM Mono", monospace', textTransform: 'uppercase', letterSpacing: 1 }}>Signed In</div>
-        <div>
-          <span style={{ display: 'inline-block', width: 7, height: 7, background: C.success, borderRadius: '50%', marginRight: 5 }} />
-          <strong style={{ fontSize: 12, color: C.text }}>{currentWorker?.name}</strong>
+      <div style={{ padding: '12px 14px', background: C.bg, borderTop: `1px solid ${C.border}` }}>
+        <div style={{ fontSize: 9, color: C.textDim, marginBottom: 5, fontFamily: MONO, textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 700 }}>Signed In</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ display: 'inline-block', width: 7, height: 7, background: C.success, borderRadius: '50%', boxShadow: '0 0 6px rgba(34,197,94,0.6)' }} />
+          <strong style={{ fontSize: 12.5, color: C.text }}>{currentWorker?.name}</strong>
         </div>
-        <div style={{ fontSize: 10, color: C.textMuted, marginTop: 1, fontFamily: '"DM Mono", monospace' }}>ROAD · RAIL · WATER</div>
-        <button onClick={onSignOut} style={{ marginTop: 8, background: 'none', border: `1px solid ${C.border}`, color: C.textMuted, borderRadius: 6, padding: '4px 10px', fontSize: 10, cursor: 'pointer', fontFamily: '"DM Mono", monospace', width: '100%' }}>
+        <div style={{ fontSize: 9, color: C.textDim, marginTop: 3, fontFamily: MONO, letterSpacing: 1.2 }}>ROAD · RAIL · WATER</div>
+        <button onClick={onSignOut} style={{ marginTop: 10, background: 'transparent', border: `1px solid ${C.border}`, color: C.textMuted, borderRadius: R.sm, padding: '5px 10px', fontSize: 10.5, cursor: 'pointer', fontFamily: MONO, width: '100%', letterSpacing: 0.5, transition: 'all 120ms' }}
+          onMouseEnter={e => { e.currentTarget.style.color = C.text; e.currentTarget.style.borderColor = C.borderStrong; }}
+          onMouseLeave={e => { e.currentTarget.style.color = C.textMuted; e.currentTarget.style.borderColor = C.border; }}
+        >
           Sign out →
         </button>
       </div>
@@ -150,17 +165,17 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         </>
       )}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ background: C.sidebar, borderBottom: `1px solid ${C.border}`, padding: '0 24px', height: 48, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div style={{ background: C.sidebar, borderBottom: `1px solid ${C.border}`, padding: '0 20px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {isMobile && (
-              <button onClick={() => setSidebarOpen(o => !o)} style={{ background: 'none', border: 'none', color: C.text, cursor: 'pointer', fontSize: 22, lineHeight: 1, padding: 4 }}>☰</button>
+              <button onClick={() => setSidebarOpen(o => !o)} style={{ background: 'none', border: 'none', color: C.text, cursor: 'pointer', fontSize: 22, lineHeight: 1, padding: 4 }} aria-label="Toggle menu">☰</button>
             )}
-            <span style={{ fontSize: 10, color: C.textMuted, fontFamily: '"DM Mono", monospace' }}>CBD PLANT & LABOUR · ABN: 75 663 693 070</span>
+            <span style={{ fontSize: 10, color: C.textDim, fontFamily: MONO, letterSpacing: 1, fontWeight: 600 }}>CBD PLANT & LABOUR · ABN 75 663 693 070</span>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => setPreviewMode(true)} style={{ ...btnSecondary, padding: '7px 14px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>👁 Worker View</button>
-            <button style={{ ...btnSecondary, padding: '7px 14px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📷 Scan</button>
-            <button style={{ ...btnPrimary, padding: '7px 14px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📢 Send Blast</button>
+            <button onClick={() => setPreviewMode(true)} style={{ ...btnSecondary, padding: '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>👁 Worker View</button>
+            <button onClick={() => setScanOpen(true)} style={{ ...btnSecondary, padding: '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📷 Scan</button>
+            <button onClick={() => setBlastOpen(true)} style={{ ...btnPrimary, padding: '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📢 Send Blast</button>
           </div>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? 12 : 24 }}>
@@ -181,6 +196,9 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'app_views'        && <AppViewsPage showToast={showToast} />}
         </div>
       </div>
+
+      {blastOpen && <SendBlastModal onClose={() => setBlastOpen(false)} showToast={showToast} />}
+      {scanOpen  && <ScanModal      onClose={() => setScanOpen(false)}  showToast={showToast} />}
 
       {/* ── Preview Worker View overlay ──────────────────────────────────── */}
       {previewMode && (

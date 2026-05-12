@@ -25,7 +25,7 @@ export function AppViewsPage({ showToast }) {
   return (
     <div>
       <div style={{ background: 'rgba(249,115,22,0.07)', border: '1px solid rgba(249,115,22,0.2)', borderRadius: 10, padding: '12px 16px', marginBottom: 20, fontSize: 13, color: C.textMuted }}>
-        📲 <strong style={{ color: C.text }}>App Views</strong> — shows each worker's portal view and current status. Click a worker to preview their allocation and timesheet data.
+        📲 <strong style={{ color: C.text }}>App Views</strong> — quick directory of every worker, their current site status and contact details. Click a card to expand contact info.
       </div>
 
       {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : (

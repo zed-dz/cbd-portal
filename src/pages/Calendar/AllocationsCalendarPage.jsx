@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { Fragment, useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnSmall } from '../../theme';
 import { Modal, Field, Spinner } from '../../components';
@@ -21,8 +21,9 @@ function getWeekDays(monday) {
 }
 
 function isAllocOnDay(alloc, dayISO) {
-  const start = alloc.start_date || '';
-  const end = alloc.end_date || alloc.start_date || '';
+  if (!alloc.start_date) return false;
+  const start = alloc.start_date;
+  const end = alloc.end_date || alloc.start_date;
   return start <= dayISO && end >= dayISO;
 }
 
@@ -162,9 +163,9 @@ export function AllocationsCalendarPage({ showToast }) {
                 No allocations this week. Click a day cell or "+ Add Allocation" to create one.
               </div>
             ) : calWorkers.map(worker => (
-              <>
+              <Fragment key={worker.id}>
                 {/* Worker name cell */}
-                <div key={`name-${worker.id}`} style={{
+                <div style={{
                   padding: '12px 12px', borderBottom: `1px solid ${C.border}`,
                   borderRight: `1px solid ${C.border}`, background: C.sidebar,
                 }}>
@@ -176,7 +177,7 @@ export function AllocationsCalendarPage({ showToast }) {
                 {weekDays.map(day => {
                   const dayAllocs = allocations.filter(a => a.worker_id === worker.id && isAllocOnDay(a, day));
                   return (
-                    <div key={`${worker.id}-${day}`} onClick={() => !dayAllocs.length && openCreate({ worker_id: worker.id, start_date: day })} style={{
+                    <div key={day} onClick={() => !dayAllocs.length && openCreate({ worker_id: worker.id, start_date: day })} style={{
                       padding: 4, borderBottom: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`,
                       minHeight: 52, background: day === todayISO ? 'rgba(249,115,22,0.04)' : C.card,
                       cursor: dayAllocs.length ? 'default' : 'pointer',
@@ -195,7 +196,7 @@ export function AllocationsCalendarPage({ showToast }) {
                     </div>
                   );
                 })}
-              </>
+              </Fragment>
             ))}
           </div>
         </div>

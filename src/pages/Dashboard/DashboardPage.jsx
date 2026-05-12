@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
-import { C, btnPrimary, btnSecondary } from '../../theme';
+import { C, R, MONO, btnPrimary, btnSecondary } from '../../theme';
 import { todayISO, fmtDate } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
 import { Spinner, allocationBadge, timesheetBadge } from '../../components';
@@ -72,28 +72,34 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 6 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 4 }}>
         <div>
-          <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 23, fontWeight: 700, color: C.text }}>
+          <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 26, fontWeight: 700, color: C.text, letterSpacing: -0.4 }}>
             {greeting}, <span style={{ color: C.accent }}>{firstName}</span>
           </div>
-          <div style={{ color: C.textMuted, fontSize: 12, marginTop: 3 }}>Operations overview · {dateLabel}</div>
+          <div style={{ color: C.textMuted, fontSize: 12.5, marginTop: 4 }}>Operations overview · {dateLabel}</div>
         </div>
-        <div style={{ fontSize: 11, color: C.textMuted, textAlign: 'right', fontFamily: '"DM Mono", monospace' }}>
+        <div style={{ fontSize: 10.5, color: C.textDim, textAlign: 'right', fontFamily: MONO, letterSpacing: 0.5, lineHeight: 1.6 }}>
           ABN: 75 663 693 070<br />Ops: Matt 0413 962 001
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 11 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
         {statCards.map(sc => (
-          <div key={sc.label} onClick={sc.onClick} style={{
-            background: C.card, border: `1px solid ${C.border}`, borderRadius: 11, padding: '16px 18px',
-            cursor: sc.onClick ? 'pointer' : 'default', transition: sc.onClick ? 'border-color 0.15s' : undefined,
-          }}>
-            <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 28, fontWeight: 800, color: sc.color, lineHeight: 1 }}>{sc.value ?? '—'}</div>
-            <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: C.textMuted, marginTop: 4, fontFamily: '"DM Mono", monospace' }}>{sc.label}</div>
-            {sc.sub && <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>{sc.sub}</div>}
+          <div key={sc.label}
+            onClick={sc.onClick}
+            onMouseEnter={e => { if (sc.onClick) { e.currentTarget.style.borderColor = C.borderStrong; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
+            onMouseLeave={e => { if (sc.onClick) { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.transform = 'translateY(0)'; } }}
+            style={{
+              background: C.card, border: `1px solid ${C.border}`,
+              borderRadius: R.lg, padding: '16px 18px',
+              cursor: sc.onClick ? 'pointer' : 'default',
+              transition: 'border-color 140ms, transform 140ms',
+            }}>
+            <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 30, fontWeight: 800, color: sc.color, lineHeight: 1, letterSpacing: -0.5 }}>{sc.value ?? '—'}</div>
+            <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.4, color: C.textMuted, marginTop: 6, fontFamily: MONO, fontWeight: 600 }}>{sc.label}</div>
+            {sc.sub && <div style={{ fontSize: 11, color: C.textDim, marginTop: 3 }}>{sc.sub}</div>}
           </div>
         ))}
       </div>

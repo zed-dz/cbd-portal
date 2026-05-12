@@ -2,25 +2,43 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 const DRAFT_PREFIX = 'cbd_draft_';
 
+function readDraft(fullKey, initial) {
+  try {
+    const raw = localStorage.getItem(fullKey);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { value: { ...initial, ...parsed }, hadDraft: true };
+    }
+  } catch (e) { /* corrupt draft — ignore */ }
+  return { value: initial, hadDraft: false };
+}
+
 export function useDraft(key, initial, { enabled = true } = {}) {
   const fullKey = DRAFT_PREFIX + key;
-  const hadDraft = useRef(false);
+  const initialRef = useRef(initial);
+  initialRef.current = initial;
 
-  const [value, setValue] = useState(() => {
-    if (!enabled) return initial;
-    try {
-      const raw = localStorage.getItem(fullKey);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        hadDraft.current = true;
-        return { ...initial, ...parsed };
-      }
-    } catch (e) { /* corrupt draft – ignore */ }
-    return initial;
-  });
+  const first = readDraft(fullKey, initialRef.current);
+  const [value, setValue] = useState(first.value);
+  const [draftRestored, setDraftRestored] = useState(first.hadDraft);
+  const lastKey = useRef(fullKey);
 
-  const [draftRestored, setDraftRestored] = useState(hadDraft.current);
+  // When the draft key changes (e.g. closing one modal and opening another with
+  // a different id), reload state from the new key's localStorage entry.
+  useEffect(() => {
+    if (lastKey.current === fullKey) return;
+    lastKey.current = fullKey;
+    if (!enabled) {
+      setValue(initialRef.current);
+      setDraftRestored(false);
+      return;
+    }
+    const { value: v, hadDraft } = readDraft(fullKey, initialRef.current);
+    setValue(v);
+    setDraftRestored(hadDraft);
+  }, [fullKey, enabled]);
 
+  // Debounced persistence to localStorage.
   useEffect(() => {
     if (!enabled) return;
     const id = setTimeout(() => {
@@ -36,10 +54,12 @@ export function useDraft(key, initial, { enabled = true } = {}) {
 
   const discardDraft = useCallback(() => {
     clear();
-    setValue(initial);
-  }, [clear, initial]);
+    setValue(initialRef.current);
+  }, [clear]);
 
-  return [value, setValue, { draftRestored, discardDraft, clear, dismissBanner: () => setDraftRestored(false) }];
+  const dismissBanner = useCallback(() => setDraftRestored(false), []);
+
+  return [value, setValue, { draftRestored, discardDraft, clear, dismissBanner }];
 }
 
 export function DraftBanner({ visible, onDiscard, onDismiss, label = 'Draft restored from your last session.' }) {
@@ -47,7 +67,7 @@ export function DraftBanner({ visible, onDiscard, onDismiss, label = 'Draft rest
   return (
     <div style={{
       background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.35)',
-      borderRadius: 7, padding: '8px 12px', marginBottom: 14, display: 'flex',
+      borderRadius: 8, padding: '8px 12px', marginBottom: 14, display: 'flex',
       alignItems: 'center', justifyContent: 'space-between', gap: 10,
       fontSize: 12, color: '#fde68a',
     }}>
