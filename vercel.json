@@ -1,0 +1,7 @@
+{
+  "rewrites": [
+    { "source": "/p/:token", "destination": "/index.html" },
+    { "source": "/onboard/:token", "destination": "/index.html" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

@@ -5,8 +5,69 @@ import { ToastContainer, Spinner } from './components';
 import { LoginPage } from './pages/Login/LoginPage';
 import { AdminPortal } from './portals/AdminPortal';
 import { WorkerPortal } from './portals/WorkerPortal';
+import { PublicProfilePage } from './pages/PublicProfile/PublicProfilePage';
+import { OnboardProfilePage } from './pages/OnboardProfile/OnboardProfilePage';
+
+const PUBLIC_ROUTE_PATTERNS = [
+  { kind: 'profile',  re: /^\/p\/([0-9a-f-]{36})\/?$/i },
+  { kind: 'onboard',  re: /^\/onboard\/([0-9a-f-]{36})\/?$/i },
+];
+
+function matchPublicRoute(pathname) {
+  for (const r of PUBLIC_ROUTE_PATTERNS) {
+    const m = pathname.match(r.re);
+    if (m) return { kind: r.kind, token: m[1] };
+  }
+  return null;
+}
+
+function GlobalStyles() {
+  useEffect(() => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400&display=swap';
+    document.head.appendChild(link);
+
+    const style = document.createElement('style');
+    style.textContent = `
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { background: ${C.bg}; color: ${C.text}; font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes slideIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+      input, select, textarea { font-family: 'DM Sans', sans-serif; }
+      input:focus, select:focus, textarea:focus { border-color: ${C.accent} !important; }
+      button:disabled { opacity: 0.5; cursor: not-allowed !important; }
+      ::-webkit-scrollbar { width: 4px; height: 4px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 4px; }
+    `;
+    document.head.appendChild(style);
+    return () => { document.head.removeChild(style); document.head.removeChild(link); };
+  }, []);
+  return null;
+}
 
 export default function App() {
+  const publicRoute = matchPublicRoute(window.location.pathname);
+  if (publicRoute) {
+    return (
+      <>
+        <GlobalStyles />
+        {publicRoute.kind === 'profile'
+          ? <PublicProfilePage token={publicRoute.token} />
+          : <OnboardProfilePage token={publicRoute.token} />}
+      </>
+    );
+  }
+  return (
+    <>
+      <GlobalStyles />
+      <AppShell />
+    </>
+  );
+}
+
+function AppShell() {
   const [session, setSession] = useState(null);
   const [currentWorker, setCurrentWorker] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -86,29 +147,6 @@ export default function App() {
     await supabase.auth.signOut();
     setSidebarOpen(false);
   }
-
-  useEffect(() => {
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = 'https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400&display=swap';
-    document.head.appendChild(link);
-
-    const style = document.createElement('style');
-    style.textContent = `
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { background: ${C.bg}; color: ${C.text}; font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif; }
-      @keyframes spin { to { transform: rotate(360deg); } }
-      @keyframes slideIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-      input, select, textarea { font-family: 'DM Sans', sans-serif; }
-      input:focus, select:focus, textarea:focus { border-color: ${C.accent} !important; }
-      button:disabled { opacity: 0.5; cursor: not-allowed !important; }
-      ::-webkit-scrollbar { width: 4px; height: 4px; }
-      ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 4px; }
-    `;
-    document.head.appendChild(style);
-    return () => { document.head.removeChild(style); document.head.removeChild(link); };
-  }, []);
 
   if (authLoading) {
     return (
