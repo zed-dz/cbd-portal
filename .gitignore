@@ -26,3 +26,5 @@ yarn-error.log*
 # Project planning files
 *.md
 !README.md
+!CLAUDE.md
+!DOCS.md
