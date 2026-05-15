@@ -18,6 +18,7 @@ const SUPABASE_URL        = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const GMAIL_CLIENT_ID     = Deno.env.get('GMAIL_CLIENT_ID')  || '';
 const GMAIL_CLIENT_SECRET = Deno.env.get('GMAIL_CLIENT_SECRET') || '';
+const SENDER_DISPLAY_NAME = Deno.env.get('GMAIL_SENDER_NAME') || 'CBD Plant & Labour';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -78,6 +79,28 @@ function b64url(s: string) {
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+// RFC 2047 encoded-word for non-ASCII header values. ASCII passes through;
+// anything else is base64-encoded as a single UTF-8 word so chars like — and
+// curly quotes survive Gmail's strict header parser.
+function encodeHeader(value: string) {
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x00-\x7F]*$/.test(value)) return value;
+  const bytes = new TextEncoder().encode(value);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return `=?UTF-8?B?${btoa(bin)}?=`;
+}
+
+// Build a `Display Name <addr@example.com>` From header where the display
+// name is RFC 2047 encoded if it contains non-ASCII.
+function formatFromHeader(name: string, email: string) {
+  const safeName = name.replace(/"/g, '\\"');
+  const encoded  = encodeHeader(safeName);
+  return /^[\x00-\x7F]*$/.test(safeName)
+    ? `"${safeName}" <${email}>`
+    : `${encoded} <${email}>`;
+}
+
 function buildMime(opts: {
   from: string;
   to: string[];
@@ -91,7 +114,7 @@ function buildMime(opts: {
   const headers: string[] = [
     `From: ${opts.from}`,
     `To: ${opts.to.join(', ')}`,
-    `Subject: ${opts.subject}`,
+    `Subject: ${encodeHeader(opts.subject)}`,
     'MIME-Version: 1.0',
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
   ];
@@ -100,18 +123,27 @@ function buildMime(opts: {
 
   const html = `<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14.5px;line-height:1.6;color:#1a1a1a">${safeHtml}</body></html>`;
 
+  // Both parts are base64-encoded so UTF-8 chars (em-dash, curly quotes,
+  // emoji, etc.) survive transit instead of getting mojibake'd.
+  const b64 = (s: string) => {
+    const bytes = new TextEncoder().encode(s);
+    let bin = '';
+    for (const b of bytes) bin += String.fromCharCode(b);
+    return btoa(bin).replace(/(.{76})/g, '$1\r\n');
+  };
+
   const body = [
     `--${boundary}`,
     'Content-Type: text/plain; charset="UTF-8"',
-    'Content-Transfer-Encoding: 7bit',
+    'Content-Transfer-Encoding: base64',
     '',
-    opts.text,
+    b64(opts.text),
     '',
     `--${boundary}`,
     'Content-Type: text/html; charset="UTF-8"',
-    'Content-Transfer-Encoding: 7bit',
+    'Content-Transfer-Encoding: base64',
     '',
-    html,
+    b64(html),
     '',
     `--${boundary}--`,
   ].join('\r\n');
@@ -151,7 +183,7 @@ serve(async (req) => {
   if (!fromEmail) return json({ error: 'no_from_address' }, 500);
 
   const mime = buildMime({
-    from:    fromEmail,
+    from:    formatFromHeader(SENDER_DISPLAY_NAME, fromEmail),
     to:      cleanTo,
     subject: payload.subject.trim(),
     text:    payload.body.trim(),
