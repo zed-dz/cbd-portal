@@ -22,7 +22,15 @@ import { PendingWorkersPage } from '../pages/PendingWorkers/PendingWorkersPage';
 import { WorkerPortal } from './WorkerPortal';
 
 export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpen, setSidebarOpen }) {
-  const [activePage, setActivePage] = useState('dashboard');
+  // Land on Inbox if we just completed Gmail OAuth — the InboxPage will then
+  // pick up the `gmail_connected=1` query param and show the toast.
+  const initialPage = (() => {
+    if (typeof window === 'undefined') return 'dashboard';
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('gmail_connected') === '1' || p.get('gmail_error')) return 'inbox';
+    return 'dashboard';
+  })();
+  const [activePage, setActivePage] = useState(initialPage);
   const [previewMode, setPreviewMode] = useState(false);
   const [blastOpen, setBlastOpen] = useState(false);
   const [scanOpen, setScanOpen]   = useState(false);
