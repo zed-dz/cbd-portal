@@ -111,13 +111,13 @@ function ClientsList({ showToast }) {
       name: form.name, site: form.site, contact: form.contact,
       contact_email: form.contact_email, contact_phone: form.contact_phone,
       rate_a: A,
-      rate_b: n(form.rate_b) ?? (A != null ? +(A * 1.5).toFixed(2) : null),
-      rate_c: n(form.rate_c) ?? (A != null ? +(A * 2).toFixed(2)   : null),
+      rate_b: n(form.rate_b),
+      rate_c: n(form.rate_c),
       // Keep legacy columns in sync for payroll calc backward compat.
       rate_regular:  A,
-      rate_overtime: n(form.rate_b) ?? (A != null ? +(A * 1.5).toFixed(2) : null),
-      rate_night:    n(form.rate_b) ?? (A != null ? +(A * 1.5).toFixed(2) : null),
-      rate_weekend:  n(form.rate_c) ?? (A != null ? +(A * 2).toFixed(2)   : null),
+      rate_overtime: n(form.rate_b),
+      rate_night:    n(form.rate_b),
+      rate_weekend:  n(form.rate_c),
       charge_travel: n(form.charge_travel), charge_meal: n(form.charge_meal),
       notes: form.notes,
     };
@@ -249,29 +249,21 @@ function ClientsList({ showToast }) {
                   <Field label="A — Normal (Mon–Fri ≤8h)">
                     <input style={inputStyle} type="number" step="0.01" min="0" value={form.rate_a}
                       onChange={e => setForm(f => ({ ...f, rate_a: e.target.value }))}
-                      onBlur={() => {
-                        const A = parseFloat(form.rate_a);
-                        if (!isNaN(A)) setForm(f => ({
-                          ...f,
-                          rate_b: f.rate_b === '' ? (A * 1.5).toFixed(2) : f.rate_b,
-                          rate_c: f.rate_c === '' ? (A * 2).toFixed(2)   : f.rate_c,
-                        }));
-                      }}
                       placeholder="e.g. 68.00" />
                   </Field>
                   <Field label="B — OT 1.5× (night/Sat day)">
                     <input style={inputStyle} type="number" step="0.01" min="0" value={form.rate_b}
                       onChange={e => setForm(f => ({ ...f, rate_b: e.target.value }))}
-                      placeholder="auto" />
+                      placeholder="e.g. 95.00" />
                   </Field>
                   <Field label="C — OT 2× (Sun/PH/Sat >8h)">
                     <input style={inputStyle} type="number" step="0.01" min="0" value={form.rate_c}
                       onChange={e => setForm(f => ({ ...f, rate_c: e.target.value }))}
-                      placeholder="auto" />
+                      placeholder="e.g. 120.00" />
                   </Field>
                 </div>
                 <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
-                  These are <strong>defaults</strong>. Add per-role rate cards (e.g. Operator, Skilled Labour) under <strong>Roles</strong> on the client row to override per role.
+                  Enter each band manually — client charge rates aren't a strict ×1.5 / ×2. Add per-role rate cards under <strong>Roles</strong> on the client row to override per role.
                 </div>
               </div>
             </div>
@@ -376,8 +368,8 @@ function RatesPanel({ client, showToast }) {
       client_id: client.id,
       role_name: form.role_name.trim(),
       rate_a: A,
-      rate_b: n(form.rate_b) ?? +(A * 1.5).toFixed(2),
-      rate_c: n(form.rate_c) ?? +(A * 2).toFixed(2),
+      rate_b: n(form.rate_b),
+      rate_c: n(form.rate_c),
       notes: form.notes || null,
     };
     if (editing === 'add') {
@@ -467,23 +459,15 @@ function RatesPanel({ client, showToast }) {
             <Field label="A — Normal">
               <input style={inputStyle} type="number" step="0.01" min="0" value={form.rate_a}
                 onChange={e => setForm(f => ({ ...f, rate_a: e.target.value }))}
-                onBlur={() => {
-                  const A = parseFloat(form.rate_a);
-                  if (!isNaN(A)) setForm(f => ({
-                    ...f,
-                    rate_b: f.rate_b === '' ? (A * 1.5).toFixed(2) : f.rate_b,
-                    rate_c: f.rate_c === '' ? (A * 2).toFixed(2)   : f.rate_c,
-                  }));
-                }}
                 placeholder="e.g. 68" />
             </Field>
             <Field label="B — OT 1.5×">
               <input style={inputStyle} type="number" step="0.01" min="0" value={form.rate_b}
-                onChange={e => setForm(f => ({ ...f, rate_b: e.target.value }))} placeholder="auto" />
+                onChange={e => setForm(f => ({ ...f, rate_b: e.target.value }))} placeholder="e.g. 95" />
             </Field>
             <Field label="C — OT 2×">
               <input style={inputStyle} type="number" step="0.01" min="0" value={form.rate_c}
-                onChange={e => setForm(f => ({ ...f, rate_c: e.target.value }))} placeholder="auto" />
+                onChange={e => setForm(f => ({ ...f, rate_c: e.target.value }))} placeholder="e.g. 120" />
             </Field>
             <div style={{ gridColumn: '1 / -1' }}>
               <Field label="Notes"><input style={inputStyle} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="e.g. Wet weather inclusive" /></Field>

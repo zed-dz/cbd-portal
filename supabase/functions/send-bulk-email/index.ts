@@ -12,10 +12,13 @@
 // Returns per-recipient results. Falls back to clipboard message if no API key.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
 const INVITE_FROM    = Deno.env.get('INVITE_FROM') || 'CBD Plant & Labour <onboarding@resend.dev>';
 const PORTAL_URL     = Deno.env.get('PORTAL_URL')  || 'https://cbd-portal-gray.vercel.app';
+const SUPABASE_URL   = Deno.env.get('SUPABASE_URL')!;
+const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const MAX_PER_BATCH  = 100;
 
 const CORS = {
@@ -72,7 +75,13 @@ serve(async (req) => {
     return json({ error: 'email_not_configured', message: 'RESEND_API_KEY is not set.' }, 503);
   }
 
-  let body: { recipients?: Array<{ name?: string; email: string }>; subject?: string; body?: string };
+  let body: {
+    recipients?: Array<{ id?: string; name?: string; email: string }>;
+    subject?: string;
+    body?: string;
+    audience?: string;
+    sent_by?: string;
+  };
   try { body = await req.json(); } catch { return json({ error: 'invalid_json' }, 400); }
 
   const recipients = (body.recipients || []).filter(r => r && r.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email));
@@ -124,6 +133,33 @@ serve(async (req) => {
   const sent     = results.filter(r => r.ok).length;
   const failed   = results.filter(r => !r.ok);
   const firstErr = failed[0]?.error;
+
+  // Log every attempt to the message_log audit table so the UI can show
+  // "who we already emailed". Errors here are non-fatal — the email already
+  // went out, we just couldn't write the audit row.
+  try {
+    if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
+      const supa = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+      const batchId = crypto.randomUUID();
+      const rows = results.map((r, idx) => ({
+        batch_id:        batchId,
+        channel:         'email',
+        audience:        body.audience || null,
+        recipient_id:    recipients[idx].id || null,
+        recipient_name:  recipients[idx].name || null,
+        recipient_email: r.email,
+        subject,
+        body:            text,
+        status:          r.ok ? 'sent' : 'failed',
+        error:           r.error || null,
+        sent_by:         body.sent_by || null,
+      }));
+      const { error: logErr } = await supa.from('message_log').insert(rows);
+      if (logErr) console.error('message_log insert failed:', logErr);
+    }
+  } catch (e) {
+    console.error('message_log write threw:', e);
+  }
 
   return json({
     ok: sent > 0,

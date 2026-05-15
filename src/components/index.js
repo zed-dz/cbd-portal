@@ -85,21 +85,24 @@ export function Badge({ label, color, size = 'md' }) {
 
 // ── Modal ───────────────────────────────────────────────────────────────────
 
-export function Modal({ title, onClose, children, width = 480 }) {
-  // Lock body scroll while modal is open.
+export function Modal({ title, onClose, children, width = 480, dismissible = false }) {
+  // Lock body scroll while modal is open. When `dismissible` is true (the
+  // legacy behavior), Escape and backdrop click close the modal. For data-
+  // entry modals we default to off so an accidental click or browser focus
+  // change can't wipe a half-typed form.
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
+    const onKey = (e) => { if (dismissible && e.key === 'Escape') onClose?.(); };
     window.addEventListener('keydown', onKey);
     return () => {
       document.body.style.overflow = prev;
       window.removeEventListener('keydown', onKey);
     };
-  }, [onClose]);
+  }, [onClose, dismissible]);
 
   return (
-    <div onClick={onClose} style={{
+    <div onClick={dismissible ? onClose : undefined} style={{
       position: 'fixed', inset: 0,
       background: 'rgba(5, 7, 12, 0.65)',
       backdropFilter: 'blur(6px)',

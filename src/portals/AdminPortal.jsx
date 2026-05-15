@@ -16,12 +16,21 @@ import { XeroSyncPage } from '../pages/XeroSync/XeroSyncPage';
 import { LicenceAgentPage } from '../pages/LicenceAgent/LicenceAgentPage';
 import { ReportsPage } from '../pages/Reports/ReportsPage';
 import { BulkMessagesPage } from '../pages/BulkMessages/BulkMessagesPage';
+import { InboxPage } from '../pages/Inbox/InboxPage';
 import { AppViewsPage } from '../pages/AppViews/AppViewsPage';
 import { PendingWorkersPage } from '../pages/PendingWorkers/PendingWorkersPage';
 import { WorkerPortal } from './WorkerPortal';
 
 export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpen, setSidebarOpen }) {
-  const [activePage, setActivePage] = useState('dashboard');
+  // Land on Inbox if we just completed Gmail OAuth — the InboxPage will then
+  // pick up the `gmail_connected=1` query param and show the toast.
+  const initialPage = (() => {
+    if (typeof window === 'undefined') return 'dashboard';
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('gmail_connected') === '1' || p.get('gmail_error')) return 'inbox';
+    return 'dashboard';
+  })();
+  const [activePage, setActivePage] = useState(initialPage);
   const [previewMode, setPreviewMode] = useState(false);
   const [blastOpen, setBlastOpen] = useState(false);
   const [scanOpen, setScanOpen]   = useState(false);
@@ -81,6 +90,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
     {
       label: 'TOOLS',
       items: [
+        { id: 'inbox',         label: '📨 Inbox' },
         { id: 'bulk_messages', label: '📢 Bulk Messages' },
         { id: 'licence_agent', label: '🪪 Licence Agent', badge: badges.licence_agent || null, badgeColor: 'red' },
         { id: 'pending_workers', label: '📱 Pending Workers', badge: badges.pending_workers || null, badgeColor: 'yellow' },
@@ -193,6 +203,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'licence_agent'    && <LicenceAgentPage showToast={showToast} />}
           {activePage === 'reports'          && <ReportsPage showToast={showToast} />}
           {activePage === 'bulk_messages'    && <BulkMessagesPage showToast={showToast} />}
+          {activePage === 'inbox'            && <InboxPage         showToast={showToast} />}
           {activePage === 'app_views'        && <AppViewsPage showToast={showToast} />}
         </div>
       </div>

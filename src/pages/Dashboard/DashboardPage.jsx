@@ -28,7 +28,10 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
           supabase.from('timesheets').select('hours').eq('status', 'approved').gte('date', weekAgo),
           supabase.from('timesheets').select('*, workers(name)').eq('status', 'pending').order('created_at', { ascending: false }).limit(5),
           supabase.from('certifications').select('*, workers(name)').lt('expiry', today),
-          supabase.from('allocations').select('*, workers(name, job_title)').eq('start_date', today).order('created_at', { ascending: false }),
+          // Allocations that include today: start_date <= today AND
+          // (end_date is null OR end_date >= today). Catches multi-day spans
+          // that the previous `start_date = today` test missed.
+          supabase.from('allocations').select('*, workers(name, job_title)').lte('start_date', today).or(`end_date.is.null,end_date.gte.${today}`).order('created_at', { ascending: false }),
           supabase.from('timesheets').select('id', { count: 'exact' }).eq('status', 'approved').eq('xero_exported', false),
         ]);
         if (!mounted) return;
