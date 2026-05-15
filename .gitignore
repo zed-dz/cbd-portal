@@ -28,3 +28,4 @@ yarn-error.log*
 !README.md
 !CLAUDE.md
 !DOCS.md
+/package-lock.json

@@ -1,7 +1,7 @@
-import { Fragment, useState, useEffect, useCallback } from 'react';
+import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
-import { C, inputStyle, btnPrimary, btnSecondary, btnSmall } from '../../theme';
-import { Modal, Field, Spinner } from '../../components';
+import { C, R, MONO, inputStyle, btnPrimary, btnSecondary, btnSmall } from '../../theme';
+import { Modal, Field, Spinner, EmptyState } from '../../components';
 
 function getMondayOfWeek(date) {
   const d = new Date(date);
@@ -27,6 +27,37 @@ function isAllocOnDay(alloc, dayISO) {
   return start <= dayISO && end >= dayISO;
 }
 
+function isoFromDate(d) { return d.toISOString().split('T')[0]; }
+
+function getMonthGrid(year, month /* 0-indexed */) {
+  // Returns a 6-row × 7-col grid of { iso, inMonth, dow } cells starting on Monday.
+  const first = new Date(year, month, 1);
+  const firstDow = first.getDay(); // 0 = Sun
+  const offset = firstDow === 0 ? 6 : firstDow - 1;
+  const start = new Date(year, month, 1 - offset);
+  return Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    return {
+      iso: isoFromDate(d),
+      day: d.getDate(),
+      inMonth: d.getMonth() === month,
+      dow: d.getDay(), // 0 = Sun
+      date: d,
+    };
+  });
+}
+
+function countBusinessDaysInMonth(year, month) {
+  const last = new Date(year, month + 1, 0).getDate();
+  let count = 0;
+  for (let i = 1; i <= last; i++) {
+    const dow = new Date(year, month, i).getDay();
+    if (dow !== 0 && dow !== 6) count++;
+  }
+  return count;
+}
+
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const ALLOC_COLORS = ['#f97316', '#22c55e', '#3b82f6', '#a855f7', '#ec4899', '#eab308', '#06b6d4'];
 
@@ -36,7 +67,10 @@ const allocDefaults = {
 };
 
 export function AllocationsCalendarPage({ showToast }) {
+  const [view, setView] = useState('weekly'); // 'weekly' | 'monthly'
   const [weekStart, setWeekStart] = useState(() => getMondayOfWeek(new Date()));
+  const [monthDate, setMonthDate] = useState(() => { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return d; });
+  const [selectedWorkerId, setSelectedWorkerId] = useState(null);
   const [allocations, setAllocations] = useState([]);
   const [allWorkers, setAllWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -47,15 +81,22 @@ export function AllocationsCalendarPage({ showToast }) {
   const weekDays = getWeekDays(weekStart);
   const weekEnd = weekDays[6];
 
+  // Date range we fetch — wide enough for whichever view is active so toggling
+  // doesn't re-fetch on every switch.
+  const rangeStart = view === 'weekly'
+    ? weekDays[0]
+    : isoFromDate(new Date(monthDate.getFullYear(), monthDate.getMonth(), 1 - 7));
+  const rangeEnd = view === 'weekly'
+    ? weekEnd
+    : isoFromDate(new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 7));
+
   const load = useCallback(async () => {
     setLoading(true);
-    const startDay = weekDays[0];
-    const endDay = weekEnd;
     const [a, w] = await Promise.all([
       supabase.from('allocations')
         .select('*, workers(name, job_title)')
-        .lte('start_date', endDay)
-        .or(`end_date.is.null,end_date.gte.${startDay}`),
+        .lte('start_date', rangeEnd)
+        .or(`end_date.is.null,end_date.gte.${rangeStart}`),
       supabase.from('workers').select('id, name, job_title').order('name'),
     ]);
     if (a.error) showToast(a.error.message, 'error');
@@ -63,14 +104,18 @@ export function AllocationsCalendarPage({ showToast }) {
     if (w.data) setAllWorkers(w.data);
     setLoading(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showToast, weekStart]);
+  }, [showToast, rangeStart, rangeEnd]);
 
   useEffect(() => { load(); }, [load]);
 
-  const openCreate = (prefill = {}) => {
-    setForm({ ...allocDefaults, ...prefill });
-    setModal('add');
-  };
+  // Default the monthly view to the first worker with allocations.
+  useEffect(() => {
+    if (view !== 'monthly' || selectedWorkerId) return;
+    const first = allWorkers.find(w => allocations.some(a => a.worker_id === w.id)) || allWorkers[0];
+    if (first) setSelectedWorkerId(first.id);
+  }, [view, allWorkers, allocations, selectedWorkerId]);
+
+  const openCreate = (prefill = {}) => { setForm({ ...allocDefaults, ...prefill }); setModal('add'); };
   const openEdit = (a) => {
     setForm({
       worker_id: a.worker_id || '', site: a.site || '', client: a.client || '',
@@ -98,15 +143,66 @@ export function AllocationsCalendarPage({ showToast }) {
     setSaving(false);
   };
 
-  const prevWeek = () => { const d = new Date(weekStart); d.setDate(d.getDate() - 7); setWeekStart(d); };
-  const nextWeek = () => { const d = new Date(weekStart); d.setDate(d.getDate() + 7); setWeekStart(d); };
-  const goToday  = () => setWeekStart(getMondayOfWeek(new Date()));
+  const prevWeek  = () => { const d = new Date(weekStart); d.setDate(d.getDate() - 7); setWeekStart(d); };
+  const nextWeek  = () => { const d = new Date(weekStart); d.setDate(d.getDate() + 7); setWeekStart(d); };
+  const goToday   = () => setWeekStart(getMondayOfWeek(new Date()));
+  const prevMonth = () => { const d = new Date(monthDate); d.setMonth(d.getMonth() - 1); setMonthDate(d); };
+  const nextMonth = () => { const d = new Date(monthDate); d.setMonth(d.getMonth() + 1); setMonthDate(d); };
+  const goThisMonth = () => { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); setMonthDate(d); };
 
-  // Assign a stable color per worker
   const workerColorMap = {};
   allWorkers.forEach((w, i) => { workerColorMap[w.id] = ALLOC_COLORS[i % ALLOC_COLORS.length]; });
 
-  // Workers who have at least one allocation this week
+  const ViewToggle = (
+    <div style={{
+      display: 'inline-flex', borderRadius: R.md, border: `1px solid ${C.border}`,
+      overflow: 'hidden', background: C.card,
+    }}>
+      {[
+        { id: 'weekly',  label: 'Weekly'  },
+        { id: 'monthly', label: 'Monthly' },
+      ].map(t => {
+        const active = view === t.id;
+        return (
+          <button key={t.id} onClick={() => setView(t.id)} style={{
+            background: active ? C.cardHover : 'transparent',
+            color: active ? C.text : C.textMuted,
+            border: 'none', padding: '7px 16px', cursor: 'pointer',
+            fontSize: 12.5, fontWeight: active ? 600 : 500,
+            borderLeft: t.id === 'monthly' ? `1px solid ${C.border}` : 'none',
+          }}>{t.label}</button>
+        );
+      })}
+    </div>
+  );
+
+  if (view === 'monthly') {
+    return (
+      <MonthlyWorkerView
+        workers={allWorkers}
+        allocations={allocations}
+        loading={loading}
+        monthDate={monthDate}
+        prevMonth={prevMonth}
+        nextMonth={nextMonth}
+        goThisMonth={goThisMonth}
+        selectedWorkerId={selectedWorkerId}
+        setSelectedWorkerId={setSelectedWorkerId}
+        workerColorMap={workerColorMap}
+        viewToggle={ViewToggle}
+        openCreate={openCreate}
+        openEdit={openEdit}
+        modal={modal}
+        form={form}
+        setForm={setForm}
+        closeModal={closeModal}
+        handleSave={handleSave}
+        saving={saving}
+      />
+    );
+  }
+
+  // ── Weekly view ──────────────────────────────────────────────────────────
   const workerIds = [...new Set(allocations.map(a => a.worker_id))];
   const calWorkers = allWorkers.filter(w => workerIds.includes(w.id));
 
@@ -119,12 +215,13 @@ export function AllocationsCalendarPage({ showToast }) {
 
   return (
     <div>
-      {/* Week navigation */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+        {ViewToggle}
+        <div style={{ width: 8 }} />
         <button onClick={prevWeek} style={btnSecondary}>← Prev Week</button>
         <button onClick={goToday} style={btnSmall}>Today</button>
         <button onClick={nextWeek} style={btnSecondary}>Next Week →</button>
-        <span style={{ color: C.textMuted, fontSize: 13, marginLeft: 8, fontFamily: '"DM Mono", monospace' }}>
+        <span style={{ color: C.textMuted, fontSize: 13, marginLeft: 8, fontFamily: MONO }}>
           {weekDays[0]} — {weekEnd}
         </span>
         <button onClick={() => openCreate({ start_date: weekDays[0] })} style={{ ...btnPrimary, marginLeft: 'auto' }}>+ Add Allocation</button>
@@ -140,7 +237,6 @@ export function AllocationsCalendarPage({ showToast }) {
             borderRadius: 10,
             overflow: 'hidden',
           }}>
-            {/* Header row */}
             <div style={{ background: C.bg, padding: '10px 12px', borderBottom: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>
               Worker
             </div>
@@ -151,29 +247,34 @@ export function AllocationsCalendarPage({ showToast }) {
                 borderRight: `1px solid ${C.border}`, fontSize: 11,
                 color: day === todayISO ? C.accent : C.textMuted,
                 textAlign: 'center', fontWeight: day === todayISO ? 700 : 400,
-                fontFamily: '"DM Mono", monospace',
+                fontFamily: MONO,
               }}>
                 {formatDayHeader(day)}
               </div>
             ))}
 
-            {/* Worker rows */}
             {calWorkers.length === 0 ? (
               <div style={{ gridColumn: '1 / -1', padding: 24, textAlign: 'center', color: C.textMuted, fontSize: 13 }}>
                 No allocations this week. Click a day cell or "+ Add Allocation" to create one.
               </div>
             ) : calWorkers.map(worker => (
               <Fragment key={worker.id}>
-                {/* Worker name cell */}
-                <div style={{
-                  padding: '12px 12px', borderBottom: `1px solid ${C.border}`,
-                  borderRight: `1px solid ${C.border}`, background: C.sidebar,
-                }}>
+                <div
+                  onClick={() => { setSelectedWorkerId(worker.id); setView('monthly'); }}
+                  title="Open monthly view for this worker"
+                  style={{
+                    padding: '12px 12px', borderBottom: `1px solid ${C.border}`,
+                    borderRight: `1px solid ${C.border}`, background: C.sidebar,
+                    cursor: 'pointer', transition: 'background 120ms',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = C.cardHover}
+                  onMouseLeave={e => e.currentTarget.style.background = C.sidebar}
+                >
                   <div style={{ fontWeight: 600, fontSize: 13, color: C.text }}>{worker.name}</div>
                   {worker.job_title && <div style={{ fontSize: 10, color: C.textMuted, marginTop: 2 }}>{worker.job_title}</div>}
+                  <div style={{ fontSize: 9.5, color: C.accent, marginTop: 4, fontFamily: MONO, letterSpacing: 0.4 }}>→ month view</div>
                 </div>
 
-                {/* Day cells */}
                 {weekDays.map(day => {
                   const dayAllocs = allocations.filter(a => a.worker_id === worker.id && isAllocOnDay(a, day));
                   return (
@@ -202,7 +303,6 @@ export function AllocationsCalendarPage({ showToast }) {
         </div>
       )}
 
-      {/* Also show all workers row for empty click to add */}
       {!loading && calWorkers.length === 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: `160px repeat(7, 1fr)`, minWidth: 900, marginTop: 2 }}>
           <div />
@@ -218,41 +318,377 @@ export function AllocationsCalendarPage({ showToast }) {
         </div>
       )}
 
-      {modal && (
-        <Modal title={modal === 'add' ? 'Create Allocation' : 'Edit Allocation'} onClose={closeModal} width={540}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <Field label="Worker *">
-                <select style={inputStyle} value={form.worker_id} onChange={e => setForm(f => ({ ...f, worker_id: e.target.value }))}>
-                  <option value="">Select a worker…</option>
-                  {allWorkers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                </select>
-              </Field>
-            </div>
-            <Field label="Start Date *"><input style={inputStyle} type="date" value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} /></Field>
-            <Field label="End Date"><input style={inputStyle} type="date" value={form.end_date} onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))} /></Field>
-            <Field label="Client"><input style={inputStyle} value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} /></Field>
-            <Field label="Site"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
-            <Field label="Project"><input style={inputStyle} value={form.project} onChange={e => setForm(f => ({ ...f, project: e.target.value }))} /></Field>
-            <Field label="Site Manager"><input style={inputStyle} value={form.site_manager} onChange={e => setForm(f => ({ ...f, site_manager: e.target.value }))} /></Field>
-            <Field label="Status">
-              <select style={inputStyle} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
-                <option value="pending">Pending</option>
-                <option value="confirmed">Confirmed</option>
-                <option value="completed">Completed</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
-            </Field>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 60, resize: 'vertical' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Field>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
-            <button onClick={closeModal} style={btnSecondary}>Cancel</button>
-            <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
-          </div>
-        </Modal>
-      )}
+      {modal && <AllocationModal {...{ modal, form, setForm, closeModal, handleSave, saving, allWorkers }} />}
     </div>
+  );
+}
+
+// ── Monthly per-worker view ────────────────────────────────────────────────
+
+function MonthlyWorkerView({
+  workers, allocations, loading, monthDate, prevMonth, nextMonth, goThisMonth,
+  selectedWorkerId, setSelectedWorkerId, workerColorMap, viewToggle,
+  openCreate, openEdit, modal, form, setForm, closeModal, handleSave, saving,
+}) {
+  const year  = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const monthLabel = monthDate.toLocaleString('en-AU', { month: 'long', year: 'numeric' });
+  const todayISO = new Date().toISOString().split('T')[0];
+
+  const grid = useMemo(() => getMonthGrid(year, month), [year, month]);
+
+  const workerAllocs = useMemo(
+    () => allocations.filter(a => a.worker_id === selectedWorkerId),
+    [allocations, selectedWorkerId]
+  );
+
+  const selectedWorker = workers.find(w => w.id === selectedWorkerId);
+
+  // Build day→allocations map within current month
+  const inMonthIsoSet = useMemo(() => new Set(grid.filter(c => c.inMonth).map(c => c.iso)), [grid]);
+
+  const dayAllocs = useMemo(() => {
+    const m = new Map();
+    for (const iso of inMonthIsoSet) m.set(iso, []);
+    for (const a of workerAllocs) {
+      for (const iso of inMonthIsoSet) {
+        if (isAllocOnDay(a, iso)) m.get(iso).push(a);
+      }
+    }
+    return m;
+  }, [workerAllocs, inMonthIsoSet]);
+
+  // KPIs
+  const workingDays = countBusinessDaysInMonth(year, month);
+  let allocatedDays = 0;
+  let totalHours = 0;
+  for (const [iso, allocs] of dayAllocs.entries()) {
+    if (!allocs.length) continue;
+    const dow = new Date(iso + 'T00:00:00').getDay();
+    if (dow !== 0 && dow !== 6) allocatedDays++;
+    // Approximate hours: 8 per day per allocation segment (we don't store per-day
+    // hours on allocations — they're confirmed against timesheets later).
+    totalHours += 8;
+  }
+  const unallocatedDays = Math.max(0, workingDays - allocatedDays);
+  const clientsThisMonth = [...new Set(workerAllocs.flatMap(a => {
+    const start = a.start_date;
+    const end = a.end_date || a.start_date;
+    return [...inMonthIsoSet].some(iso => start <= iso && end >= iso) && a.client ? [a.client] : [];
+  }))];
+
+  // Allocation summary — collapse contiguous same-client spans into one row
+  const summaryRows = useMemo(() => {
+    const rows = [];
+    const sorted = [...workerAllocs].sort((a, b) => (a.start_date || '').localeCompare(b.start_date || ''));
+    for (const a of sorted) {
+      const start = a.start_date;
+      const end = a.end_date || a.start_date;
+      // Trim to current month
+      const monthStart = isoFromDate(new Date(year, month, 1));
+      const monthEnd = isoFromDate(new Date(year, month + 1, 0));
+      if (end < monthStart || start > monthEnd) continue;
+      const visStart = start < monthStart ? monthStart : start;
+      const visEnd   = end > monthEnd ? monthEnd : end;
+      const days = Math.max(0, (new Date(visEnd) - new Date(visStart)) / 86400000 + 1);
+      // Count business days within span
+      let bDays = 0;
+      for (let i = 0; i < days; i++) {
+        const d = new Date(visStart);
+        d.setDate(d.getDate() + i);
+        const dow = d.getDay();
+        if (dow !== 0 && dow !== 6) bDays++;
+      }
+      rows.push({
+        id: a.id,
+        client: a.client || a.site || '—',
+        start: visStart,
+        end: visEnd,
+        days,
+        hours: bDays * 8,
+        status: a.status,
+        raw: a,
+      });
+    }
+    return rows;
+  }, [workerAllocs, year, month]);
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
+        {viewToggle}
+        <div style={{ width: 8 }} />
+        <button onClick={prevMonth} style={btnSecondary}>← Prev Month</button>
+        <button onClick={goThisMonth} style={btnSmall}>This Month</button>
+        <button onClick={nextMonth} style={btnSecondary}>Next Month →</button>
+        <span style={{ color: C.textMuted, fontSize: 13, marginLeft: 8, fontFamily: MONO }}>{monthLabel}</span>
+        {selectedWorker && (
+          <button
+            onClick={() => openCreate({ worker_id: selectedWorker.id, start_date: isoFromDate(new Date(year, month, 1)) })}
+            style={{ ...btnPrimary, marginLeft: 'auto' }}
+          >
+            + Add Allocation
+          </button>
+        )}
+      </div>
+
+      {/* Worker tabs */}
+      {workers.length > 0 && (
+        <div style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${C.border}`, marginBottom: 18, overflowX: 'auto', paddingBottom: 1 }}>
+          {workers.map(w => {
+            const active = w.id === selectedWorkerId;
+            const hasAlloc = allocations.some(a => a.worker_id === w.id);
+            return (
+              <button key={w.id} onClick={() => setSelectedWorkerId(w.id)} style={{
+                background: 'none', border: 'none',
+                borderBottom: active ? `2px solid ${C.accent}` : '2px solid transparent',
+                color: active ? C.text : (hasAlloc ? C.textMuted : C.textDim),
+                padding: '8px 14px', cursor: 'pointer', fontSize: 13,
+                fontWeight: active ? 600 : 500, whiteSpace: 'nowrap', marginBottom: -1,
+              }}>
+                {w.name}
+                {hasAlloc && !active && <span style={{ marginLeft: 5, fontSize: 9, color: C.success }}>●</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {!selectedWorker ? (
+        <EmptyState message="Select a worker above to see their monthly schedule." />
+      ) : loading ? (
+        <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>
+      ) : (
+        <>
+          {/* Header with worker info */}
+          <div style={{
+            background: C.card, border: `1px solid ${C.border}`, borderRadius: R.lg,
+            padding: '16px 20px', marginBottom: 14, display: 'flex',
+            alignItems: 'center', gap: 14,
+          }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: '50%', background: workerColorMap[selectedWorker.id] || C.accent,
+              color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 15, fontWeight: 700, letterSpacing: 0.5, flexShrink: 0,
+            }}>
+              {selectedWorker.name.split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 18, fontWeight: 700, color: C.text }}>{selectedWorker.name}</div>
+              {selectedWorker.job_title && <div style={{ fontSize: 12, color: C.textMuted }}>{selectedWorker.job_title}</div>}
+            </div>
+          </div>
+
+          {/* KPI cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
+            <KpiCard label="Allocated Days" value={allocatedDays} sub={`of ${workingDays} working days`} color={C.success} />
+            <KpiCard label="Unallocated" value={unallocatedDays} sub={unallocatedDays > 0 ? 'days need work' : 'fully booked'} color={unallocatedDays > 0 ? C.warning : C.success} />
+            <KpiCard label="Total Hours" value={`${totalHours}h`} sub="est. this month" color={C.info} />
+            <KpiCard
+              label="Client"
+              value={clientsThisMonth[0] || '—'}
+              sub={clientsThisMonth.length > 1 ? `+${clientsThisMonth.length - 1} more` : (clientsThisMonth.length === 1 ? '1 project' : 'no client set')}
+              color={C.accent}
+            />
+          </div>
+
+          {/* Calendar grid */}
+          <div style={{
+            background: C.card, border: `1px solid ${C.border}`, borderRadius: R.lg,
+            padding: 14, marginBottom: 14,
+          }}>
+            <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 14, fontWeight: 700, color: C.text, textAlign: 'center', marginBottom: 10 }}>
+              {monthLabel}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, marginBottom: 4 }}>
+              {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => (
+                <div key={d} style={{
+                  textAlign: 'center', fontSize: 10.5, color: C.textMuted,
+                  textTransform: 'uppercase', letterSpacing: 1.5, padding: '4px 0',
+                  fontFamily: MONO, fontWeight: 600,
+                }}>{d}</div>
+              ))}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
+              {grid.map(cell => {
+                const allocs = cell.inMonth ? dayAllocs.get(cell.iso) || [] : [];
+                const isToday = cell.iso === todayISO;
+                const isWeekend = cell.dow === 0 || cell.dow === 6;
+                return (
+                  <div
+                    key={cell.iso}
+                    onClick={() => {
+                      if (!cell.inMonth) return;
+                      if (allocs[0]) openEdit(allocs[0]);
+                      else openCreate({ worker_id: selectedWorker.id, start_date: cell.iso });
+                    }}
+                    style={{
+                      position: 'relative',
+                      minHeight: 78, padding: 6, borderRadius: R.md,
+                      background: !cell.inMonth ? 'transparent' : (isToday ? 'rgba(249,115,22,0.08)' : C.bg),
+                      border: isToday ? `1px solid ${C.accent}` : `1px solid ${cell.inMonth ? C.border : 'transparent'}`,
+                      cursor: cell.inMonth ? 'pointer' : 'default',
+                      opacity: cell.inMonth ? 1 : 0.25,
+                      transition: 'background 140ms',
+                    }}
+                  >
+                    <div style={{
+                      fontSize: 11, color: isToday ? C.accent : (isWeekend ? C.textDim : C.textMuted),
+                      fontWeight: isToday ? 700 : 500, marginBottom: 4, fontFamily: MONO,
+                    }}>
+                      {cell.day}
+                    </div>
+                    {allocs.map(a => (
+                      <div key={a.id} style={{
+                        background: workerColorMap[a.worker_id] || C.accent,
+                        color: '#fff', borderRadius: R.sm, padding: '2px 6px', fontSize: 10.5,
+                        marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap', fontWeight: 500,
+                      }}>
+                        {a.client || a.site || 'Allocated'}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Summary table */}
+          <div style={{
+            background: C.card, border: `1px solid ${C.border}`, borderRadius: R.lg, padding: 18,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 14, fontWeight: 700, color: C.text }}>
+                Allocation summary — {monthLabel}
+              </div>
+              <span style={{ fontSize: 11, color: C.textDim, fontFamily: MONO, letterSpacing: 0.3 }}>
+                Click any day to edit
+              </span>
+            </div>
+            {summaryRows.length === 0 ? (
+              <div style={{ color: C.textMuted, fontSize: 13, padding: '10px 0' }}>
+                No allocations for this worker in {monthLabel}.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {summaryRows.map(row => (
+                  <div key={row.id}
+                    onClick={() => openEdit(row.raw)}
+                    style={{
+                      display: 'grid', gridTemplateColumns: '160px 1fr 80px 110px',
+                      gap: 14, alignItems: 'center', padding: '8px 12px',
+                      background: C.bg, borderRadius: R.md, cursor: 'pointer',
+                      transition: 'background 140ms',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = C.cardHover}
+                    onMouseLeave={e => e.currentTarget.style.background = C.bg}
+                  >
+                    <span style={{ fontSize: 12, color: C.textMuted, fontFamily: MONO }}>
+                      {fmtRange(row.start, row.end)}
+                    </span>
+                    <span style={{ fontSize: 13, color: C.text, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {row.client}
+                    </span>
+                    <span style={{ fontSize: 12, fontFamily: MONO, color: C.textMuted, textAlign: 'right' }}>
+                      {row.hours}h
+                    </span>
+                    <span style={{ textAlign: 'right' }}>
+                      <StatusPill status={row.status} />
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {modal && <AllocationModal {...{ modal, form, setForm, closeModal, handleSave, saving, allWorkers: workers }} />}
+    </div>
+  );
+}
+
+function KpiCard({ label, value, sub, color }) {
+  return (
+    <div style={{
+      background: C.card, border: `1px solid ${C.border}`,
+      borderRadius: R.lg, padding: '16px 18px',
+    }}>
+      <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.4, color: C.textMuted, fontFamily: MONO, fontWeight: 600, marginBottom: 6 }}>
+        {label}
+      </div>
+      <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 26, fontWeight: 800, color, lineHeight: 1, letterSpacing: -0.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {value}
+      </div>
+      {sub && <div style={{ fontSize: 11, color: C.textDim, marginTop: 4 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function StatusPill({ status }) {
+  const map = {
+    pending:   { bg: 'rgba(234,179,8,0.15)',  fg: '#fde047' },
+    confirmed: { bg: 'rgba(56,189,248,0.15)', fg: '#7dd3fc' },
+    completed: { bg: 'rgba(34,197,94,0.15)',  fg: '#86efac' },
+    cancelled: { bg: 'rgba(239,68,68,0.13)',  fg: '#fca5a5' },
+  };
+  const s = map[status] || { bg: C.cardHover, fg: C.textMuted };
+  return (
+    <span style={{
+      background: s.bg, color: s.fg, fontFamily: MONO, fontSize: 10.5,
+      fontWeight: 600, padding: '2px 8px', borderRadius: 999, textTransform: 'capitalize',
+    }}>{status || '—'}</span>
+  );
+}
+
+function fmtRange(start, end) {
+  if (start === end) {
+    const d = new Date(start + 'T00:00:00');
+    return `${d.getDate()}/${d.getMonth() + 1}`;
+  }
+  const s = new Date(start + 'T00:00:00');
+  const e = new Date(end + 'T00:00:00');
+  const sameMonth = s.getMonth() === e.getMonth();
+  return sameMonth
+    ? `${s.getDate()}–${e.getDate()}/${s.getMonth() + 1}`
+    : `${s.getDate()}/${s.getMonth() + 1}–${e.getDate()}/${e.getMonth() + 1}`;
+}
+
+function AllocationModal({ modal, form, setForm, closeModal, handleSave, saving, allWorkers }) {
+  return (
+    <Modal title={modal === 'add' ? 'Create Allocation' : 'Edit Allocation'} onClose={closeModal} width={540}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <Field label="Worker *">
+            <select style={inputStyle} value={form.worker_id} onChange={e => setForm(f => ({ ...f, worker_id: e.target.value }))}>
+              <option value="">Select a worker…</option>
+              {allWorkers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+          </Field>
+        </div>
+        <Field label="Start Date *"><input style={inputStyle} type="date" value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} /></Field>
+        <Field label="End Date"><input style={inputStyle} type="date" value={form.end_date} onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))} /></Field>
+        <Field label="Client"><input style={inputStyle} value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} /></Field>
+        <Field label="Site"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
+        <Field label="Project"><input style={inputStyle} value={form.project} onChange={e => setForm(f => ({ ...f, project: e.target.value }))} /></Field>
+        <Field label="Site Manager"><input style={inputStyle} value={form.site_manager} onChange={e => setForm(f => ({ ...f, site_manager: e.target.value }))} /></Field>
+        <Field label="Status">
+          <select style={inputStyle} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
+            <option value="pending">Pending</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </Field>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 60, resize: 'vertical' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Field>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+        <button onClick={closeModal} style={btnSecondary}>Cancel</button>
+        <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
+      </div>
+    </Modal>
   );
 }

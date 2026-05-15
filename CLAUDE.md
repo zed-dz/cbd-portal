@@ -38,7 +38,11 @@ construction labour-hire — road / rail / water). It runs the entire workflow:
   - `xero-push` — push approved timesheets to Xero
   - `xero-data` — read Xero org data
   - `send-invite` — single worker invite email via Resend
-  - `send-bulk-email` — bulk email blast via Resend batch endpoint (up to 100 per call)
+  - `send-bulk-email` — bulk email blast via Resend; logs every send to `message_log` for the in-app history view
+  - `gmail-start` / `gmail-callback` — Google OAuth flow for the in-app Inbox
+  - `gmail-send` — send via the connected Gmail account, mirror into `email_threads`/`email_messages`
+  - `gmail-sync` — pull recent threads from Gmail, match participants to workers/clients
+  - `gmail-status` / `gmail-disconnect` — connection state + revoke
 - **Email:** Resend free tier (3k/month). Default sender: `onboarding@resend.dev`.
   Until a domain is verified in Resend, emails only deliver to your own Resend
   account email (`fsociety.2017@protonmail.com`).
@@ -166,6 +170,16 @@ supabase/
 - `client_rate_cards (client_id, role_name, rate_a, rate_b, rate_c)` — per-role
   override of the client default A/B/C. Look here first before falling back to
   `clients.rate_a/b/c`.
+- `message_log` — audit log of every bulk-email + gmail send. Used by the
+  "Sent History" tab in Bulk Messages and by the green "✓ recently emailed"
+  pill next to recipients.
+- `gmail_tokens` (single row, id=1) — OAuth tokens for the connected Gmail
+  account. `email_address` is the from address. `last_history_id` is reserved
+  for future incremental sync via Gmail's history API.
+- `email_threads` + `email_messages` — local cache of Gmail conversations so
+  the Inbox UI doesn't pay an API call per render. Threads carry optional
+  `worker_id` / `client_id` foreign keys, populated by `gmail-sync` when a
+  participant's email matches `workers.email` or `clients.contact_email`.
 
 Supabase advisor flagged these RPCs as "anon can execute SECURITY DEFINER" —
 **that is intentional** (it's the magic-link contract). Don't "fix" it by
@@ -215,11 +229,38 @@ pandoc/npm cache failures). Use `Z:\tmp` as a scratch area if needed.
 
 ---
 
+## Gmail Inbox setup (one-time)
+
+The `/inbox` page in the portal lets you send and receive emails through
+your real Gmail / Google Workspace account — replies thread back in
+automatically. Everything is deployed; it just needs OAuth credentials.
+
+1. **Google Cloud Console** → create or pick a project.
+2. **APIs & Services → Library** → enable **Gmail API**.
+3. **APIs & Services → OAuth consent screen** → External, add scopes
+   `gmail.modify` and `userinfo.email`. Add your Gmail address to test users
+   while in Testing mode.
+4. **APIs & Services → Credentials → Create OAuth client ID** → Web
+   application. Authorized redirect URI:
+   `https://tsizneslellcqusjwtub.supabase.co/functions/v1/gmail-callback`
+5. Copy the Client ID + Client Secret. In Supabase → Project Settings →
+   Edge Functions → Secrets:
+   ```
+   GMAIL_CLIENT_ID = …
+   GMAIL_CLIENT_SECRET = …
+   ```
+6. Open the portal → Inbox → click **Connect Gmail**, approve the consent.
+   First sync runs automatically; the green dot in the sidebar shows
+   incoming-mail state.
+
 ## Pending follow-ups (your call)
 
-1. **Verify a Resend domain** so emails go to anyone (not just your Resend
-   account email). 10 min once you pick a domain — add SPF/DKIM/DMARC records,
-   then set `INVITE_FROM` secret in Supabase to your real sender.
+1. **Verify a Resend domain** so blast emails go to anyone (not just your
+   Resend account email). 10 min once you pick a domain — add SPF/DKIM/DMARC
+   records, then set `INVITE_FROM` secret in Supabase to your real sender.
+   *Note:* once Gmail Inbox is connected, the Inbox page is the better path
+   for client conversations because replies thread back in. Keep Resend for
+   one-way blasts.
 2. **SMS provider** — Twilio (~$0.01/AU SMS) when you're ready. The UI button
    is wired in but disabled with a "SOON" pill.
 3. **Photo upload from Scan modal → attach to worker cert** — currently the

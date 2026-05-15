@@ -416,32 +416,12 @@ export function WorkersPage({ showToast }) {
           )}
 
           {modal !== 'add' && (
-            <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: C.text, letterSpacing: 1 }}>🪪 TICKETS / CERTIFICATIONS</div>
-                <span style={{ fontSize: 11, color: C.textMuted }}>Manage in <strong>Licence Agent</strong> page</span>
-              </div>
-              {editCerts.length === 0 ? (
-                <div style={{ fontSize: 12, color: C.textMuted, padding: '6px 0' }}>No tickets recorded for this worker yet.</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 200, overflowY: 'auto' }}>
-                  {editCerts.map(c => (
-                    <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.bg, borderRadius: 7, padding: '7px 10px' }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{c.cert_name}</div>
-                        {c.issuer && <div style={{ fontSize: 11, color: C.textMuted }}>{c.issuer}</div>}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontSize: 11, color: C.textMuted, fontFamily: '"DM Mono", monospace' }}>
-                          {c.expiry ? fmtDate(c.expiry) : 'No expiry'}
-                        </span>
-                        {certBadge(c.expiry)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <WorkerTicketsSection
+              workerId={modal.id}
+              certs={editCerts}
+              setCerts={setEditCerts}
+              showToast={showToast}
+            />
           )}
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 14 }}>
@@ -450,6 +430,120 @@ export function WorkersPage({ showToast }) {
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+// ── Inline ticket management for the Worker edit modal ─────────────────────
+
+function WorkerTicketsSection({ workerId, certs, setCerts, showToast }) {
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState({ cert_name: '', issuer: '', expiry: '' });
+  const [saving, setSaving] = useState(false);
+
+  const resetForm = () => setForm({ cert_name: '', issuer: '', expiry: '' });
+
+  const startAdd = () => { resetForm(); setEditingId(null); setAdding(true); };
+  const startEdit = (c) => {
+    setForm({ cert_name: c.cert_name || '', issuer: c.issuer || '', expiry: c.expiry || '' });
+    setEditingId(c.id);
+    setAdding(true);
+  };
+  const cancel = () => { setAdding(false); setEditingId(null); resetForm(); };
+
+  const save = async () => {
+    if (!form.cert_name.trim()) { showToast('Ticket name is required.', 'error'); return; }
+    setSaving(true);
+    const payload = {
+      worker_id: workerId,
+      cert_name: form.cert_name.trim(),
+      issuer:    form.issuer.trim() || null,
+      expiry:    form.expiry || null,
+    };
+    if (editingId) {
+      const { data, error } = await supabase.from('certifications').update(payload).eq('id', editingId).select().single();
+      if (error) { showToast(error.message, 'error'); setSaving(false); return; }
+      setCerts(prev => prev.map(c => c.id === editingId ? data : c).sort((a, b) => (a.expiry || '9999') < (b.expiry || '9999') ? -1 : 1));
+      showToast('Ticket updated', 'success');
+    } else {
+      const { data, error } = await supabase.from('certifications').insert([payload]).select().single();
+      if (error) { showToast(error.message, 'error'); setSaving(false); return; }
+      setCerts(prev => [...prev, data].sort((a, b) => (a.expiry || '9999') < (b.expiry || '9999') ? -1 : 1));
+      showToast('Ticket added', 'success');
+    }
+    cancel();
+    setSaving(false);
+  };
+
+  const remove = async (c) => {
+    if (!window.confirm(`Delete ticket "${c.cert_name}"?`)) return;
+    const { error } = await supabase.from('certifications').delete().eq('id', c.id);
+    if (error) { showToast(error.message, 'error'); return; }
+    setCerts(prev => prev.filter(x => x.id !== c.id));
+    showToast('Ticket deleted', 'success');
+  };
+
+  return (
+    <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.text, letterSpacing: 1 }}>🪪 TICKETS / CERTIFICATIONS</div>
+        {!adding && (
+          <button onClick={startAdd} type="button" style={{ ...btnSmall, background: 'rgba(249,115,22,0.12)', color: C.accent, border: 'none' }}>
+            + Add Ticket
+          </button>
+        )}
+      </div>
+
+      {certs.length === 0 && !adding ? (
+        <div style={{ fontSize: 12, color: C.textMuted, padding: '6px 0' }}>No tickets recorded for this worker yet. Click <strong>+ Add Ticket</strong> to add one.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 220, overflowY: 'auto' }}>
+          {certs.map(c => (
+            <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.bg, borderRadius: 7, padding: '7px 10px', gap: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{c.cert_name}</div>
+                {c.issuer && <div style={{ fontSize: 11, color: C.textMuted }}>{c.issuer}</div>}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: C.textMuted, fontFamily: '"DM Mono", monospace' }}>
+                  {c.expiry ? fmtDate(c.expiry) : 'No expiry'}
+                </span>
+                {certBadge(c.expiry)}
+                <button onClick={() => startEdit(c)} type="button" style={{ ...btnSmall, padding: '3px 8px', fontSize: 11 }}>Edit</button>
+                <button onClick={() => remove(c)} type="button" style={{ ...btnDanger, padding: '3px 8px', fontSize: 11 }}>×</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {adding && (
+        <div style={{ marginTop: 10, background: C.bg, border: `1px solid ${C.accent}`, borderRadius: 8, padding: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+            {editingId ? 'Edit ticket' : 'New ticket'}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 10 }}>
+            <Field label="Ticket / Cert Name *">
+              <input style={inputStyle} value={form.cert_name} onChange={e => setForm(f => ({ ...f, cert_name: e.target.value }))} placeholder="e.g. EWP Boom Lift" />
+            </Field>
+            <Field label="Issuer">
+              <input style={inputStyle} value={form.issuer} onChange={e => setForm(f => ({ ...f, issuer: e.target.value }))} placeholder="e.g. WorkSafe" />
+            </Field>
+            <Field label="Expiry">
+              <input style={inputStyle} type="date" value={form.expiry} onChange={e => setForm(f => ({ ...f, expiry: e.target.value }))} />
+            </Field>
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={cancel} type="button" style={btnSecondary}>Cancel</button>
+            <button onClick={save} type="button" disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : editingId ? 'Update' : 'Add Ticket'}</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ fontSize: 10.5, color: C.textDim, marginTop: 8 }}>
+        Tip: workers can also self-add their tickets from the onboarding link. Photo uploads coming soon — for now manage them here or on the <strong>Licence Agent</strong> page.
+      </div>
     </div>
   );
 }
