@@ -29,3 +29,4 @@ yarn-error.log*
 !CLAUDE.md
 !DOCS.md
 /package-lock.json
+.claude/settings.local.json
