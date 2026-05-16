@@ -198,7 +198,16 @@ export function InboxPage({ showToast }) {
       if (error || data?.error) {
         if (!silent) showToast(data?.error || error?.message || 'Sync failed', 'error');
       } else {
-        if (!silent) showToast(`Synced ${data.synced_threads} threads · ${data.new_messages} new`, data.new_messages > 0 ? 'success' : 'info');
+        if (!silent) {
+          const matched   = data.synced_threads ?? 0;
+          const newMsgs   = data.new_messages ?? 0;
+          const fetched   = data.fetched_threads ?? matched;
+          const unmatched = Math.max(0, fetched - matched);
+          let msg = `Synced ${matched} thread${matched === 1 ? '' : 's'} · ${newMsgs} new`;
+          if (unmatched > 0) msg += ` · ${unmatched} skipped (no worker/client match)`;
+          if (fetched === 0) msg = 'Gmail returned no recent threads.';
+          showToast(msg, newMsgs > 0 ? 'success' : 'info');
+        }
         await loadThreads();
         if (selectedThreadId) {
           const { data: msgs } = await supabase.from('email_messages').select('*').eq('thread_id', selectedThreadId).order('sent_at', { ascending: true });
@@ -359,8 +368,16 @@ export function InboxPage({ showToast }) {
           {threadsLoading ? (
             <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 30 }}><Spinner /></div>
           ) : filteredThreads.length === 0 ? (
-            <div style={{ padding: '40px 20px', color: C.textMuted, fontSize: 13, textAlign: 'center' }}>
-              {threads.length === 0 ? 'No threads yet. Click Sync or compose your first email.' : 'No threads match.'}
+            <div style={{ padding: '32px 20px', color: C.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 1.5 }}>
+              {threads.length === 0 ? (
+                <>
+                  No threads yet.<br/>
+                  <span style={{ fontSize: 11.5, color: C.textDim }}>
+                    Only emails involving a worker or client are pulled in.
+                    Add the contact under <strong style={{ color: C.text }}>Workers</strong> or <strong style={{ color: C.text }}>Clients</strong> (or add their domain to a client), then click Sync.
+                  </span>
+                </>
+              ) : 'No threads match.'}
             </div>
           ) : filteredThreads.map(t => {
             const isSelected = t.id === selectedThreadId;
