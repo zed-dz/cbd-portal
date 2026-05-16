@@ -83,9 +83,12 @@ export function InboxPage({ showToast }) {
 
   const loadThreads = useCallback(async () => {
     setThreadsLoading(true);
+    // Privacy: only show threads tied to a known worker or client. Personal
+    // mail synced before this filter existed stays in Gmail but is hidden here.
     const { data, error } = await supabase
       .from('email_threads')
       .select('*, workers(id, name), clients(id, name)')
+      .or('worker_id.not.is.null,client_id.not.is.null')
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(200);
     if (error) showToast(error.message, 'error');

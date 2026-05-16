@@ -187,6 +187,11 @@ serve(async (req) => {
       }
     }
 
+    // Privacy: only mirror threads that involve a known worker or client.
+    // Personal mail (newsletters, friends, etc.) is intentionally skipped so
+    // the portal Inbox stays scoped to business conversations.
+    if (!workerId && !clientId) continue;
+
     // Upsert the thread by gmail_thread_id
     const threadPayload = {
       gmail_thread_id: t.id,
