@@ -236,7 +236,160 @@ Plus pinned panels:
 
 ---
 
-## 8. Common Tasks (Cheat Sheet)
+## 8. Team Inbox, Templates & Bulk Messages
+
+The portal has its own **shared team inbox** wired to a Gmail / Google Workspace
+account. Every reply from a worker or client lands here, threaded against
+their profile. Bulk messages and templates go through this too.
+
+### 8.1 First-time setup (one person does this once)
+
+1. Decide on a **shared ops mailbox** — e.g. `ops@cbdplant.com.au` or
+   `theteamcbd@gmail.com`. **Don't use a personal account** — whoever connects,
+   the whole team will see every email in that inbox.
+2. Sidebar → **Inbox** → click **Connect team email** → sign in to Google →
+   approve permissions (read, send, modify labels).
+3. The Inbox page now shows that account in the top-left under "Team Email".
+   Everyone using the portal sees and replies from the same address.
+
+> Switching accounts later: Inbox sidebar → **↔ Switch** button. The cached
+> conversations from the previous account are wiped automatically so they
+> don't pollute the new view.
+
+### 8.2 What gets pulled in (and what doesn't)
+
+The Inbox **only stores emails that involve a known worker or a known client**.
+Personal mail, newsletters, and notifications stay in Gmail and never reach
+the portal. A thread matches if:
+
+- A participant's email matches a `workers.email` exactly, **or**
+- A participant's email matches a `clients.contact_email` exactly, **or**
+- A participant's email *domain* matches one listed in
+  `clients.email_domains` (e.g. anything `@sydneywater.com.au`)
+
+If you want a client's whole team auto-tagged, open **Clients & Rates**
+→ edit the client → add the company domain in **Email Domains**. From then
+on, any new contact at that client lands under their card automatically.
+Consumer domains (gmail.com, yahoo.com, hotmail.com, …) are ignored even if
+typed in — otherwise the first gmail.com client would claim every personal
+newsletter.
+
+### 8.3 Reading & triaging
+
+Top of the left pane:
+
+| Control | What it does |
+|---|---|
+| **✎ Compose** | Start a new email |
+| **↻ Sync** | Pull recent threads from Gmail (default last 30 days, 60 threads) |
+| **↔** | Switch the connected team email account |
+| **⛔** | Disconnect the team email entirely |
+| Search box | Filter threads by subject / participant / worker / client name |
+| Filter chips | Inbox · Unread · Starred · Workers · Clients · Archived |
+
+Default view is **Inbox** (non-archived). Counts on each chip show how many
+threads are in that state.
+
+On the right pane (when a thread is open):
+
+| Button | Action |
+|---|---|
+| ★ / ☆ | Star or un-star the thread (mirrors to Gmail's STARRED label) |
+| ● | Mark thread as unread again |
+| 🗄 | Archive (removes from Inbox view; thread stays searchable under "Archived") |
+| ↺ | Un-archive (only visible on archived threads) |
+| ↻ | Re-sync this one thread |
+
+Opening an unread thread auto-marks it read in Gmail.
+
+### 8.4 Replying
+
+Type in the reply box at the bottom of a thread → **Send Reply →**. The
+reply goes out **from the team email address**, not whoever is logged into
+the portal — so to the worker / client it looks like one continuous
+conversation with ops, no matter which staff member typed it.
+
+To insert a saved template into your reply: **📝 Templates** button above
+the reply box → pick one → the body is inserted with placeholders filled
+in from the thread context.
+
+### 8.5 Composing a new email
+
+**✎ Compose** in the left pane.
+
+- The **To** field has autocomplete from your workers + clients. Pick from
+  the list and the email gets tagged to that person automatically when it
+  threads back.
+- **📝 Insert a template** dropdown lets you pick a saved template. Subject
+  and body are filled in; placeholders like `{{worker_name}}`,
+  `{{week_ending}}`, `{{onboard_link}}` get substituted using whoever
+  you picked in **To**.
+- **Send →**. The thread will appear in the inbox after the next sync.
+
+### 8.6 Email Templates (manage canned messages)
+
+Sidebar → Tools → **📝 Email Templates**.
+
+Each template has a **Name** (what shows in the dropdown), a **Subject**, and
+a **Body**. Use `{{placeholder}}` syntax to personalise — supported keys:
+
+| Placeholder | Filled with |
+|---|---|
+| `{{worker_name}}` | The recipient worker's name (if matched) |
+| `{{worker_email}}` | The recipient worker's email |
+| `{{client_name}}` | The recipient client's company name |
+| `{{client_contact}}` | The recipient client's contact person |
+| `{{week_ending}}` | Week-ending date (from the linked timesheet, if any) |
+| `{{date}}` | Allocation work date (if any) |
+| `{{job}}` | Job / project name |
+| `{{site}}` | Site name |
+| `{{start_time}}` | Allocation start time |
+| `{{onboard_link}}` | The worker's onboarding magic link |
+
+Anything inside `{{ }}` that doesn't match a known placeholder is left as-is.
+
+> Seeded with 4 starter templates: Timesheet Approved, Allocation Confirmed,
+> Onboarding Link, Payslip Ready. Edit / delete / add as you like — changes
+> are immediate, no deploy.
+
+### 8.7 Unknown senders → add as worker / client
+
+When an email comes in from someone **not yet in your system**, the thread
+banner shows:
+
+> `someone@newcompany.com.au` isn't linked to a worker or client.
+> **[+ Add as worker]  [+ Add as client]**
+
+Click one, fill in the name (+ optional details), Save. The contact is
+created and the thread is linked to them. The Inbox re-syncs so all future
+replies stay threaded against that record.
+
+If you add them as a **client**, their email domain (if it's a company
+domain, not a consumer one) is auto-added to the client's `email_domains`,
+so any *other* people from that company will tag automatically going
+forward.
+
+### 8.8 Inline email history on Worker / Client modals
+
+Open any worker or client → in the edit modal you'll see a **Recent emails**
+panel listing the last 6 threads with that contact. Click any row to jump
+straight into the Inbox at that thread. Quick way to check "what did we
+last say to them?" without leaving the worker view.
+
+### 8.9 Bulk Messages (one-way blasts)
+
+Sidebar → Tools → **📢 Bulk Messages**. Used for one-way announcements
+(rate-rise notice, holiday closure, induction reminder). Goes through
+Resend — **separate** from the team inbox. **Use the Inbox** for any
+conversation that needs replies (since Resend replies won't thread back).
+
+Each blast logs to `message_log` so you have a record of who got what
+and when — and recipient rows in Workers / Clients show a green
+"✓ recently emailed" pill so you can see at a glance who's been contacted.
+
+---
+
+## 9. Common Tasks (Cheat Sheet)
 
 **"Send a worker to a job tomorrow"**
 1. Workers → confirm worker exists & is Available
@@ -271,7 +424,7 @@ Plus pinned panels:
 
 ---
 
-## 9. Database Tables (for reference)
+## 10. Database Tables (for reference)
 
 | Table | Purpose |
 |---|---|
@@ -287,7 +440,7 @@ Plus pinned panels:
 
 ---
 
-## 10. Support / Common Issues
+## 11. Support / Common Issues
 
 **"Xero connection lost"** → Payroll page → Reconnect Xero (re-runs OAuth)
 
@@ -298,3 +451,9 @@ Plus pinned panels:
 **"Timesheet approved but not in payroll"** → Check `xero_exported` status — if false, it's still pickable; if true it's already been sent
 
 **"Need to change overtime threshold"** → Payroll Config page, edit `ot_threshold_daily`
+
+**"New emails aren't appearing in the Inbox"** → Make sure the sender's address (or domain) is registered against a worker/client. The Inbox only stores threads with a match. Click ↻ Sync after adding them. The toast now reports how many threads were fetched vs skipped, so you can tell the difference between "Gmail returned nothing" and "Gmail returned threads but none matched".
+
+**"All threads in the Inbox have the wrong person's name"** → Someone added the team email address itself (e.g. `theteamcbd@gmail.com`) as a worker. Remove that worker row, disconnect + reconnect the team email — the cache is wiped on reconnect and the next sync will match correctly.
+
+**"I want to switch to a different team email account"** → Inbox → ↔ Switch button. Confirm. Sign in with the new Google account. Cached threads from the old account are wiped automatically.
