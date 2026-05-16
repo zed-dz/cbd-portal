@@ -5,11 +5,13 @@ import { todayISO } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
 import { useDraft, DraftBanner } from '../../utils/useDraft';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState } from '../../components';
+import { EmailHistoryPanel } from '../../components/inbox/EmailHistoryPanel';
 
 const clientDefaults = {
   name: '', site: '', contact: '', contact_email: '', contact_phone: '',
   rate_a: '', rate_b: '', rate_c: '',
   charge_travel: '', charge_meal: '', notes: '',
+  email_domains: [],
 };
 
 const rateCardDefaults = { role_name: '', rate_a: '', rate_b: '', rate_c: '', notes: '' };
@@ -98,6 +100,7 @@ function ClientsList({ showToast }) {
       rate_c: c.rate_c ?? c.rate_weekend ?? '',
       charge_travel: c.charge_travel ?? '', charge_meal: c.charge_meal ?? '',
       notes: c.notes || '',
+      email_domains: Array.isArray(c.email_domains) ? c.email_domains : [],
     });
   };
   const closeModal = () => { draft.clear(); setModal(null); };
@@ -120,6 +123,9 @@ function ClientsList({ showToast }) {
       rate_weekend:  n(form.rate_c),
       charge_travel: n(form.charge_travel), charge_meal: n(form.charge_meal),
       notes: form.notes,
+      email_domains: (form.email_domains || [])
+        .map(d => (d || '').toLowerCase().trim().replace(/^@/, ''))
+        .filter(Boolean),
     };
     if (modal === 'add') {
       const { error } = await supabase.from('clients').insert([payload]);
@@ -240,6 +246,18 @@ function ClientsList({ showToast }) {
             <Field label="Contact Email"><input style={inputStyle} type="email" value={form.contact_email} onChange={e => setForm(f => ({ ...f, contact_email: e.target.value }))} /></Field>
             <Field label="Contact Phone"><input style={inputStyle} value={form.contact_phone} onChange={e => setForm(f => ({ ...f, contact_phone: e.target.value }))} /></Field>
 
+            <div style={{ gridColumn: '1 / -1' }}>
+              <Field
+                label="Email Domains"
+                hint="Any email from these domains will be tagged to this client in the Inbox. Add the company domain (e.g. sydneywater.com.au) so new contacts at this client show up automatically. Skip personal domains like gmail.com."
+              >
+                <DomainsInput
+                  value={form.email_domains}
+                  onChange={(arr) => setForm(f => ({ ...f, email_domains: arr }))}
+                />
+              </Field>
+            </div>
+
             <div style={{ gridColumn: '1 / -1', marginTop: 4 }}>
               <div style={{ background: 'rgba(249,115,22,0.06)', border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 14px' }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, letterSpacing: 1, marginBottom: 8 }}>
@@ -274,6 +292,18 @@ function ClientsList({ showToast }) {
               <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Field>
             </div>
           </div>
+          {modal !== 'add' && (
+            <div style={{ marginTop: 14 }}>
+              <EmailHistoryPanel
+                clientId={modal.id}
+                onOpenInbox={(threadId) => {
+                  if (threadId) window.sessionStorage.setItem('inbox_focus_thread', threadId);
+                  window.dispatchEvent(new CustomEvent('cbd:navigate', { detail: { page: 'inbox' } }));
+                }}
+              />
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
             <button onClick={closeModal} style={btnSecondary}>Cancel</button>
             <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
@@ -753,6 +783,58 @@ function JobRolesList({ showToast }) {
                 ×
               </button>
             </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Domains chip input (email_domains for a client) ────────────────────────
+
+function DomainsInput({ value = [], onChange }) {
+  const [text, setText] = useState('');
+
+  const add = () => {
+    const d = text.trim().toLowerCase().replace(/^@/, '');
+    if (!d) return;
+    if ((value || []).includes(d)) { setText(''); return; }
+    onChange([...(value || []), d]);
+    setText('');
+  };
+
+  const remove = (d) => onChange((value || []).filter(x => x !== d));
+
+  return (
+    <div>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 8px',
+      }}>
+        <span style={{ color: C.textDim, fontSize: 13, fontFamily: '"DM Mono", monospace' }}>@</span>
+        <input
+          style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: C.text, fontSize: 13, padding: '4px 0' }}
+          placeholder="sydneywater.com.au"
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ',' || e.key === ' ') { e.preventDefault(); add(); }
+            else if (e.key === 'Backspace' && !text && value.length) remove(value[value.length - 1]);
+          }}
+        />
+        <button type="button" onClick={add} disabled={!text.trim()} style={btnSmall}>Add</button>
+      </div>
+      {(value || []).length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+          {value.map(d => (
+            <span key={d} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              background: C.cardHover, border: `1px solid ${C.border}`, borderRadius: 999,
+              padding: '3px 9px', fontSize: 12, color: C.text, fontFamily: '"DM Mono", monospace',
+            }}>
+              @{d}
+              <button type="button" onClick={() => remove(d)} style={{ background: 'none', border: 'none', color: C.textMuted, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+            </span>
           ))}
         </div>
       )}

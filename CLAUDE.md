@@ -41,7 +41,8 @@ construction labour-hire — road / rail / water). It runs the entire workflow:
   - `send-bulk-email` — bulk email blast via Resend; logs every send to `message_log` for the in-app history view
   - `gmail-start` / `gmail-callback` — Google OAuth flow for the in-app Inbox
   - `gmail-send` — send via the connected Gmail account, mirror into `email_threads`/`email_messages`
-  - `gmail-sync` — pull recent threads from Gmail, match participants to workers/clients
+  - `gmail-sync` — pull recent threads from Gmail, match participants to workers/clients (exact email OR `clients.email_domains` match); skips threads with no match so personal mail never enters Supabase
+  - `gmail-modify` — toggle read/unread, star/unstar, archive/unarchive on a thread; mirrors to Gmail labels and updates `email_threads`
   - `gmail-status` / `gmail-disconnect` — connection state + revoke
 - **Email:** Resend free tier (3k/month). Default sender: `onboarding@resend.dev`.
   Until a domain is verified in Resend, emails only deliver to your own Resend
@@ -121,15 +122,19 @@ src/
 ├── components/
 │   ├── index.js                     ← Modal, Badge, Field, Toast, Table primitives
 │   ├── blast/SendBlastModal.jsx     ← Top-bar bulk email blast
+│   ├── inbox/EmailHistoryPanel.jsx  ← Recent-emails strip embedded in Worker/Client modals; dispatches `cbd:navigate` to jump to Inbox
 │   └── scan/ScanModal.jsx           ← Top-bar camera + QR detect
 ├── portals/
 │   ├── AdminPortal.jsx              ← Sidebar nav + top bar + page router
 │   └── WorkerPortal.jsx             ← Worker-facing tabbed view
 ├── pages/                           ← One folder per admin page
-│   ├── Workers/                     ← A/B/C bands, invite flow, share links
-│   ├── Clients/                     ← A/B/C bands, role rate cards, jobs
+│   ├── Workers/                     ← A/B/C bands, invite flow, share links, inline email history
+│   ├── Clients/                     ← A/B/C bands, role rate cards, jobs, email_domains chips, inline email history
 │   ├── Timesheets/                  ← Scenario-driven hours computation
 │   ├── Payroll/                     ← Compute pay/charge, push to Xero
+│   ├── Inbox/                       ← Team-email inbox; star/archive/mark-unread; templates; add-unknown-sender
+│   │   └── inboxApi.js              ← Shared helpers: modifyThread, loadTemplates, interpolate, buildTemplateContext
+│   ├── Templates/                   ← CRUD for email_templates (canned messages with {{placeholders}})
 │   ├── PublicProfile/               ← /p/<token>  (client-facing)
 │   └── OnboardProfile/              ← /onboard/<token>  (worker self-onboard)
 ├── utils/
@@ -173,13 +178,26 @@ supabase/
 - `message_log` — audit log of every bulk-email + gmail send. Used by the
   "Sent History" tab in Bulk Messages and by the green "✓ recently emailed"
   pill next to recipients.
-- `gmail_tokens` (single row, id=1) — OAuth tokens for the connected Gmail
-  account. `email_address` is the from address. `last_history_id` is reserved
-  for future incremental sync via Gmail's history API.
+- `gmail_tokens` (single row, id=1) — OAuth tokens for the connected **team
+  email** account. `email_address` is the from address. Whoever connects
+  becomes "the company inbox" — the whole team sees the same threads and sends
+  from this address. `last_history_id` is reserved for future incremental sync
+  via Gmail's history API.
 - `email_threads` + `email_messages` — local cache of Gmail conversations so
   the Inbox UI doesn't pay an API call per render. Threads carry optional
   `worker_id` / `client_id` foreign keys, populated by `gmail-sync` when a
-  participant's email matches `workers.email` or `clients.contact_email`.
+  participant's email matches `workers.email`, `clients.contact_email`, or a
+  domain in `clients.email_domains[]`. `matched_by_domain` records which
+  domain was used. `starred` / `archived` mirror Gmail's STARRED / INBOX
+  labels. Threads with no match are never stored (privacy guarantee).
+- `clients.email_domains TEXT[]` — list of company domains for the client
+  (e.g. `['sydneywater.com.au']`). Anything from those domains is auto-tagged
+  to this client in the Inbox. Consumer domains (gmail.com, yahoo.com…) are
+  ignored even if entered, so personal mail can't be claimed. Seeded from
+  `contact_email` on first migration.
+- `email_templates` — reusable canned messages with `{{placeholder}}` support.
+  Used by Inbox compose / reply dropdowns. Available placeholders are listed
+  in [src/pages/Inbox/inboxApi.js](src/pages/Inbox/inboxApi.js) `placeholderHints()`.
 
 Supabase advisor flagged these RPCs as "anon can execute SECURITY DEFINER" —
 **that is intentional** (it's the magic-link contract). Don't "fix" it by

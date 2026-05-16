@@ -17,6 +17,7 @@ import { LicenceAgentPage } from '../pages/LicenceAgent/LicenceAgentPage';
 import { ReportsPage } from '../pages/Reports/ReportsPage';
 import { BulkMessagesPage } from '../pages/BulkMessages/BulkMessagesPage';
 import { InboxPage } from '../pages/Inbox/InboxPage';
+import { TemplatesPage } from '../pages/Templates/TemplatesPage';
 import { AppViewsPage } from '../pages/AppViews/AppViewsPage';
 import { PendingWorkersPage } from '../pages/PendingWorkers/PendingWorkersPage';
 import { WorkerPortal } from './WorkerPortal';
@@ -59,6 +60,18 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
 
   useEffect(() => { refreshBadge(); }, [refreshBadge]);
 
+  // Cross-page navigation event: components nested deep (e.g. an email-history
+  // panel inside a worker/client modal) dispatch `cbd:navigate` to jump to a
+  // page without prop-drilling. Currently used by EmailHistoryPanel → Inbox.
+  useEffect(() => {
+    const onNav = (e) => {
+      const page = e?.detail?.page;
+      if (page) setActivePage(page);
+    };
+    window.addEventListener('cbd:navigate', onNav);
+    return () => window.removeEventListener('cbd:navigate', onNav);
+  }, []);
+
   const BADGE_COLORS = {
     green: { bg: '#22c55e', text: '#fff' },
     orange: { bg: '#f97316', text: '#fff' },
@@ -91,6 +104,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       label: 'TOOLS',
       items: [
         { id: 'inbox',         label: '📨 Inbox' },
+        { id: 'templates',     label: '📝 Email Templates' },
         { id: 'bulk_messages', label: '📢 Bulk Messages' },
         { id: 'licence_agent', label: '🪪 Licence Agent', badge: badges.licence_agent || null, badgeColor: 'red' },
         { id: 'pending_workers', label: '📱 Pending Workers', badge: badges.pending_workers || null, badgeColor: 'yellow' },
@@ -203,7 +217,8 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'licence_agent'    && <LicenceAgentPage showToast={showToast} />}
           {activePage === 'reports'          && <ReportsPage showToast={showToast} />}
           {activePage === 'bulk_messages'    && <BulkMessagesPage showToast={showToast} />}
-          {activePage === 'inbox'            && <InboxPage         showToast={showToast} />}
+          {activePage === 'inbox'            && <InboxPage         showToast={showToast} onNavigate={navigate} />}
+          {activePage === 'templates'        && <TemplatesPage     showToast={showToast} />}
           {activePage === 'app_views'        && <AppViewsPage showToast={showToast} />}
         </div>
       </div>

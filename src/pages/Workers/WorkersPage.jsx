@@ -4,6 +4,7 @@ import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '..
 import { fmtDate } from '../../utils/dates';
 import { useDraft, DraftBanner } from '../../utils/useDraft';
 import { Spinner, Badge, Modal, Field, TableWrap, Th, Td, EmptyState, certBadge } from '../../components';
+import { EmailHistoryPanel } from '../../components/inbox/EmailHistoryPanel';
 import { JOB_TITLES } from '../../constants/jobTitles';
 import { WORKER_TYPES } from '../../constants/scenarios';
 
@@ -422,6 +423,18 @@ export function WorkersPage({ showToast }) {
               setCerts={setEditCerts}
               showToast={showToast}
             />
+          )}
+
+          {modal !== 'add' && (
+            <div style={{ marginTop: 14 }}>
+              <EmailHistoryPanel
+                workerId={modal.id}
+                onOpenInbox={(threadId) => {
+                  if (threadId) window.sessionStorage.setItem('inbox_focus_thread', threadId);
+                  window.dispatchEvent(new CustomEvent('cbd:navigate', { detail: { page: 'inbox' } }));
+                }}
+              />
+            </div>
           )}
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 14 }}>
