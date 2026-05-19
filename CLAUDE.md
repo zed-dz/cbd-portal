@@ -21,7 +21,7 @@ construction labour-hire — road / rail / water). It runs the entire workflow:
 | Xero Sync   | OAuth flow to Xero, push approved timesheets as payslip entries. |
 | Licence Agent | Worker certifications + expiry tracking. |
 | Pending Workers | Workers not yet active — send invites via Resend. |
-| Bulk Messages | Email blasts (Resend) to workers/clients. SMS stubbed. |
+| Bulk Messages | Email blasts via Gmail (with Resend fallback). Sent History tab. SMS stubbed. |
 
 **Live URL:** https://cbd-portal-gray.vercel.app (NOT `zeta` — common confusion)
 
@@ -37,16 +37,20 @@ construction labour-hire — road / rail / water). It runs the entire workflow:
   - `xero-callback` — Xero OAuth handler
   - `xero-push` — push approved timesheets to Xero
   - `xero-data` — read Xero org data
-  - `send-invite` — single worker invite email via Resend
-  - `send-bulk-email` — bulk email blast via Resend; logs every send to `message_log` for the in-app history view
+  - `send-invite` — single worker invite email. **Routes through Gmail when `gmail_tokens` row exists** by forwarding the caller's JWT to `gmail-send`; falls back to Resend if Gmail fails or isn't connected.
+  - `send-bulk-email` — bulk email blast. **Same Gmail-first / Resend-fallback routing** as send-invite. Sends one email per recipient via `gmail-send` (4-way concurrency) when on Gmail; uses Resend's batch endpoint (100/call) on fallback. Logs every send to `message_log`.
   - `gmail-start` / `gmail-callback` — Google OAuth flow for the in-app Inbox
   - `gmail-send` — send via the connected Gmail account, mirror into `email_threads`/`email_messages`
   - `gmail-sync` — pull recent threads from Gmail, match participants to workers/clients (exact email OR `clients.email_domains` match); skips threads with no match so personal mail never enters Supabase
   - `gmail-modify` — toggle read/unread, star/unstar, archive/unarchive on a thread; mirrors to Gmail labels and updates `email_threads`
   - `gmail-status` / `gmail-disconnect` — connection state + revoke
-- **Email:** Resend free tier (3k/month). Default sender: `onboarding@resend.dev`.
-  Until a domain is verified in Resend, emails only deliver to your own Resend
-  account email (`fsociety.2017@protonmail.com`).
+- **Email:** **Gmail-first, Resend-fallback**. The connected Gmail account
+  (`theteamcbd@gmail.com`) is the primary sender for invites and blasts —
+  reaches any recipient and lets replies land in the in-app Inbox. Resend
+  (free 3k/month, `onboarding@resend.dev`) is the fallback path used only
+  when Gmail is disconnected; on the Resend free tier emails are restricted
+  to your Resend account email (`fsociety.2017@protonmail.com`) until a
+  domain is verified.
 - **SMS:** intentionally **not wired** — no genuinely free AU SMS provider exists.
   UI shows a disabled "SOON" button.
 - **Deploy:** Vercel auto-deploys `main` branch. `vercel.json` rewrites all routes
@@ -227,6 +231,13 @@ C: drive has historically been **full** on the user's Windows machine (causing
 pandoc/npm cache failures). Use `Z:\tmp` as a scratch area if needed.
 
 ---
+
+## Recent fixes worth knowing (May 2026)
+
+- **Allocation conflict detection** — both [AllocationsPage](src/pages/Allocations/AllocationsPage.jsx) and [Calendar](src/pages/Calendar/AllocationsCalendarPage.jsx) check for overlapping `pending`/`confirmed` allocations on the same worker before save. Inline yellow banner inside the modal + `window.confirm` override if you proceed. Calendar does a just-in-time DB query at save time because its in-memory `allocations` is range-filtered.
+- **`useDraft` form-reset bug** — when modal opens for an existing record, the hook used to reset the form to defaults right after `openEdit` populated it. Fix: only restore from localStorage when a draft *actually* exists. See [useDraft.js](src/utils/useDraft.js).
+- **Worker "Quick Licences" vs "Certifications"** — both intentionally exist. Quick Licences is free-text for fast capture + table search/filter; Certifications is the compliance source-of-truth with expiry tracking. The Field hint in the worker modal explains this — don't remove either.
+- **Email routing (the big one)** — `send-invite` and `send-bulk-email` were silently failing because they used Resend with the sandbox sender. Now both forward the **caller's Authorization header** to `gmail-send` so the function-to-function call passes `verify_jwt`. Don't try to use `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` from env for this — neither is auto-provided to edge functions in a way that satisfies verify_jwt. Forward the caller's JWT.
 
 ## Conventions established this session
 
