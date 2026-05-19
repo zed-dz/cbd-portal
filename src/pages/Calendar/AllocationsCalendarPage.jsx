@@ -129,6 +129,32 @@ export function AllocationsCalendarPage({ showToast }) {
 
   const handleSave = async () => {
     if (!form.worker_id || !form.start_date) { showToast('Worker and start date are required.', 'error'); return; }
+
+    // JIT conflict check — the in-memory `allocations` is range-filtered for
+    // the visible calendar window, so an out-of-view clash could slip through.
+    // Hit the DB for any live overlap on this worker's date range.
+    const winStart = form.start_date;
+    const winEnd   = form.end_date || form.start_date;
+    const { data: existing } = await supabase
+      .from('allocations')
+      .select('id, client, site, start_date, end_date, status')
+      .eq('worker_id', form.worker_id)
+      .in('status', ['pending', 'confirmed'])
+      .lte('start_date', winEnd)
+      .or(`end_date.is.null,end_date.gte.${winStart}`);
+    const clashes = (existing || []).filter(a => modal === 'add' || a.id !== modal.id);
+    if (clashes.length > 0) {
+      const workerName = allWorkers.find(w => w.id === form.worker_id)?.name || 'This worker';
+      const summary = clashes.slice(0, 3).map(c =>
+        `• ${c.client || c.site || 'Allocated'} (${c.start_date}${c.end_date && c.end_date !== c.start_date ? ` → ${c.end_date}` : ''}, ${c.status})`
+      ).join('\n');
+      const extra = clashes.length > 3 ? `\n…and ${clashes.length - 3} more.` : '';
+      const ok = window.confirm(
+        `⚠ ${workerName} is already allocated during this period:\n\n${summary}${extra}\n\nContinue anyway?`
+      );
+      if (!ok) return;
+    }
+
     setSaving(true);
     const payload = { ...form, end_date: form.end_date || null };
     if (modal === 'add') {

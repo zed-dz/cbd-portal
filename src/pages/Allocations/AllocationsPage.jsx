@@ -1,8 +1,26 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
 import { fmtDate, fmtDateTime } from '../../utils/dates';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge } from '../../components';
+
+// Find allocations for a given worker that overlap a [start, end] date range
+// AND are still live (pending/confirmed). Used to warn the admin before
+// double-booking. Excludes the current allocation when editing.
+function findConflicts(allAllocations, workerId, startISO, endISO, currentId) {
+  if (!workerId || !startISO) return [];
+  const winStart = startISO;
+  const winEnd   = endISO || startISO;
+  return allAllocations.filter(a => {
+    if (a.worker_id !== workerId) return false;
+    if (currentId && a.id === currentId) return false;
+    if (!['pending', 'confirmed'].includes(a.status)) return false;
+    const otherStart = a.start_date;
+    const otherEnd   = a.end_date || a.start_date;
+    if (!otherStart) return false;
+    return otherStart <= winEnd && otherEnd >= winStart;
+  });
+}
 
 const allocDefaults = {
   worker_id: '', site: '', client: '', project: '', address: '', site_supervisor: '',
@@ -53,8 +71,34 @@ export function AllocationsPage({ showToast }) {
   };
   const closeModal = () => { setModal(null); setForm(allocDefaults); };
 
+  const conflicts = useMemo(() => {
+    if (!modal) return [];
+    return findConflicts(
+      allocations,
+      form.worker_id,
+      form.start_date,
+      form.end_date,
+      modal === 'add' ? null : modal.id
+    );
+  }, [allocations, form.worker_id, form.start_date, form.end_date, modal]);
+
+  const workerName = useMemo(
+    () => workers.find(w => w.id === form.worker_id)?.name || 'This worker',
+    [workers, form.worker_id]
+  );
+
   const handleSave = async () => {
     if (!form.worker_id) { showToast('Please select a worker.', 'error'); return; }
+    if (conflicts.length > 0) {
+      const summary = conflicts.slice(0, 3).map(c =>
+        `• ${c.client || c.site || 'Allocated'} (${c.start_date}${c.end_date && c.end_date !== c.start_date ? ` → ${c.end_date}` : ''}, ${c.status})`
+      ).join('\n');
+      const extra = conflicts.length > 3 ? `\n…and ${conflicts.length - 3} more.` : '';
+      const ok = window.confirm(
+        `⚠ ${workerName} is already allocated during this period:\n\n${summary}${extra}\n\nContinue and create a clashing allocation anyway?`
+      );
+      if (!ok) return;
+    }
     setSaving(true);
     const payload = {
       worker_id: form.worker_id,
@@ -146,6 +190,37 @@ export function AllocationsPage({ showToast }) {
 
       {modal && (
         <Modal title={modal === 'add' ? 'Create Allocation' : 'Edit Allocation'} onClose={closeModal} width={560}>
+          {conflicts.length > 0 && (
+            <div style={{
+              background: 'rgba(234,179,8,0.10)',
+              border: '1px solid rgba(234,179,8,0.45)',
+              borderRadius: 8, padding: '10px 14px', marginBottom: 14,
+              fontSize: 12.5, color: '#fde68a',
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                ⚠ {workerName} is already allocated during this date range
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.55 }}>
+                {conflicts.slice(0, 4).map(c => (
+                  <li key={c.id} style={{ fontSize: 12 }}>
+                    <strong>{c.client || c.site || 'Allocated'}</strong>
+                    {' · '}
+                    <span style={{ fontFamily: '"DM Mono", monospace' }}>
+                      {c.start_date}{c.end_date && c.end_date !== c.start_date ? ` → ${c.end_date}` : ''}
+                    </span>
+                    {' · '}
+                    <span style={{ textTransform: 'capitalize' }}>{c.status}</span>
+                  </li>
+                ))}
+              </ul>
+              {conflicts.length > 4 && (
+                <div style={{ marginTop: 4, fontSize: 11, opacity: 0.8 }}>…and {conflicts.length - 4} more.</div>
+              )}
+              <div style={{ marginTop: 8, fontSize: 11, color: '#fde68a', opacity: 0.85 }}>
+                You can still save — you'll get a confirm prompt first.
+              </div>
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
             <div style={{ gridColumn: '1 / -1' }}>
               <Field label="Worker *">

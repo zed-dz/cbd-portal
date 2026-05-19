@@ -23,8 +23,10 @@ export function useDraft(key, initial, { enabled = true } = {}) {
   const [draftRestored, setDraftRestored] = useState(first.hadDraft);
   const lastKey = useRef(fullKey);
 
-  // When the draft key changes (e.g. closing one modal and opening another with
-  // a different id), reload state from the new key's localStorage entry.
+  // When the draft key changes (closing one modal and opening another with a
+  // different id), restore the draft for the new key — but only if a draft
+  // actually exists. If no saved draft, leave the form alone so the parent's
+  // `setForm(recordData)` call (typical in `openEdit`) isn't clobbered.
   useEffect(() => {
     if (lastKey.current === fullKey) return;
     lastKey.current = fullKey;
@@ -34,8 +36,12 @@ export function useDraft(key, initial, { enabled = true } = {}) {
       return;
     }
     const { value: v, hadDraft } = readDraft(fullKey, initialRef.current);
-    setValue(v);
-    setDraftRestored(hadDraft);
+    if (hadDraft) {
+      setValue(v);
+      setDraftRestored(true);
+    } else {
+      setDraftRestored(false);
+    }
   }, [fullKey, enabled]);
 
   // Debounced persistence to localStorage.

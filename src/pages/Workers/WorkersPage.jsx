@@ -301,7 +301,14 @@ export function WorkersPage({ showToast }) {
                 </datalist>
               </>
             </Field>
-            <Field label="Licences / Tickets"><input style={inputStyle} value={form.licences} onChange={e => setForm(f => ({ ...f, licences: e.target.value }))} placeholder="e.g. EWP, VOC Excavator, RIW…" /></Field>
+            <Field
+              label="Quick Licences"
+              hint={modal === 'add'
+                ? 'Free-text shortcut for fast capture. After save, add proper expiry-tracked tickets in the 🪪 Certifications section.'
+                : 'Free-text only — for tickets with expiry dates, use the 🪪 Certifications section below or the Licence Agent page.'}
+            >
+              <input style={inputStyle} value={form.licences} onChange={e => setForm(f => ({ ...f, licences: e.target.value }))} placeholder="e.g. EWP, VOC Excavator, RIW…" />
+            </Field>
             <Field label="Address"><input style={inputStyle} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></Field>
             <Field label="Portal Access">
               <select style={inputStyle} value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>

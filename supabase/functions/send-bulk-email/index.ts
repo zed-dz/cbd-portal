@@ -1,15 +1,21 @@
-// Sends a bulk email blast to a list of recipients via Resend.
+// Sends a bulk email blast to a list of recipients.
+//
+// Sender selection (in order):
+//   1. Connected Gmail account (calls `gmail-send` once per recipient) — used
+//      whenever a `gmail_tokens` row exists. Slower than Resend's batch
+//      endpoint but the only path that reaches arbitrary recipients
+//      pre-domain-verification.
+//   2. Resend batch endpoint — used if Gmail isn't connected and a
+//      RESEND_API_KEY is set. Up to 100 messages per HTTP call.
 //
 // Request body:
 //   {
-//     recipients: [{ name?: string, email: string }],
-//     subject: string,
-//     body: string,                  // plain text — newlines preserved
-//     audience?: 'workers' | 'clients' | 'mixed'   // for header styling only
+//     recipients: [{ id?, name?, email }],
+//     subject:    string,
+//     body:       string,                  // plain text — newlines preserved
+//     audience?:  'workers' | 'clients' | 'mixed',
+//     sent_by?:   UUID,
 //   }
-//
-// Uses Resend's batch endpoint when >1 recipient (up to 100 per call).
-// Returns per-recipient results. Falls back to clipboard message if no API key.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -29,8 +35,7 @@ const CORS = {
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...CORS, 'Content-Type': 'application/json' },
+    status, headers: { ...CORS, 'Content-Type': 'application/json' },
   });
 }
 
@@ -67,13 +72,19 @@ function renderText(name: string, subject: string, body: string) {
   return `Hi ${name || 'there'},\n\n${body}\n\n—\nCBD Plant & Labour\nABN 75 663 693 070\n${PORTAL_URL}`;
 }
 
+async function gmailIsConnected(sb: ReturnType<typeof createClient>) {
+  const { data } = await sb.from('gmail_tokens').select('id').eq('id', 1).maybeSingle();
+  return !!data?.id;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST')    return json({ error: 'Method not allowed' }, 405);
 
-  if (!RESEND_API_KEY) {
-    return json({ error: 'email_not_configured', message: 'RESEND_API_KEY is not set.' }, 503);
-  }
+  // Forward the caller's Authorization header to gmail-send — Supabase's
+  // gateway rejects service-role JWTs as Bearer tokens for inter-function
+  // calls when verify_jwt=true.
+  const callerAuth = req.headers.get('Authorization') || '';
 
   let body: {
     recipients?: Array<{ id?: string; name?: string; email: string }>;
@@ -91,78 +102,123 @@ serve(async (req) => {
 
   const subject = body.subject.trim();
   const text    = body.body.trim();
+  const supa = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-  const emails = recipients.map(r => ({
-    from: INVITE_FROM,
-    to: [r.email],
-    subject,
-    html: renderHtml(r.name || '', subject, text),
-    text: renderText(r.name || '', subject, text),
-  }));
-
-  // Resend batch endpoint accepts up to 100 messages per call.
   const results: Array<{ email: string; ok: boolean; error?: string }> = [];
-  for (let i = 0; i < emails.length; i += MAX_PER_BATCH) {
-    const slice = emails.slice(i, i + MAX_PER_BATCH);
-    const batchRes = await fetch('https://api.resend.com/emails/batch', {
-      method:  'POST',
-      headers: {
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-        'Content-Type':  'application/json',
-      },
-      body: JSON.stringify(slice),
-    });
-    if (!batchRes.ok) {
-      const detail = await batchRes.text();
-      console.error('Resend batch error', batchRes.status, detail);
-      // Mark all in this slice as failed.
-      slice.forEach((_, idx) => {
-        results.push({ email: recipients[i + idx].email, ok: false, error: `Resend ${batchRes.status}: ${detail.slice(0, 160)}` });
-      });
-      // On 403/domain errors we bail early — same error will hit the rest.
-      if (batchRes.status === 403) break;
-      continue;
+
+  // ── 1) Prefer Gmail when connected ────────────────────────────────────────
+  const useGmail = await gmailIsConnected(supa) && !!callerAuth;
+  let provider: 'gmail' | 'resend' = useGmail ? 'gmail' : 'resend';
+
+  if (useGmail) {
+    // Send one at a time via gmail-send. Slower than Resend batch but reaches
+    // any recipient, not just verified addresses. Concurrency kept low to
+    // avoid hitting Gmail's per-user send quotas.
+    const CONCURRENCY = 4;
+    let cursor = 0;
+    async function worker() {
+      while (cursor < recipients.length) {
+        const idx = cursor++;
+        const r = recipients[idx];
+        try {
+          const res = await fetch(`${SUPABASE_URL}/functions/v1/gmail-send`, {
+            method: 'POST',
+            headers: {
+              'Authorization': callerAuth,
+              'Content-Type':  'application/json',
+            },
+            body: JSON.stringify({ to: r.email, subject, body: text }),
+          });
+          const out = await res.json().catch(() => ({}));
+          if (res.ok && out.ok) {
+            results[idx] = { email: r.email, ok: true };
+          } else {
+            results[idx] = {
+              email: r.email, ok: false,
+              error: out.detail || out.error || `gmail-send ${res.status}`,
+            };
+          }
+        } catch (e) {
+          results[idx] = { email: r.email, ok: false, error: (e as Error).message };
+        }
+      }
     }
-    const out = await batchRes.json();
-    const okIds: any[] = out?.data || [];
-    slice.forEach((_, idx) => {
-      results.push({ email: recipients[i + idx].email, ok: !!okIds[idx]?.id });
-    });
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, recipients.length) }, () => worker()));
+  } else if (RESEND_API_KEY) {
+    // ── 2) Resend fallback (batch endpoint) ────────────────────────────────
+    const emails = recipients.map(r => ({
+      from: INVITE_FROM,
+      to: [r.email],
+      subject,
+      html: renderHtml(r.name || '', subject, text),
+      text: renderText(r.name || '', subject, text),
+    }));
+    for (let i = 0; i < emails.length; i += MAX_PER_BATCH) {
+      const slice = emails.slice(i, i + MAX_PER_BATCH);
+      const batchRes = await fetch('https://api.resend.com/emails/batch', {
+        method:  'POST',
+        headers: {
+          'Authorization': `Bearer ${RESEND_API_KEY}`,
+          'Content-Type':  'application/json',
+        },
+        body: JSON.stringify(slice),
+      });
+      if (!batchRes.ok) {
+        const detail = await batchRes.text();
+        console.error('Resend batch error', batchRes.status, detail);
+        slice.forEach((_, idx) => {
+          results[i + idx] = { email: recipients[i + idx].email, ok: false, error: `Resend ${batchRes.status}: ${detail.slice(0, 160)}` };
+        });
+        if (batchRes.status === 403) break;
+        continue;
+      }
+      const out = await batchRes.json();
+      const okIds: any[] = out?.data || [];
+      slice.forEach((_, idx) => {
+        results[i + idx] = { email: recipients[i + idx].email, ok: !!okIds[idx]?.id };
+      });
+    }
+  } else {
+    return json({
+      error: 'email_not_configured',
+      message: 'No email provider configured. Connect Gmail in the Inbox page, or set RESEND_API_KEY.',
+    }, 503);
+  }
+
+  // Fill any unset slots with a generic failure (shouldn't happen).
+  for (let i = 0; i < recipients.length; i++) {
+    if (!results[i]) results[i] = { email: recipients[i].email, ok: false, error: 'no_result' };
   }
 
   const sent     = results.filter(r => r.ok).length;
   const failed   = results.filter(r => !r.ok);
   const firstErr = failed[0]?.error;
 
-  // Log every attempt to the message_log audit table so the UI can show
-  // "who we already emailed". Errors here are non-fatal — the email already
-  // went out, we just couldn't write the audit row.
+  // Audit log
   try {
-    if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
-      const supa = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-      const batchId = crypto.randomUUID();
-      const rows = results.map((r, idx) => ({
-        batch_id:        batchId,
-        channel:         'email',
-        audience:        body.audience || null,
-        recipient_id:    recipients[idx].id || null,
-        recipient_name:  recipients[idx].name || null,
-        recipient_email: r.email,
-        subject,
-        body:            text,
-        status:          r.ok ? 'sent' : 'failed',
-        error:           r.error || null,
-        sent_by:         body.sent_by || null,
-      }));
-      const { error: logErr } = await supa.from('message_log').insert(rows);
-      if (logErr) console.error('message_log insert failed:', logErr);
-    }
+    const batchId = crypto.randomUUID();
+    const rows = results.map((r, idx) => ({
+      batch_id:        batchId,
+      channel:         provider === 'gmail' ? 'gmail' : 'email',
+      audience:        body.audience || null,
+      recipient_id:    recipients[idx].id || null,
+      recipient_name:  recipients[idx].name || null,
+      recipient_email: r.email,
+      subject,
+      body:            text,
+      status:          r.ok ? 'sent' : 'failed',
+      error:           r.error || null,
+      sent_by:         body.sent_by || null,
+    }));
+    const { error: logErr } = await supa.from('message_log').insert(rows);
+    if (logErr) console.error('message_log insert failed:', logErr);
   } catch (e) {
     console.error('message_log write threw:', e);
   }
 
   return json({
     ok: sent > 0,
+    via: provider,
     sent,
     failed: failed.length,
     total:  results.length,
