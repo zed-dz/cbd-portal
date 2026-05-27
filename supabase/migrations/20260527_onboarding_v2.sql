@@ -217,3 +217,60 @@ GRANT EXECUTE ON FUNCTION update_worker_via_token(
   text, text, text, text, text, text, text, boolean,
   text, text, text, text, text, text, text
 ) TO anon, authenticated;
+
+-- ──────────────────────────────────────────────────────────────────────────
+-- The following changes were applied after 20260527_onboarding_v2.sql:
+-- ──────────────────────────────────────────────────────────────────────────
+
+-- Broaden the admin gate to include 'manager' role (the existing admin
+-- login uses access_level='manager'). The user can tighten this later
+-- (e.g. introduce a dedicated 'payroll_admin' role) by editing this set.
+DROP POLICY IF EXISTS payroll_admin_all ON worker_payroll_details;
+CREATE POLICY payroll_admin_all ON worker_payroll_details
+  FOR ALL TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM workers w
+      WHERE lower(w.email) = lower(auth.jwt() ->> 'email')
+        AND w.access_level IN ('admin', 'manager')
+        AND w.archived_at IS NULL
+    )
+  )
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS medical_admin_all ON worker_medical_details;
+CREATE POLICY medical_admin_all ON worker_medical_details
+  FOR ALL TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM workers w
+      WHERE lower(w.email) = lower(auth.jwt() ->> 'email')
+        AND w.access_level IN ('admin', 'manager')
+        AND w.archived_at IS NULL
+    )
+  )
+  WITH CHECK (true);
+
+-- Photo URL column + storage bucket for worker profile photos.
+ALTER TABLE workers
+  ADD COLUMN IF NOT EXISTS photo_url text;
+
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('worker-photos', 'worker-photos', true, 8388608, ARRAY['image/jpeg','image/png','image/webp'])
+ON CONFLICT (id) DO UPDATE SET
+  public = true,
+  file_size_limit = EXCLUDED.file_size_limit,
+  allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+DROP POLICY IF EXISTS worker_photos_read   ON storage.objects;
+DROP POLICY IF EXISTS worker_photos_insert ON storage.objects;
+DROP POLICY IF EXISTS worker_photos_update ON storage.objects;
+DROP POLICY IF EXISTS worker_photos_delete ON storage.objects;
+
+CREATE POLICY worker_photos_read   ON storage.objects FOR SELECT TO public                  USING (bucket_id = 'worker-photos');
+CREATE POLICY worker_photos_insert ON storage.objects FOR INSERT TO anon, authenticated WITH CHECK (bucket_id = 'worker-photos');
+CREATE POLICY worker_photos_update ON storage.objects FOR UPDATE TO authenticated           USING (bucket_id = 'worker-photos');
+CREATE POLICY worker_photos_delete ON storage.objects FOR DELETE TO authenticated           USING (bucket_id = 'worker-photos');
+
+-- RPC extended with p_photo_url parameter. Drop + recreate; signature changed.
+-- (Full updated body is in 20260527_onboarding_v2.sql once consolidated.)

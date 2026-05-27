@@ -20,6 +20,16 @@ const ARCHIVE_REASONS = [
 
 const REASON_LABEL = Object.fromEntries(ARCHIVE_REASONS.map(r => [r.value, r.label]));
 
+const EMPTY_PAYROLL = {
+  tfn: '', bank_account_name: '', bank_bsb: '', bank_account_number: '',
+  super_fund_name: '', super_fund_usi: '', super_member_number: '',
+  use_default_super: false,
+};
+const EMPTY_MEDICAL = {
+  blood_type: '', allergies: '', conditions: '', medications: '',
+  gp_name: '', gp_phone: '', medicare_number: '',
+};
+
 function dedupeLicences(s) {
   if (!s) return '';
   const seen = new Set();
@@ -67,6 +77,8 @@ export function WorkersPage({ showToast }) {
   const [archiveModal, setArchiveModal] = useState(null); // worker being archived
   const [modal, setModal] = useState(null);
   const [editCerts, setEditCerts] = useState([]);
+  const [payroll, setPayroll]     = useState(null);
+  const [medical, setMedical]     = useState(null);
   const draftKey = modal === 'add'
     ? 'worker_add'
     : modal && typeof modal === 'object'
@@ -103,11 +115,22 @@ export function WorkersPage({ showToast }) {
     });
     const { data } = await supabase.from('certifications').select('*').eq('worker_id', w.id).order('expiry', { ascending: true });
     setEditCerts(data || []);
+
+    // RLS gates these to admin/manager roles. Non-admins get empty results
+    // silently; save attempts will surface a clear error if they try to write.
+    const [pd, md] = await Promise.all([
+      supabase.from('worker_payroll_details').select('*').eq('worker_id', w.id).maybeSingle(),
+      supabase.from('worker_medical_details').select('*').eq('worker_id', w.id).maybeSingle(),
+    ]);
+    setPayroll(pd.data || { ...EMPTY_PAYROLL, worker_id: w.id });
+    setMedical(md.data || { ...EMPTY_MEDICAL, worker_id: w.id });
   };
   const closeModal = () => {
     draft.clear();
     setModal(null);
     setEditCerts([]);
+    setPayroll(null);
+    setMedical(null);
   };
 
   const handleSave = async () => {
@@ -157,8 +180,46 @@ export function WorkersPage({ showToast }) {
       closeModal(); load();
     } else {
       const { error } = await supabase.from('workers').update(payload).eq('id', modal.id);
-      if (error) showToast(error.message, 'error');
-      else { showToast('Worker updated successfully', 'success'); closeModal(); load(); }
+      if (error) { showToast(error.message, 'error'); setSaving(false); return; }
+
+      // Upsert sensitive details. RLS gates these — non-admin users won't
+      // even get the payroll/medical fields rendered in the modal, so this
+      // only runs when the admin can see them.
+      if (payroll) {
+        const blank = v => (v === '' || v == null) ? null : v;
+        const { error: pErr } = await supabase.from('worker_payroll_details').upsert({
+          worker_id:           modal.id,
+          tfn:                 blank(payroll.tfn),
+          bank_account_name:   blank(payroll.bank_account_name),
+          bank_bsb:            blank(payroll.bank_bsb),
+          bank_account_number: blank(payroll.bank_account_number),
+          super_fund_name:     blank(payroll.super_fund_name),
+          super_fund_usi:      blank(payroll.super_fund_usi),
+          super_member_number: blank(payroll.super_member_number),
+          use_default_super:   !!payroll.use_default_super,
+          updated_at:          new Date().toISOString(),
+        }, { onConflict: 'worker_id' });
+        if (pErr) { showToast(`Payroll details: ${pErr.message}`, 'error'); setSaving(false); return; }
+      }
+      if (medical) {
+        const blank = v => (v === '' || v == null) ? null : v;
+        const { error: mErr } = await supabase.from('worker_medical_details').upsert({
+          worker_id:       modal.id,
+          blood_type:      blank(medical.blood_type),
+          allergies:       blank(medical.allergies),
+          conditions:      blank(medical.conditions),
+          medications:     blank(medical.medications),
+          gp_name:         blank(medical.gp_name),
+          gp_phone:        blank(medical.gp_phone),
+          medicare_number: blank(medical.medicare_number),
+          updated_at:      new Date().toISOString(),
+        }, { onConflict: 'worker_id' });
+        if (mErr) { showToast(`Medical details: ${mErr.message}`, 'error'); setSaving(false); return; }
+      }
+
+      showToast('Worker updated successfully', 'success');
+      closeModal();
+      load();
     }
     setSaving(false);
   };
@@ -529,12 +590,69 @@ export function WorkersPage({ showToast }) {
             </div>
           )}
 
+          {modal !== 'add' && modal.photo_url && (
+            <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 14 }}>
+              <img
+                src={modal.photo_url}
+                alt={modal.name}
+                style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: `1px solid ${C.border}` }}
+              />
+              <div style={{ fontSize: 11.5, color: C.textDim }}>Profile photo on file (set by worker during onboarding).</div>
+            </div>
+          )}
+
           {modal !== 'add' && (
             <WorkerTicketsSection
               workerId={modal.id}
               certs={editCerts}
               setCerts={setEditCerts}
               showToast={showToast}
+            />
+          )}
+
+          {modal !== 'add' && payroll && (
+            <SensitivePanel
+              title="💵 Payroll Details"
+              subtitle="Tax, bank, super. Only visible to admin / manager roles."
+              fields={[
+                ['Tax File Number', 'tfn', { mask: true }],
+                ['Account holder name', 'bank_account_name'],
+                ['BSB', 'bank_bsb'],
+                ['Account number', 'bank_account_number', { mask: true }],
+                ['Super fund name', 'super_fund_name'],
+                ['Fund USI', 'super_fund_usi'],
+                ['Member number', 'super_member_number'],
+              ]}
+              extraChildren={(
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.textMuted, marginTop: 4 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!payroll.use_default_super}
+                    onChange={e => setPayroll(p => ({ ...p, use_default_super: e.target.checked }))}
+                  />
+                  Uses CBD default super fund
+                </label>
+              )}
+              data={payroll}
+              setData={setPayroll}
+            />
+          )}
+
+          {modal !== 'add' && medical && (
+            <SensitivePanel
+              title="⚕️ Medical & GP"
+              subtitle="For first-aid responders on site. Same admin-only access as payroll."
+              fields={[
+                ['Blood type', 'blood_type'],
+                ['Allergies', 'allergies', { multiline: true }],
+                ['Conditions', 'conditions', { multiline: true }],
+                ['Medications', 'medications', { multiline: true }],
+                ['GP name', 'gp_name'],
+                ['GP phone', 'gp_phone'],
+                ['Medicare number', 'medicare_number', { mask: true }],
+              ]}
+              data={medical}
+              setData={setMedical}
             />
           )}
 
@@ -611,6 +729,85 @@ function ArchiveWorkerModal({ worker, onClose, onConfirm }) {
 }
 
 // ── Inline ticket management for the Worker edit modal ─────────────────────
+
+// Collapsible admin-only panel for sensitive worker fields (payroll / medical).
+// Shows masked values by default with a "Reveal" toggle so the data isn't
+// shoulder-surfable when someone has the modal open in the office.
+function SensitivePanel({ title, subtitle, fields, data, setData, extraChildren }) {
+  const [open,    setOpen]    = useState(false);
+  const [reveal,  setReveal]  = useState(false);
+
+  const maskValue = (v) => {
+    if (!v) return '';
+    const s = String(v);
+    if (s.length <= 4) return '••' + s.slice(-2);
+    return '•••• ' + s.slice(-3);
+  };
+
+  return (
+    <div style={{
+      marginTop: 14,
+      background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+      overflow: 'hidden',
+    }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+          padding: '10px 14px',
+          background: open ? C.card : 'transparent',
+          border: 'none', borderBottom: open ? `1px solid ${C.border}` : 'none',
+          cursor: 'pointer', textAlign: 'left',
+          color: C.text,
+        }}
+      >
+        <span style={{ fontSize: 12, color: C.textDim, fontFamily: '"DM Mono", monospace' }}>{open ? '▾' : '▸'}</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 13.5 }}>{title}</div>
+          <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 1 }}>{subtitle}</div>
+        </div>
+        {open && (
+          <span
+            onClick={e => { e.stopPropagation(); setReveal(r => !r); }}
+            style={{
+              fontSize: 11, color: C.accent, fontFamily: '"DM Mono", monospace',
+              padding: '3px 8px', border: `1px solid ${C.border}`, borderRadius: 999,
+            }}>
+            {reveal ? '🙈 Mask' : '👁 Reveal'}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div style={{ padding: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
+            {fields.map(([label, key, opts]) => {
+              const multiline = opts?.multiline;
+              const mask      = opts?.mask;
+              const display   = (mask && !reveal) ? maskValue(data[key]) : (data[key] || '');
+              return (
+                <div key={key} style={{ gridColumn: multiline ? '1 / -1' : 'auto' }}>
+                  <Field label={label}>
+                    {multiline
+                      ? <textarea style={{ ...inputStyle, minHeight: 60, resize: 'vertical', fontFamily: 'inherit' }}
+                          value={data[key] || ''}
+                          onChange={e => setData(d => ({ ...d, [key]: e.target.value }))} />
+                      : <input style={inputStyle}
+                          value={display}
+                          onChange={e => setData(d => ({ ...d, [key]: e.target.value }))}
+                          placeholder={mask && !reveal && data[key] ? '' : ''}
+                          onFocus={() => { if (mask) setReveal(true); }} />}
+                  </Field>
+                </div>
+              );
+            })}
+          </div>
+          {extraChildren}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function WorkerTicketsSection({ workerId, certs, setCerts, showToast }) {
   const [adding, setAdding] = useState(false);

@@ -27,6 +27,7 @@ const EMPTY = {
   date_of_birth: '', gender: '',
   drivers_licence_number: '', drivers_licence_expiry: '',
   licences: '',
+  photo_url: '',
   // Working rights
   citizenship_status: 'citizen',
   visa_subclass: '', visa_expiry: '',
@@ -98,6 +99,7 @@ export function OnboardProfilePage({ token }) {
       p_emergency_phone:          blank(form.emergency_phone),
       p_emergency_phone_alt:      blank(form.emergency_phone_alt),
       p_licences:                 blank(form.licences),
+      p_photo_url:                blank(form.photo_url),
       p_tfn:                      blank(form.tfn),
       p_bank_account_name:        blank(form.bank_account_name),
       p_bank_bsb:                 blank(form.bank_bsb),
@@ -188,7 +190,7 @@ export function OnboardProfilePage({ token }) {
           marginTop: 14,
         }}>
           {step === 0 && <StepWelcome  profile={profile} />}
-          {STEPS[step].id === 'personal'  && <StepPersonal  form={form} set={set} />}
+          {STEPS[step].id === 'personal'  && <StepPersonal  form={form} set={set} workerId={profile.id} />}
           {STEPS[step].id === 'rights'    && <StepRights    form={form} set={set} />}
           {STEPS[step].id === 'bank'      && <StepBank      form={form} set={set} />}
           {STEPS[step].id === 'super'     && <StepSuper     form={form} set={set} />}
@@ -348,10 +350,11 @@ function StepWelcome({ profile }) {
   );
 }
 
-function StepPersonal({ form, set }) {
+function StepPersonal({ form, set, workerId }) {
   return (
     <>
       <SectionHeader title="About you" subtitle="The basics. Keep your mobile current — we use it to text you about shifts." />
+      <PhotoUploader workerId={workerId} value={form.photo_url} onChange={(url) => set({ photo_url: url })} />
       <Field label="Mobile *"><input style={inputStyle} type="tel" value={form.mobile} onChange={e => set({ mobile: e.target.value })} placeholder="04xx xxx xxx" /></Field>
       <Field label="Alternate phone (optional)"><input style={inputStyle} type="tel" value={form.alternate_phone} onChange={e => set({ alternate_phone: e.target.value })} /></Field>
       <Field label="Date of birth"><input style={inputStyle} type="date" value={form.date_of_birth} onChange={e => set({ date_of_birth: e.target.value })} /></Field>
@@ -537,3 +540,65 @@ const STATUS_LABEL = {
   visa: 'Visa worker',
   other: 'Other',
 };
+
+// ── Photo uploader (Supabase Storage) ──────────────────────────────────────
+
+function PhotoUploader({ workerId, value, onChange }) {
+  const [uploading, setUploading] = useState(false);
+  const [err, setErr]             = useState(null);
+
+  const pick = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setErr(null);
+
+    if (file.size > 8 * 1024 * 1024) {
+      setErr('Photo is too large. Keep it under 8 MB.');
+      return;
+    }
+    const okType = ['image/jpeg', 'image/png', 'image/webp'].includes(file.type);
+    if (!okType) {
+      setErr('Use a JPG, PNG or WEBP image.');
+      return;
+    }
+
+    setUploading(true);
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    const path = `${workerId}/profile-${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from('worker-photos')
+      .upload(path, file, { upsert: true, contentType: file.type, cacheControl: '3600' });
+    if (upErr) {
+      setErr(upErr.message || 'Upload failed.');
+      setUploading(false);
+      return;
+    }
+    const { data: pub } = supabase.storage.from('worker-photos').getPublicUrl(path);
+    onChange(pub.publicUrl);
+    setUploading(false);
+  };
+
+  return (
+    <Field label="Profile photo (optional)" hint="A clear head-and-shoulders photo helps the supervisor recognise you on site.">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div style={{
+          width: 72, height: 72, borderRadius: '50%',
+          background: C.bg, border: `1px solid ${C.border}`,
+          backgroundImage: value ? `url(${value})` : 'none',
+          backgroundSize: 'cover', backgroundPosition: 'center',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: C.textDim, fontSize: 24, flexShrink: 0,
+        }}>
+          {!value && '👤'}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <label style={{ ...btnSecondary, padding: '6px 12px', fontSize: 12.5, cursor: 'pointer', display: 'inline-block' }}>
+            {uploading ? 'Uploading…' : (value ? 'Replace photo' : 'Choose photo')}
+            <input type="file" accept="image/jpeg,image/png,image/webp" onChange={pick} style={{ display: 'none' }} />
+          </label>
+          {err && <div style={{ marginTop: 6, fontSize: 11.5, color: '#fda4af' }}>{err}</div>}
+        </div>
+      </div>
+    </Field>
+  );
+}
