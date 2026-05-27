@@ -20,7 +20,7 @@ export function LicenceAgentPage({ showToast }) {
     setLoading(true);
     const [c, w] = await Promise.all([
       supabase.from('certifications').select('*, workers(name)').order('expiry', { ascending: true }),
-      supabase.from('workers').select('id, name').order('name'),
+      supabase.from('workers').select('id, name').is('archived_at', null).order('name'),
     ]);
     if (c.error) showToast(c.error.message, 'error');
     else setCerts(c.data || []);

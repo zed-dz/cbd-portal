@@ -35,7 +35,7 @@ export function BulkMessagesPage({ showToast }) {
   useEffect(() => {
     (async () => {
       const [w, c] = await Promise.all([
-        supabase.from('workers').select('id, name, mobile, email').eq('app_status', 'Active').order('name'),
+        supabase.from('workers').select('id, name, mobile, email').eq('app_status', 'Active').is('archived_at', null).order('name'),
         supabase.from('clients').select('id, name, contact, contact_email, contact_phone').order('name'),
       ]);
       setWorkers(w.data || []);

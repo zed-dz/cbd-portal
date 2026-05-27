@@ -21,8 +21,8 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
         const in30 = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
         const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
         const [onSite, available, pendingTs, licAlerts, weekHours, pendingList, expired, allocs, payrollReady] = await Promise.all([
-          supabase.from('workers').select('id', { count: 'exact' }).eq('status', 'on_site'),
-          supabase.from('workers').select('id', { count: 'exact' }).eq('status', 'available'),
+          supabase.from('workers').select('id', { count: 'exact' }).eq('status', 'on_site').is('archived_at', null),
+          supabase.from('workers').select('id', { count: 'exact' }).eq('status', 'available').is('archived_at', null),
           supabase.from('timesheets').select('id', { count: 'exact' }).eq('status', 'pending'),
           supabase.from('certifications').select('id', { count: 'exact' }).lt('expiry', in30),
           supabase.from('timesheets').select('hours').eq('status', 'approved').gte('date', weekAgo),

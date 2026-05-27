@@ -39,12 +39,12 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
 
   const refreshBadge = useCallback(async () => {
     const [w, a, ts, ca, lic, pw, pr] = await Promise.all([
-      supabase.from('workers').select('*', { count: 'exact', head: true }),
+      supabase.from('workers').select('*', { count: 'exact', head: true }).is('archived_at', null),
       supabase.from('allocations').select('*', { count: 'exact', head: true }).in('status', ['pending', 'confirmed']),
       supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('certifications').select('*', { count: 'exact', head: true }).lt('expiry', new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]),
-      supabase.from('workers').select('*', { count: 'exact', head: true }).neq('app_status', 'Active'),
+      supabase.from('workers').select('*', { count: 'exact', head: true }).neq('app_status', 'Active').is('archived_at', null),
       supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'approved').eq('xero_exported', false),
     ]);
     setBadges({

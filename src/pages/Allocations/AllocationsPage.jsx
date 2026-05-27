@@ -42,7 +42,7 @@ export function AllocationsPage({ showToast }) {
     setLoading(true);
     const [a, w, c] = await Promise.all([
       supabase.from('allocations').select('*, workers(name, job_title)').order('created_at', { ascending: false }),
-      supabase.from('workers').select('id, name').order('name'),
+      supabase.from('workers').select('id, name').is('archived_at', null).order('name'),
       supabase.from('clients').select('id, name').order('name'),
     ]);
     if (a.error) showToast(a.error.message, 'error');

@@ -22,7 +22,7 @@ export function SendBlastModal({ onClose, showToast }) {
     let mounted = true;
     (async () => {
       const [w, c] = await Promise.all([
-        supabase.from('workers').select('id, name, email').eq('app_status', 'Active').order('name'),
+        supabase.from('workers').select('id, name, email').eq('app_status', 'Active').is('archived_at', null).order('name'),
         supabase.from('clients').select('id, name, contact, contact_email').order('name'),
       ]);
       if (!mounted) return;

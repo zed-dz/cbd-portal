@@ -97,7 +97,7 @@ export function AllocationsCalendarPage({ showToast }) {
         .select('*, workers(name, job_title)')
         .lte('start_date', rangeEnd)
         .or(`end_date.is.null,end_date.gte.${rangeStart}`),
-      supabase.from('workers').select('id, name, job_title').order('name'),
+      supabase.from('workers').select('id, name, job_title').is('archived_at', null).order('name'),
     ]);
     if (a.error) showToast(a.error.message, 'error');
     else setAllocations(a.data || []);

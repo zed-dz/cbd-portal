@@ -11,7 +11,7 @@ export function AppViewsPage({ showToast }) {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const { data, error } = await supabase.from('workers').select('id, name, email, job_title, status, app_status, mobile').order('name');
+      const { data, error } = await supabase.from('workers').select('id, name, email, job_title, status, app_status, mobile').is('archived_at', null).order('name');
       if (!mounted) return;
       if (error) showToast(error.message, 'error');
       else setWorkers(data || []);

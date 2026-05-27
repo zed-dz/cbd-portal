@@ -8,6 +8,18 @@ import { EmailHistoryPanel } from '../../components/inbox/EmailHistoryPanel';
 import { JOB_TITLES } from '../../constants/jobTitles';
 import { WORKER_TYPES } from '../../constants/scenarios';
 
+const ARCHIVE_REASONS = [
+  { value: 'resigned',        label: 'Resigned (left voluntarily)' },
+  { value: 'let_go',          label: 'Let go (performance / conduct)' },
+  { value: 'end_of_contract', label: 'End of contract' },
+  { value: 'medical',         label: 'Medical / injury' },
+  { value: 'retired',         label: 'Retired' },
+  { value: 'no_show',         label: 'No-show / lost contact' },
+  { value: 'other',           label: 'Other' },
+];
+
+const REASON_LABEL = Object.fromEntries(ARCHIVE_REASONS.map(r => [r.value, r.label]));
+
 function dedupeLicences(s) {
   if (!s) return '';
   const seen = new Set();
@@ -51,6 +63,8 @@ export function WorkersPage({ showToast }) {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterAppStatus, setFilterAppStatus] = useState('');
   const [filterLicence, setFilterLicence] = useState('');
+  const [archiveView, setArchiveView] = useState('active'); // 'active' | 'archived' | 'all'
+  const [archiveModal, setArchiveModal] = useState(null); // worker being archived
   const [modal, setModal] = useState(null);
   const [editCerts, setEditCerts] = useState([]);
   const draftKey = modal === 'add'
@@ -149,11 +163,34 @@ export function WorkersPage({ showToast }) {
     setSaving(false);
   };
 
-  const handleDelete = async (w) => {
-    if (!window.confirm(`Delete ${w.name}? This cannot be undone.`)) return;
-    const { error } = await supabase.from('workers').delete().eq('id', w.id);
+  const handleArchive = async ({ reason, notes }) => {
+    if (!archiveModal) return;
+    const w = archiveModal;
+    const archiver = (await supabase.auth.getUser()).data?.user?.email || null;
+    const { error } = await supabase.from('workers').update({
+      archived_at:     new Date().toISOString(),
+      archived_reason: reason,
+      archived_notes:  notes || null,
+      archived_by:     archiver,
+      status:          'unavailable',
+      app_status:      'Inactive',
+    }).eq('id', w.id);
     if (error) showToast(error.message, 'error');
-    else { showToast('Worker deleted', 'success'); load(); }
+    else { showToast(`${w.name} archived`, 'success'); setArchiveModal(null); load(); }
+  };
+
+  const handleUnarchive = async (w) => {
+    if (!window.confirm(`Restore ${w.name} to the active pool?`)) return;
+    const { error } = await supabase.from('workers').update({
+      archived_at:     null,
+      archived_reason: null,
+      archived_notes:  null,
+      archived_by:     null,
+      status:          'available',
+      app_status:      'Active',
+    }).eq('id', w.id);
+    if (error) showToast(error.message, 'error');
+    else { showToast(`${w.name} restored`, 'success'); load(); }
   };
 
   const sendInviteEmail = async (w) => {
@@ -183,7 +220,12 @@ export function WorkersPage({ showToast }) {
     } catch (e) { showToast(link, 'info'); }
   };
 
+  const archivedCount = workers.filter(w => w.archived_at).length;
+  const activeCount   = workers.length - archivedCount;
+
   const filtered = workers.filter(w => {
+    if (archiveView === 'active'   && w.archived_at)  return false;
+    if (archiveView === 'archived' && !w.archived_at) return false;
     const matchSearch = !search || w.name.toLowerCase().includes(search.toLowerCase()) || w.email.toLowerCase().includes(search.toLowerCase()) || (w.licences || '').toLowerCase().includes(search.toLowerCase());
     const matchType = !filterType || (w.worker_type || 'casual') === filterType;
     const matchStatus = !filterStatus || w.status === filterStatus;
@@ -198,6 +240,26 @@ export function WorkersPage({ showToast }) {
 
   return (
     <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+        {[
+          { id: 'active',   label: `Active (${activeCount})` },
+          { id: 'archived', label: `Archived (${archivedCount})` },
+          { id: 'all',      label: 'All' },
+        ].map(v => {
+          const on = archiveView === v.id;
+          return (
+            <button key={v.id} onClick={() => setArchiveView(v.id)} style={{
+              padding: '5px 12px',
+              background: on ? C.cardHover : 'transparent',
+              color: on ? C.text : C.textMuted,
+              border: `1px solid ${on ? C.borderStrong : C.border}`,
+              borderRadius: 999, cursor: 'pointer',
+              fontSize: 12, fontWeight: on ? 600 : 500,
+            }}>{v.label}</button>
+          );
+        })}
+      </div>
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', flex: 1 }}>
           <input style={{ ...inputStyle, maxWidth: 220 }} placeholder="Search name, email, licence…" value={search} onChange={e => setSearch(e.target.value)} />
@@ -237,11 +299,24 @@ export function WorkersPage({ showToast }) {
           <thead><tr><Th>Name</Th><Th>Job Title</Th><Th>Type</Th><Th>Rate A · B · C</Th><Th>Mobile</Th><Th>Licences</Th><Th>Status</Th><Th>App Status</Th><Th>Actions</Th></tr></thead>
           <tbody>
             {filtered.map(w => (
-              <tr key={w.id} onClick={() => openEdit(w)} style={{ cursor: 'pointer' }}>
+              <tr key={w.id} onClick={() => openEdit(w)} style={{
+                cursor: 'pointer',
+                opacity: w.archived_at ? 0.55 : 1,
+                background: w.archived_at ? 'rgba(100,116,139,0.04)' : undefined,
+              }}>
                 <Td>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <strong>{w.name}</strong>
                     {w.qualified && <span title="Qualified" style={{ fontSize: 11 }}>✅</span>}
+                    {w.archived_at && (
+                      <span style={{
+                        fontSize: 9.5, fontFamily: '"DM Mono", monospace', letterSpacing: 1,
+                        background: 'rgba(100,116,139,0.18)', color: C.textMuted,
+                        padding: '1px 6px', borderRadius: 999, textTransform: 'uppercase', fontWeight: 700,
+                      }} title={w.archived_reason ? `${REASON_LABEL[w.archived_reason] || w.archived_reason}${w.archived_notes ? ' — ' + w.archived_notes : ''}` : 'Archived'}>
+                        Archived
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: 12, color: C.textMuted }}>{w.email}</div>
                 </Td>
@@ -269,10 +344,12 @@ export function WorkersPage({ showToast }) {
                 <Td onClick={e => e.stopPropagation()}>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <button onClick={() => openEdit(w)} style={btnSmall}>Edit</button>
-                    {w.qualified && (
+                    {w.qualified && !w.archived_at && (
                       <button onClick={() => copyShareLink(w, 'profile')} style={{ ...btnSmall, background: 'rgba(34,197,94,0.12)', color: C.success, border: 'none' }} title="Copy shareable profile link">🔗 Profile</button>
                     )}
-                    <button onClick={() => handleDelete(w)} style={btnDanger}>Delete</button>
+                    {w.archived_at
+                      ? <button onClick={() => handleUnarchive(w)} style={{ ...btnSmall, background: 'rgba(34,197,94,0.12)', color: C.success, border: 'none' }}>↺ Restore</button>
+                      : <button onClick={() => setArchiveModal(w)} style={btnDanger}>Archive</button>}
                   </div>
                 </Td>
               </tr>
@@ -283,6 +360,35 @@ export function WorkersPage({ showToast }) {
 
       {modal && (
         <Modal title={modal === 'add' ? 'Add Worker' : 'Edit Worker'} onClose={closeModal} width={620}>
+          {modal !== 'add' && modal.archived_at && (
+            <div style={{
+              background: 'rgba(100,116,139,0.10)',
+              border: `1px solid ${C.border}`,
+              borderRadius: 8, padding: '10px 14px', marginBottom: 14,
+              fontSize: 12.5,
+            }}>
+              <div style={{
+                fontSize: 10, fontFamily: '"DM Mono", monospace', letterSpacing: 1.5,
+                textTransform: 'uppercase', color: C.textMuted, fontWeight: 700, marginBottom: 4,
+              }}>📦 Archived</div>
+              <div style={{ color: C.text }}>
+                <strong>{REASON_LABEL[modal.archived_reason] || modal.archived_reason || 'No reason recorded'}</strong>
+                {' · '}
+                <span style={{ color: C.textMuted }}>{fmtDate(modal.archived_at)}</span>
+                {modal.archived_by && <span style={{ color: C.textMuted }}> · by {modal.archived_by}</span>}
+              </div>
+              {modal.archived_notes && (
+                <div style={{ marginTop: 6, color: C.textMuted, fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                  {modal.archived_notes}
+                </div>
+              )}
+              <div style={{ marginTop: 8 }}>
+                <button onClick={() => { closeModal(); handleUnarchive(modal); }} style={{ ...btnSmall, background: 'rgba(34,197,94,0.12)', color: C.success, border: 'none' }}>
+                  ↺ Restore to active pool
+                </button>
+              </div>
+            </div>
+          )}
           <DraftBanner
             visible={draft.draftRestored}
             onDiscard={() => { draft.discardDraft(); setForm(workerDefaults); }}
@@ -450,7 +556,57 @@ export function WorkersPage({ showToast }) {
           </div>
         </Modal>
       )}
+
+      {archiveModal && (
+        <ArchiveWorkerModal
+          worker={archiveModal}
+          onClose={() => setArchiveModal(null)}
+          onConfirm={handleArchive}
+        />
+      )}
     </div>
+  );
+}
+
+function ArchiveWorkerModal({ worker, onClose, onConfirm }) {
+  const [reason, setReason] = useState('resigned');
+  const [notes,  setNotes]  = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    setSaving(true);
+    await onConfirm({ reason, notes });
+    setSaving(false);
+  };
+
+  return (
+    <Modal title={`Archive ${worker.name}`} onClose={onClose} width={500}>
+      <p style={{ color: C.textMuted, fontSize: 13, margin: '0 0 14px 0', lineHeight: 1.55 }}>
+        Their profile stays in the system (allocations, timesheets and payroll
+        history are preserved), but they're hidden from new allocations,
+        bulk messages and the active pool. You can restore them later if
+        they come back.
+      </p>
+      <Field label="Why are they leaving? *">
+        <select style={inputStyle} value={reason} onChange={e => setReason(e.target.value)}>
+          {ARCHIVE_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+        </select>
+      </Field>
+      <Field label="Notes (visible to other admins)" hint="Capture what the next person needs to know: capability, what they're qualified for, any context for if they come back, etc.">
+        <textarea
+          style={{ ...inputStyle, minHeight: 110, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.55 }}
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+          placeholder={`e.g. Excellent operator on Sydney Water roads. Holds EWP + RIW. Left to take a permanent role with the principal. Happy to come back for casual work — call first.`}
+        />
+      </Field>
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+        <button onClick={onClose} style={btnSecondary} disabled={saving}>Cancel</button>
+        <button onClick={submit} style={btnDanger} disabled={saving}>
+          {saving ? 'Archiving…' : 'Archive Worker'}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
