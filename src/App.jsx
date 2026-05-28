@@ -131,6 +131,7 @@ function AppShell() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [toasts, setToasts] = useState([]);
   const toastId = useRef(0);
+  const lastFetchedEmail = useRef(null);
 
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const isMobile = windowWidth < 768;
@@ -174,14 +175,26 @@ function AppShell() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) fetchWorker(session.user.email);
+      if (session) { lastFetchedEmail.current = session.user.email; fetchWorker(session.user.email); }
       else setAuthLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (session) { setAuthLoading(true); fetchWorker(session.user.email); }
-      else { setCurrentWorker(null); setAuthLoading(false); }
+      if (!session) {
+        lastFetchedEmail.current = null;
+        setCurrentWorker(null);
+        setAuthLoading(false);
+        return;
+      }
+      // Supabase fires SIGNED_IN / TOKEN_REFRESHED whenever the tab regains
+      // focus or the access token auto-refreshes. Re-fetching the worker on
+      // every one of those re-shows the loading spinner and reloads the page.
+      // Only refetch when the signed-in user actually changes.
+      if (lastFetchedEmail.current === session.user.email) return;
+      lastFetchedEmail.current = session.user.email;
+      setAuthLoading(true);
+      fetchWorker(session.user.email);
     });
 
     return () => subscription.unsubscribe();
