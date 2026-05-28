@@ -17,6 +17,7 @@ export function ScanModal({ onClose, showToast }) {
   const [detected, setDetected] = useState(null); // { value, format }
   const [capture, setCapture]   = useState(null); // { dataUrl, blob, width, height }
   const [facingMode, setFacingMode] = useState('environment');
+  const [retryNonce, setRetryNonce] = useState(0);
 
   // Start / restart camera when facingMode changes.
   useEffect(() => {
@@ -64,7 +65,7 @@ export function ScanModal({ onClose, showToast }) {
         streamRef.current = null;
       }
     };
-  }, [facingMode]);
+  }, [facingMode, retryNonce]);
 
   // Poll for barcode detections (every 600ms — light enough not to lag).
   useEffect(() => {
@@ -270,7 +271,7 @@ export function ScanModal({ onClose, showToast }) {
 
       {error && (
         <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
-          <button onClick={() => setFacingMode(m => m)} style={btnSecondary}>Retry</button>
+          <button onClick={() => { setError(null); setRetryNonce(n => n + 1); }} style={btnSecondary}>Retry</button>
           <button onClick={onClose} style={btnPrimary}>Close</button>
         </div>
       )}

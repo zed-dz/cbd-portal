@@ -161,7 +161,7 @@ export function OnboardProfilePage({ token }) {
       <Centered>
         <div style={{ fontSize: 52, marginBottom: 14 }}>🎉</div>
         <div style={{ color: C.text, fontSize: 22, fontWeight: 700, marginBottom: 8, fontFamily: 'Syne, sans-serif' }}>
-          Thanks, {profile.name.split(' ')[0]}!
+          Thanks, {(profile.name || 'there').split(' ')[0]}!
         </div>
         <div style={{ color: C.textMuted, fontSize: 14, maxWidth: 420, textAlign: 'center', lineHeight: 1.6 }}>
           Your profile's saved. We'll review it shortly and send you a sign-in link
@@ -329,7 +329,7 @@ function StepWelcome({ profile }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
         <div style={{ width: 36, height: 36, borderRadius: R.pill, background: 'rgba(249,115,22,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>👋</div>
         <div style={{ fontSize: 22, fontWeight: 700, color: C.text, fontFamily: 'Syne, sans-serif', letterSpacing: -0.3 }}>
-          Welcome, {profile.name.split(' ')[0]}.
+          Welcome, {(profile.name || 'there').split(' ')[0]}.
         </div>
       </div>
       <div style={{ fontSize: 13.5, color: C.textMuted, marginBottom: 12, lineHeight: 1.55 }}>

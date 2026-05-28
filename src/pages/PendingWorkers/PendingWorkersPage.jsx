@@ -10,7 +10,7 @@ export function PendingWorkersPage({ showToast }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('workers').select('*').neq('app_status', 'Active').order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('workers').select('*').neq('app_status', 'Active').is('archived_at', null).order('created_at', { ascending: false });
     if (error) showToast(error.message, 'error');
     else setWorkers(data || []);
     setLoading(false);

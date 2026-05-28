@@ -209,14 +209,18 @@ export function Th({ children, align = 'left' }) {
   );
 }
 
-export function Td({ children, align = 'left' }) {
+export function Td({ children, align = 'left', onClick, title, style }) {
   return (
-    <td style={{
-      padding: '11px 14px',
-      textAlign: align,
-      borderBottom: `1px solid ${C.border}`,
-      verticalAlign: 'middle',
-    }}>
+    <td
+      onClick={onClick}
+      title={title}
+      style={{
+        padding: '11px 14px',
+        textAlign: align,
+        borderBottom: `1px solid ${C.border}`,
+        verticalAlign: 'middle',
+        ...style,
+      }}>
       {children}
     </td>
   );

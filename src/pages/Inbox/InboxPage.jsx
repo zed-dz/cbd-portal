@@ -729,7 +729,7 @@ function AddSenderModal({ payload, onClose, onDone, showToast }) {
       if (kind === 'worker') {
         const { data: w, error } = await supabase
           .from('workers')
-          .insert([{ name: name.trim(), email, mobile: extra.mobile || null, status: 'casual', app_status: 'Pending Profile' }])
+          .insert([{ name: name.trim(), email, mobile: extra.mobile || null, status: 'available', worker_type: 'casual', app_status: 'Profile Incomplete' }])
           .select('id')
           .single();
         if (error) throw error;
