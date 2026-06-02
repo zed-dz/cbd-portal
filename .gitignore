@@ -30,3 +30,7 @@ yarn-error.log*
 !DOCS.md
 /package-lock.json
 .claude/settings.local.json
+
+# Generated artifacts (re-built from DOCS.md on demand)
+*.docx
+*.pdf

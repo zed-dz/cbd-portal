@@ -246,6 +246,10 @@ pandoc/npm cache failures). Use `Z:\tmp` as a scratch area if needed.
   split into one-component-per-file under `src/components/ui/` (Modal,
   Badge, Toast, Spinner, Field, EmptyState, Table). `index.js` is now a
   thin barrel re-exporter, so all existing imports keep working.
+- **Repo cleanup** — removed the 4 MB `CBD-Portal-Guidebook.pdf` + `.docx`
+  binaries from tracking (re-buildable from DOCS.md). Added `*.pdf` / `*.docx`
+  to `.gitignore` so they don't sneak back in. README at the root now
+  orients new readers without them having to dig into CLAUDE.md first.
 
 ## Recent fixes worth knowing (May 2026)
 
