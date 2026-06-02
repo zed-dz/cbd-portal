@@ -1,70 +1,77 @@
-# Getting Started with Create React App
+# CBD Plant & Labour — Operations Portal
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Worker-and-client operations portal for **CBD Plant & Labour** (NSW, AU
+construction labour-hire — road / rail / water).
 
-## Available Scripts
+- **Live URL:** https://cbd-portal-gray.vercel.app
+- **Stack:** React 19 (CRA) · Supabase · Vercel · Resend + Gmail · Xero
+- **Supabase project:** `tsizneslellcqusjwtub` (region ap-southeast-2)
 
-In the project directory, you can run:
+## Where to read first
 
-### `npm start`
+| File | What it tells you |
+|---|---|
+| [CLAUDE.md](CLAUDE.md) | Current state, architecture, conventions. **Start here.** |
+| [DOCS.md](DOCS.md) | End-user team guide (inbox, templates, bulk messages, etc.) |
+| [src/theme.js](src/theme.js) | Design tokens — accent color, palette, radius scale |
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## Layout
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+```
+src/
+├── App.jsx                ← Route detection, global styles, auth bootstrap
+├── theme.js               ← Design tokens
+├── supabaseClient.js      ← Reads REACT_APP_SUPABASE_* env vars
+│
+├── components/
+│   ├── index.js           ← Barrel re-exporter (back-compat for old imports)
+│   ├── ui/                ← Design-system primitives, one per file
+│   │   ├── Badge.jsx · EmptyState.jsx · Field.jsx · Modal.jsx
+│   │   └── Spinner.jsx · Table.jsx · Toast.jsx
+│   ├── blast/             ← Top-bar Send-Blast modal
+│   ├── inbox/             ← EmailHistoryPanel embed for worker/client cards
+│   └── scan/              ← Camera + QR detect modal
+│
+├── portals/               ← Top-level layouts (one per role)
+│   ├── AdminPortal.jsx
+│   └── WorkerPortal.jsx
+│
+├── pages/                 ← One folder per route
+│   ├── Allocations/ · AppViews/ · BulkMessages/ · Calendar/
+│   ├── ClientApprovals/ · Clients/ · Dashboard/
+│   ├── Inbox/             ← Gmail-OAuth-driven team inbox
+│   ├── LicenceAgent/ · Login/
+│   ├── OnboardProfile/    ← /onboard/<token> public route
+│   ├── Payroll/ · PendingWorkers/
+│   ├── PublicProfile/     ← /p/<token> public route
+│   ├── Reports/ · Templates/ · Timesheets/ · Workers/
+│   └── XeroSync/
+│
+├── utils/
+│   ├── csv.js · dates.js
+│   ├── payroll.js         ← Pure pay/charge calculations
+│   └── useDraft.js        ← Form auto-save hook
+│
+└── constants/
+    ├── jobTitles.js · scenarios.js
 
-### `npm test`
+supabase/
+├── migrations/            ← SQL files matching applied migration history
+└── functions/             ← Deno edge functions (xero-*, gmail-*, send-*)
+```
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## Sibling project
 
-### `npm run build`
+[`zed-dz/mra-portal`](https://github.com/zed-dz/mra-portal) — same codebase
+ancestor, separate Supabase, separate Vercel. When fixing a bug that applies
+to both, port the change across.
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+## Run locally
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+```bash
+npm install
+npm start                  # http://localhost:3000
+```
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
-
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+You'll need `REACT_APP_SUPABASE_URL` and `REACT_APP_SUPABASE_ANON_KEY` set
+in `.env.local` (get them from the Supabase dashboard).
