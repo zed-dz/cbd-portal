@@ -232,6 +232,21 @@ pandoc/npm cache failures). Use `Z:\tmp` as a scratch area if needed.
 
 ---
 
+## Recent additions (June 2026)
+
+- **Self-signup live** — Postgres trigger `handle_new_auth_user` on
+  `auth.users` auto-creates a matching `workers` row on signup. First user
+  ever becomes admin; everyone after lands as `employee`. Admin promotes via
+  the Workers page. **No more manual `INSERT INTO workers` SQL** to onboard
+  team members. See migration `self_signup_trigger`.
+- **LoginPage has tabs** — `Sign in` / `Create account`. Signup calls
+  `supabase.auth.signUp()` directly; the trigger handles the workers-row
+  side. See [src/pages/Login/LoginPage.jsx](src/pages/Login/LoginPage.jsx).
+- **Components reorganized** — the giant `src/components/index.js` was
+  split into one-component-per-file under `src/components/ui/` (Modal,
+  Badge, Toast, Spinner, Field, EmptyState, Table). `index.js` is now a
+  thin barrel re-exporter, so all existing imports keep working.
+
 ## Recent fixes worth knowing (May 2026)
 
 - **Allocation conflict detection** — both [AllocationsPage](src/pages/Allocations/AllocationsPage.jsx) and [Calendar](src/pages/Calendar/AllocationsCalendarPage.jsx) check for overlapping `pending`/`confirmed` allocations on the same worker before save. Inline yellow banner inside the modal + `window.confirm` override if you proceed. Calendar does a just-in-time DB query at save time because its in-memory `allocations` is range-filtered.
