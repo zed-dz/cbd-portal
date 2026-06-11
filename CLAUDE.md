@@ -234,6 +234,23 @@ pandoc/npm cache failures). Use `Z:\tmp` as a scratch area if needed.
 
 ## Recent additions (June 2026)
 
+- **Schedule of Rates v2** — `client_rate_cards` is now a full SOR line-item
+  model matching the printed PDF. Each row carries `uom` (hour/shift/day/
+  ton/unit/km/m³/m²/lm/each), an optional `category` (labour/plant/
+  attachments/materials/allowances/other), `sort_order`, and A/B/C bands
+  (B & C nullable so single-rate items like Materials use only A).
+  UI groups items by category, shows UOM next to description, includes an
+  "+ Add many" bulk-entry table. See migration
+  `20260603_projects_site_contact_and_rate_line_items`.
+- **Projects per client** (formerly "Jobs"). `client_jobs` got
+  `site_contact_name` / `site_contact_email` / `site_contact_phone` so a
+  single client with multiple active projects can carry a different on-site
+  contact per project. Top-level client `contact` stays for billing/admin.
+- **UI terminology** — "charge bands" → "client rates", "Jobs" → "Projects",
+  "Roles & Rates" tab → "Schedule of Rates", "Job Roles" library tab →
+  "Common Roles" (still used for description autocomplete).
+
+
 - **Self-signup live** — Postgres trigger `handle_new_auth_user` on
   `auth.users` auto-creates a matching `workers` row on signup. First user
   ever becomes admin; everyone after lands as `employee`. Admin promotes via

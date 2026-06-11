@@ -14,13 +14,43 @@ const clientDefaults = {
   email_domains: [],
 };
 
-const rateCardDefaults = { role_name: '', rate_a: '', rate_b: '', rate_c: '', notes: '' };
+const rateCardDefaults = {
+  role_name: '', uom: 'hour', category: '',
+  rate_a: '', rate_b: '', rate_c: '',
+  notes: '', sort_order: 0,
+};
 
 const jobDefaults = {
   name: '', description: '', site: '', address: '',
+  site_contact_name: '', site_contact_email: '', site_contact_phone: '',
   start_date: '', end_date: '', status: 'active',
   required_roles: [], notes: '',
 };
+
+// Schedule-of-Rates building blocks. Mirror the CBD printed SOR layout.
+const UOM_OPTIONS = [
+  { value: 'hour',  label: 'Hour' },
+  { value: 'shift', label: 'Shift' },
+  { value: 'day',   label: 'Day' },
+  { value: 'ton',   label: 'Ton' },
+  { value: 'unit',  label: 'Unit' },
+  { value: 'each',  label: 'Each' },
+  { value: 'km',    label: 'km' },
+  { value: 'm3',    label: 'm³' },
+  { value: 'm2',    label: 'm²' },
+  { value: 'lm',    label: 'Lineal m' },
+];
+
+const CATEGORY_OPTIONS = [
+  { value: 'labour',      label: 'Labour' },
+  { value: 'plant',       label: 'Plant & Machinery' },
+  { value: 'attachments', label: 'Plant Attachments' },
+  { value: 'materials',   label: 'Materials & Tipping' },
+  { value: 'allowances',  label: 'Allowances' },
+  { value: 'other',       label: 'Other' },
+];
+
+const CATEGORY_LABEL = Object.fromEntries(CATEGORY_OPTIONS.map(c => [c.value, c.label]));
 
 const STATUS_COLORS = {
   active:    { bg: 'rgba(34,197,94,0.15)',   color: '#22c55e' },
@@ -44,7 +74,7 @@ export function ClientsPage({ showToast }) {
   return (
     <div>
       <div style={{ display: 'flex', gap: 2, borderBottom: `1px solid ${C.border}`, marginBottom: 20 }}>
-        {[{ id: 'clients', label: 'Clients' }, { id: 'job_roles', label: 'Job Roles' }].map(t => (
+        {[{ id: 'clients', label: 'Clients' }, { id: 'job_roles', label: 'Common Roles' }].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             background: 'none', border: 'none', borderBottom: tab === t.id ? `2px solid ${C.accent}` : '2px solid transparent',
             color: tab === t.id ? C.text : C.textMuted, padding: '8px 16px', cursor: 'pointer',
@@ -179,7 +209,7 @@ function ClientsList({ showToast }) {
           <thead>
             <tr>
               <Th>Client Name</Th><Th>Site</Th><Th>Contact</Th><Th>Phone</Th>
-              <Th>Default A · B · C</Th><Th>Roles</Th><Th>Jobs</Th><Th>Actions</Th>
+              <Th>Default A · B · C</Th><Th>Rates</Th><Th>Projects</Th><Th>Actions</Th>
             </tr>
           </thead>
           <tbody>
@@ -203,9 +233,9 @@ function ClientsList({ showToast }) {
                   <button
                     onClick={() => setJobsClient({ ...c, _initialTab: 'rates' })}
                     style={{ ...btnSmall, background: 'rgba(34,197,94,0.12)', color: C.success, border: 'none' }}
-                    title="Per-role rate cards"
+                    title="Schedule of rates — line items"
                   >
-                    Roles {c.client_rate_cards?.length > 0 ? `(${c.client_rate_cards.length})` : ''}
+                    Rates {c.client_rate_cards?.length > 0 ? `(${c.client_rate_cards.length})` : ''}
                   </button>
                 </Td>
                 <Td>
@@ -213,7 +243,7 @@ function ClientsList({ showToast }) {
                     onClick={() => setJobsClient({ ...c, _initialTab: 'jobs' })}
                     style={{ ...btnSmall, background: 'rgba(249,115,22,0.12)', color: C.accent, border: 'none' }}
                   >
-                    Jobs {c.client_jobs?.length > 0 ? `(${c.client_jobs.length})` : ''}
+                    Projects {c.client_jobs?.length > 0 ? `(${c.client_jobs.length})` : ''}
                   </button>
                 </Td>
                 <Td>
@@ -261,7 +291,7 @@ function ClientsList({ showToast }) {
             <div style={{ gridColumn: '1 / -1', marginTop: 4 }}>
               <div style={{ background: 'rgba(249,115,22,0.06)', border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 14px' }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, letterSpacing: 1, marginBottom: 8 }}>
-                  💵 DEFAULT CHARGE BANDS ($/hr)
+                  💵 DEFAULT CLIENT RATES ($/hr)
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
                   <Field label="A — Normal (Mon–Fri ≤8h)">
@@ -281,7 +311,7 @@ function ClientsList({ showToast }) {
                   </Field>
                 </div>
                 <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
-                  Enter each band manually — client charge rates aren't a strict ×1.5 / ×2. Add per-role rate cards under <strong>Roles</strong> on the client row to override per role.
+                  Catch-all defaults. Add a full Schedule of Rates (per line item, with UOM) under <strong>Rates</strong> on the client row to override.
                 </div>
               </div>
             </div>
@@ -333,8 +363,8 @@ function ClientDetailModal({ client, initialTab, showToast, onClose }) {
     <Modal title={`${client.name}`} onClose={onClose} width={760}>
       <div style={{ display: 'flex', gap: 2, borderBottom: `1px solid ${C.border}`, marginBottom: 16, marginTop: -8 }}>
         {[
-          { id: 'jobs', label: '📋 Jobs' },
-          { id: 'rates', label: '💰 Roles & Rates' },
+          { id: 'jobs', label: '📋 Projects' },
+          { id: 'rates', label: '💰 Schedule of Rates' },
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             background: 'none', border: 'none',
@@ -352,11 +382,16 @@ function ClientDetailModal({ client, initialTab, showToast, onClose }) {
 
 // ── Per-client Rate Cards (per role) ────────────────────────────────────────
 
+// Schedule of Rates panel — line items grouped by category, mirrors the
+// CBD printed SOR layout. Each line item carries description / UOM /
+// A / B / C / category / notes. B and C are optional (single-rate items
+// like Materials use only A; "All shifts" attachments use only A too).
 function RatesPanel({ client, showToast }) {
   const [cards, setCards] = useState([]);
   const [allRoles, setAllRoles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null); // null | 'add' | cardObj
+  const [bulkOpen, setBulkOpen] = useState(false);
   const draftKey = editing === 'add'
     ? `rate_card_add_${client.id}`
     : editing && typeof editing === 'object'
@@ -368,7 +403,10 @@ function RatesPanel({ client, showToast }) {
   const load = useCallback(async () => {
     setLoading(true);
     const [c, r] = await Promise.all([
-      supabase.from('client_rate_cards').select('*').eq('client_id', client.id).order('role_name'),
+      supabase.from('client_rate_cards').select('*').eq('client_id', client.id)
+        .order('category', { ascending: true, nullsFirst: false })
+        .order('sort_order', { ascending: true })
+        .order('role_name',  { ascending: true }),
       supabase.from('job_roles').select('*').order('name'),
     ]);
     if (c.data) setCards(c.data);
@@ -382,125 +420,188 @@ function RatesPanel({ client, showToast }) {
   const openEdit = (card) => {
     setEditing(card);
     setForm({
-      role_name: card.role_name, rate_a: card.rate_a ?? '', rate_b: card.rate_b ?? '',
-      rate_c: card.rate_c ?? '', notes: card.notes || '',
+      role_name: card.role_name,
+      uom:       card.uom      || 'hour',
+      category:  card.category || '',
+      rate_a:    card.rate_a ?? '',
+      rate_b:    card.rate_b ?? '',
+      rate_c:    card.rate_c ?? '',
+      notes:     card.notes || '',
+      sort_order: card.sort_order || 0,
     });
   };
   const close = () => { draft.clear(); setEditing(null); };
 
   const handleSave = async () => {
-    if (!form.role_name.trim()) { showToast('Pick a role first.', 'error'); return; }
+    if (!form.role_name.trim()) { showToast('Description is required.', 'error'); return; }
     if (form.rate_a === '') { showToast('Rate A is required.', 'error'); return; }
     setSaving(true);
     const n = v => v === '' ? null : parseFloat(v);
-    const A = n(form.rate_a);
     const payload = {
-      client_id: client.id,
-      role_name: form.role_name.trim(),
-      rate_a: A,
-      rate_b: n(form.rate_b),
-      rate_c: n(form.rate_c),
-      notes: form.notes || null,
+      client_id:  client.id,
+      role_name:  form.role_name.trim(),
+      uom:        form.uom || 'hour',
+      category:   form.category || null,
+      rate_a:     n(form.rate_a),
+      rate_b:     n(form.rate_b),
+      rate_c:     n(form.rate_c),
+      notes:      form.notes || null,
+      sort_order: parseInt(form.sort_order, 10) || 0,
     };
     if (editing === 'add') {
       const { error } = await supabase.from('client_rate_cards').insert([payload]);
       if (error) showToast(error.message, 'error');
-      else { showToast('Rate card added', 'success'); close(); load(); }
+      else { showToast('Line item added', 'success'); close(); load(); }
     } else {
       const { error } = await supabase.from('client_rate_cards').update(payload).eq('id', editing.id);
       if (error) showToast(error.message, 'error');
-      else { showToast('Rate card updated', 'success'); close(); load(); }
+      else { showToast('Line item updated', 'success'); close(); load(); }
     }
     setSaving(false);
   };
 
   const handleDelete = async (card) => {
-    if (!window.confirm(`Remove rate card "${card.role_name}"?`)) return;
+    if (!window.confirm(`Remove "${card.role_name}"?`)) return;
     const { error } = await supabase.from('client_rate_cards').delete().eq('id', card.id);
     if (error) showToast(error.message, 'error');
-    else { showToast('Rate card removed', 'success'); load(); }
+    else { showToast('Line item removed', 'success'); load(); }
   };
 
-  const usedRoles = new Set(cards.map(c => c.role_name));
-  const availableRoles = allRoles.filter(r => !usedRoles.has(r.name) || (editing && editing.role_name === r.name));
+  // Group cards by category for display. Uncategorised items get an
+  // "Uncategorised" bucket and render last.
+  const grouped = (() => {
+    const buckets = new Map();
+    for (const cat of CATEGORY_OPTIONS) buckets.set(cat.value, []);
+    buckets.set('_uncategorised', []);
+    cards.forEach(c => {
+      const k = c.category || '_uncategorised';
+      if (!buckets.has(k)) buckets.set(k, []);
+      buckets.get(k).push(c);
+    });
+    return [...buckets.entries()].filter(([, list]) => list.length > 0);
+  })();
 
   return (
     <div>
       <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 12 }}>
-        Each role can have its own A / B / C rate for this client. If a role has no rate card here, the client's default bands apply.
+        Each line item carries its own A / B / C rate. If a description has no row here, the client's default rates above apply. <strong>Use "Add many"</strong> when entering a full Schedule of Rates.
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
-        <button onClick={openAdd} style={btnPrimary} disabled={!!editing}>+ Add Role Rate</button>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14, gap: 8, flexWrap: 'wrap' }}>
+        <button onClick={() => setBulkOpen(true)} style={btnSecondary} disabled={!!editing || bulkOpen}>+ Add many</button>
+        <button onClick={openAdd} style={btnPrimary} disabled={!!editing || bulkOpen}>+ Add line item</button>
       </div>
+
+      {bulkOpen && (
+        <BulkRateAdd
+          client={client}
+          allRoles={allRoles}
+          onCancel={() => setBulkOpen(false)}
+          onSaved={() => { setBulkOpen(false); load(); }}
+          showToast={showToast}
+        />
+      )}
 
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 28 }}><Spinner /></div>
-      ) : cards.length === 0 && !editing ? (
-        <EmptyState message="No per-role rate cards yet. Use the defaults from the client's profile, or add a role-specific rate." />
+      ) : cards.length === 0 && !editing && !bulkOpen ? (
+        <EmptyState message="No line items yet. Use the client's default rates above, or add a per-item Schedule of Rates." />
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {cards.map(c => (
-            <div key={c.id} style={{
-              background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
-              padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
-            }}>
-              <div style={{ flex: '1 1 180px', minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{c.role_name}</div>
-                {c.notes && <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{c.notes}</div>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {grouped.map(([catKey, list]) => {
+            const label = catKey === '_uncategorised' ? 'Uncategorised' : CATEGORY_LABEL[catKey] || catKey;
+            return (
+              <div key={catKey}>
+                <div style={{
+                  fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: 1.5,
+                  fontFamily: '"DM Mono", monospace', textTransform: 'uppercase',
+                  marginBottom: 6, paddingLeft: 2,
+                }}>
+                  {label} <span style={{ opacity: 0.6 }}>· {list.length}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {list.map(c => (
+                    <div key={c.id} style={{
+                      background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+                      padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+                    }}>
+                      <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 600, color: C.text }}>
+                          {c.role_name}
+                          <span style={{
+                            marginLeft: 8, fontSize: 10, color: C.textMuted, fontFamily: '"DM Mono", monospace',
+                            background: C.cardHover, padding: '1px 6px', borderRadius: 4,
+                          }}>{(c.uom || 'hour').toUpperCase()}</span>
+                        </div>
+                        {c.notes && <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{c.notes}</div>}
+                      </div>
+                      <div style={{ display: 'flex', gap: 12, fontFamily: '"DM Mono", monospace', fontSize: 13 }}>
+                        <RateChip label="A" value={c.rate_a} />
+                        <RateChip label="B" value={c.rate_b} />
+                        <RateChip label="C" value={c.rate_c} />
+                      </div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button onClick={() => openEdit(c)} style={btnSmall} disabled={!!editing}>Edit</button>
+                        <button onClick={() => handleDelete(c)} style={btnDanger}>Delete</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: 14, fontFamily: '"DM Mono", monospace', fontSize: 13 }}>
-                <span><span style={{ color: C.textMuted, fontSize: 10 }}>A </span><strong style={{ color: C.accent }}>${parseFloat(c.rate_a || 0).toFixed(2)}</strong></span>
-                <span><span style={{ color: C.textMuted, fontSize: 10 }}>B </span><strong style={{ color: C.accent }}>${parseFloat(c.rate_b || 0).toFixed(2)}</strong></span>
-                <span><span style={{ color: C.textMuted, fontSize: 10 }}>C </span><strong style={{ color: C.accent }}>${parseFloat(c.rate_c || 0).toFixed(2)}</strong></span>
-              </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button onClick={() => openEdit(c)} style={btnSmall} disabled={!!editing}>Edit</button>
-                <button onClick={() => handleDelete(c)} style={btnDanger}>Delete</button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {editing && (
         <div style={{ marginTop: 18, background: C.card, border: `1px solid ${C.accent}`, borderRadius: 10, padding: 18 }}>
           <div style={{ fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 12 }}>
-            {editing === 'add' ? 'New Role Rate Card' : `Edit: ${editing.role_name}`}
+            {editing === 'add' ? 'New line item' : `Edit: ${editing.role_name}`}
           </div>
           <DraftBanner
             visible={draft.draftRestored}
             onDiscard={() => { draft.discardDraft(); setForm(rateCardDefaults); }}
             onDismiss={draft.dismissBanner}
-            label="Unsaved rate-card draft restored."
+            label="Unsaved draft restored."
           />
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr', gap: 12 }}>
-            <Field label="Role">
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12 }}>
+            <Field label="Description">
               <>
                 <input style={inputStyle} list={`roles-list-${client.id}`}
                   value={form.role_name}
                   onChange={e => setForm(f => ({ ...f, role_name: e.target.value }))}
-                  placeholder="Type or pick a role…" />
+                  placeholder="e.g. General Labour · 8T Excavator · VENM" />
                 <datalist id={`roles-list-${client.id}`}>
-                  {availableRoles.map(r => <option key={r.id} value={r.name} />)}
+                  {allRoles.map(r => <option key={r.id} value={r.name} />)}
                 </datalist>
               </>
             </Field>
-            <Field label="A — Normal">
+            <Field label="UOM">
+              <select style={inputStyle} value={form.uom} onChange={e => setForm(f => ({ ...f, uom: e.target.value }))}>
+                {UOM_OPTIONS.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Category">
+              <select style={inputStyle} value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+                <option value="">— uncategorised —</option>
+                {CATEGORY_OPTIONS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </Field>
+            <Field label="A — Normal" hint="Required.">
               <input style={inputStyle} type="number" step="0.01" min="0" value={form.rate_a}
                 onChange={e => setForm(f => ({ ...f, rate_a: e.target.value }))}
-                placeholder="e.g. 68" />
+                placeholder="e.g. 60.15" />
             </Field>
-            <Field label="B — OT 1.5×">
+            <Field label="B — OT 1.5×" hint="Leave blank if single-rate item.">
               <input style={inputStyle} type="number" step="0.01" min="0" value={form.rate_b}
-                onChange={e => setForm(f => ({ ...f, rate_b: e.target.value }))} placeholder="e.g. 95" />
+                onChange={e => setForm(f => ({ ...f, rate_b: e.target.value }))} placeholder="e.g. 85.05" />
             </Field>
-            <Field label="C — OT 2×">
+            <Field label="C — OT 2×" hint="Leave blank if single-rate item.">
               <input style={inputStyle} type="number" step="0.01" min="0" value={form.rate_c}
-                onChange={e => setForm(f => ({ ...f, rate_c: e.target.value }))} placeholder="e.g. 120" />
+                onChange={e => setForm(f => ({ ...f, rate_c: e.target.value }))} placeholder="e.g. 103.50" />
             </Field>
             <div style={{ gridColumn: '1 / -1' }}>
-              <Field label="Notes"><input style={inputStyle} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="e.g. Wet weather inclusive" /></Field>
+              <Field label="Notes"><input style={inputStyle} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="e.g. T&D rates · Wet weather inclusive" /></Field>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
@@ -509,6 +610,169 @@ function RatesPanel({ client, showToast }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function RateChip({ label, value }) {
+  const has = value != null && value !== '';
+  return (
+    <span title={label}>
+      <span style={{ color: C.textMuted, fontSize: 10 }}>{label} </span>
+      {has
+        ? <strong style={{ color: C.accent }}>${parseFloat(value).toFixed(2)}</strong>
+        : <span style={{ color: C.textDim }}>—</span>}
+    </span>
+  );
+}
+
+// Bulk add: a tabular form for entering many line items at once. Mirrors the
+// way a Schedule of Rates is normally built (row-by-row from a PDF / spreadsheet).
+function BulkRateAdd({ client, allRoles, onCancel, onSaved, showToast }) {
+  const emptyRow = () => ({
+    role_name: '', uom: 'hour', category: '',
+    rate_a: '', rate_b: '', rate_c: '', notes: '',
+  });
+  const [rows, setRows] = useState([emptyRow(), emptyRow(), emptyRow()]);
+  const [saving, setSaving] = useState(false);
+
+  const updateRow = (i, patch) => setRows(rs => rs.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+  const addRow    = () => setRows(rs => [...rs, emptyRow()]);
+  const removeRow = (i) => setRows(rs => rs.filter((_, idx) => idx !== i));
+
+  const handleSaveAll = async () => {
+    const n = v => v === '' ? null : parseFloat(v);
+    const payload = rows
+      .filter(r => r.role_name.trim() && r.rate_a !== '')
+      .map((r, idx) => ({
+        client_id:  client.id,
+        role_name:  r.role_name.trim(),
+        uom:        r.uom || 'hour',
+        category:   r.category || null,
+        rate_a:     n(r.rate_a),
+        rate_b:     n(r.rate_b),
+        rate_c:     n(r.rate_c),
+        notes:      r.notes || null,
+        sort_order: idx,
+      }));
+    if (!payload.length) {
+      showToast('Fill at least one row with a description and Rate A.', 'error');
+      return;
+    }
+    setSaving(true);
+    const { error } = await supabase.from('client_rate_cards').insert(payload);
+    setSaving(false);
+    if (error) { showToast(error.message, 'error'); return; }
+    showToast(`${payload.length} line item${payload.length === 1 ? '' : 's'} added`, 'success');
+    onSaved();
+  };
+
+  return (
+    <div style={{
+      marginBottom: 18, background: C.card, border: `1px solid ${C.accent}`, borderRadius: 10, padding: 18,
+    }}>
+      <div style={{ fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 4 }}>
+        Add many line items
+      </div>
+      <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 12 }}>
+        Type or pick a description, set UOM + Category, fill in A (and optionally B / C). Empty rows are skipped on save.
+      </div>
+
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 760 }}>
+          <thead>
+            <tr style={{ color: C.textMuted, textAlign: 'left' }}>
+              <th style={{ padding: '4px 6px', fontWeight: 600, fontFamily: '"DM Mono", monospace', fontSize: 10, letterSpacing: 1 }}>CATEGORY</th>
+              <th style={{ padding: '4px 6px', fontWeight: 600, fontFamily: '"DM Mono", monospace', fontSize: 10, letterSpacing: 1 }}>DESCRIPTION</th>
+              <th style={{ padding: '4px 6px', fontWeight: 600, fontFamily: '"DM Mono", monospace', fontSize: 10, letterSpacing: 1 }}>UOM</th>
+              <th style={{ padding: '4px 6px', fontWeight: 600, fontFamily: '"DM Mono", monospace', fontSize: 10, letterSpacing: 1, textAlign: 'right' }}>A</th>
+              <th style={{ padding: '4px 6px', fontWeight: 600, fontFamily: '"DM Mono", monospace', fontSize: 10, letterSpacing: 1, textAlign: 'right' }}>B</th>
+              <th style={{ padding: '4px 6px', fontWeight: 600, fontFamily: '"DM Mono", monospace', fontSize: 10, letterSpacing: 1, textAlign: 'right' }}>C</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}>
+                <td style={{ padding: '4px 4px' }}>
+                  <select
+                    style={{ ...inputStyle, padding: '6px 8px', minWidth: 110 }}
+                    value={r.category}
+                    onChange={e => updateRow(i, { category: e.target.value })}
+                  >
+                    <option value="">—</option>
+                    {CATEGORY_OPTIONS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                  </select>
+                </td>
+                <td style={{ padding: '4px 4px' }}>
+                  <input
+                    style={{ ...inputStyle, padding: '6px 8px', minWidth: 180 }}
+                    list={`roles-list-${client.id}`}
+                    value={r.role_name}
+                    onChange={e => updateRow(i, { role_name: e.target.value })}
+                    placeholder="e.g. General Labour"
+                  />
+                </td>
+                <td style={{ padding: '4px 4px' }}>
+                  <select
+                    style={{ ...inputStyle, padding: '6px 8px', minWidth: 80 }}
+                    value={r.uom}
+                    onChange={e => updateRow(i, { uom: e.target.value })}
+                  >
+                    {UOM_OPTIONS.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
+                  </select>
+                </td>
+                <td style={{ padding: '4px 4px' }}>
+                  <input
+                    style={{ ...inputStyle, padding: '6px 8px', width: 80, textAlign: 'right' }}
+                    type="number" step="0.01" min="0"
+                    value={r.rate_a}
+                    onChange={e => updateRow(i, { rate_a: e.target.value })}
+                  />
+                </td>
+                <td style={{ padding: '4px 4px' }}>
+                  <input
+                    style={{ ...inputStyle, padding: '6px 8px', width: 80, textAlign: 'right' }}
+                    type="number" step="0.01" min="0"
+                    value={r.rate_b}
+                    onChange={e => updateRow(i, { rate_b: e.target.value })}
+                  />
+                </td>
+                <td style={{ padding: '4px 4px' }}>
+                  <input
+                    style={{ ...inputStyle, padding: '6px 8px', width: 80, textAlign: 'right' }}
+                    type="number" step="0.01" min="0"
+                    value={r.rate_c}
+                    onChange={e => updateRow(i, { rate_c: e.target.value })}
+                  />
+                </td>
+                <td style={{ padding: '4px 4px', textAlign: 'right' }}>
+                  <button
+                    onClick={() => removeRow(i)}
+                    style={{ ...btnSmall, padding: '4px 8px', background: 'transparent', border: 'none', color: C.textMuted }}
+                    title="Remove row"
+                    disabled={rows.length === 1}
+                  >×</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <datalist id={`roles-list-${client.id}`}>
+        {allRoles.map(r => <option key={r.id} value={r.name} />)}
+      </datalist>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, gap: 10 }}>
+        <button onClick={addRow} style={btnSmall}>+ Add row</button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={onCancel} style={btnSecondary}>Cancel</button>
+          <button onClick={handleSaveAll} disabled={saving} style={btnPrimary}>
+            {saving ? 'Saving…' : 'Save all'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -546,7 +810,11 @@ function JobsPanel({ client, showToast }) {
     setModal(j);
     setForm({
       name: j.name, description: j.description || '', site: j.site || '',
-      address: j.address || '', start_date: j.start_date || '',
+      address: j.address || '',
+      site_contact_name:  j.site_contact_name  || '',
+      site_contact_email: j.site_contact_email || '',
+      site_contact_phone: j.site_contact_phone || '',
+      start_date: j.start_date || '',
       end_date: j.end_date || '', status: j.status || 'active',
       required_roles: j.required_roles || [], notes: j.notes || '',
     });
@@ -563,43 +831,46 @@ function JobsPanel({ client, showToast }) {
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) { showToast('Job name is required.', 'error'); return; }
+    if (!form.name.trim()) { showToast('Project name is required.', 'error'); return; }
     setSaving(true);
     const payload = {
       ...form,
       client_id: client.id,
       start_date: form.start_date || null,
       end_date:   form.end_date   || null,
+      site_contact_name:  form.site_contact_name  || null,
+      site_contact_email: form.site_contact_email || null,
+      site_contact_phone: form.site_contact_phone || null,
     };
     if (modal === 'add') {
       const { error } = await supabase.from('client_jobs').insert([payload]);
       if (error) showToast(error.message, 'error');
-      else { showToast('Job added', 'success'); closeJobModal(); load(); }
+      else { showToast('Project added', 'success'); closeJobModal(); load(); }
     } else {
       const { error } = await supabase.from('client_jobs').update(payload).eq('id', modal.id);
       if (error) showToast(error.message, 'error');
-      else { showToast('Job updated', 'success'); closeJobModal(); load(); }
+      else { showToast('Project updated', 'success'); closeJobModal(); load(); }
     }
     setSaving(false);
   };
 
   const handleDelete = async (j) => {
-    if (!window.confirm(`Delete job "${j.name}"?`)) return;
+    if (!window.confirm(`Delete project "${j.name}"?`)) return;
     const { error } = await supabase.from('client_jobs').delete().eq('id', j.id);
     if (error) showToast(error.message, 'error');
-    else { showToast('Job deleted', 'success'); load(); }
+    else { showToast('Project deleted', 'success'); load(); }
   };
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
-        <button onClick={openAdd} style={btnPrimary}>+ Add Job</button>
+        <button onClick={openAdd} style={btnPrimary}>+ Add Project</button>
       </div>
 
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 28 }}><Spinner /></div>
       ) : jobs.length === 0 ? (
-        <EmptyState message="No jobs yet for this client. Add the first one." />
+        <EmptyState message="No projects yet for this client. Add the first one." />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {jobs.map(j => (
@@ -616,6 +887,13 @@ function JobsPanel({ client, showToast }) {
                     {j.address && <span>🏠 {j.address}</span>}
                     {j.start_date && <span>📅 {j.start_date}{j.end_date ? ` → ${j.end_date}` : ''}</span>}
                   </div>
+                  {(j.site_contact_name || j.site_contact_email || j.site_contact_phone) && (
+                    <div style={{ marginTop: 6, display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12, color: C.textMuted }}>
+                      {j.site_contact_name  && <span>👤 {j.site_contact_name}</span>}
+                      {j.site_contact_phone && <span>📞 {j.site_contact_phone}</span>}
+                      {j.site_contact_email && <span>✉️ {j.site_contact_email}</span>}
+                    </div>
+                  )}
                   {j.required_roles?.length > 0 && (
                     <div style={{ marginTop: 8, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                       {j.required_roles.map(r => (
@@ -640,17 +918,17 @@ function JobsPanel({ client, showToast }) {
       {modal && (
         <div style={{ marginTop: 20, background: C.card, border: `1px solid ${C.accent}`, borderRadius: 10, padding: 20 }}>
           <div style={{ fontFamily: 'Syne, sans-serif', fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 14 }}>
-            {modal === 'add' ? 'New Job' : `Edit: ${modal.name}`}
+            {modal === 'add' ? 'New Project' : `Edit: ${modal.name}`}
           </div>
           <DraftBanner
             visible={draft.draftRestored}
             onDiscard={() => { draft.discardDraft(); setForm(jobDefaults); }}
             onDismiss={draft.dismissBanner}
-            label="Unsaved job draft restored."
+            label="Unsaved project draft restored."
           />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
             <div style={{ gridColumn: '1 / -1' }}>
-              <Field label="Job Name *"><input style={inputStyle} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Rail Corridor Maintenance – Eastern Line" /></Field>
+              <Field label="Project Name *"><input style={inputStyle} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Rail Corridor Maintenance – Eastern Line" /></Field>
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
               <Field label="Description"><input style={inputStyle} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></Field>
@@ -667,6 +945,19 @@ function JobsPanel({ client, showToast }) {
                 <option value="cancelled">Cancelled</option>
               </select>
             </Field>
+
+            {/* Site contact for this specific project — each project can have
+                its own person on the ground. */}
+            <div style={{ gridColumn: '1 / -1', marginTop: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, letterSpacing: 1, marginBottom: 4 }}>
+                👤 SITE CONTACT (PROJECT-SPECIFIC)
+              </div>
+            </div>
+            <Field label="Site Contact Name"><input style={inputStyle} value={form.site_contact_name} onChange={e => setForm(f => ({ ...f, site_contact_name: e.target.value }))} placeholder="e.g. John Smith" /></Field>
+            <Field label="Phone"><input style={inputStyle} type="tel" value={form.site_contact_phone} onChange={e => setForm(f => ({ ...f, site_contact_phone: e.target.value }))} placeholder="04xx xxx xxx" /></Field>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <Field label="Email"><input style={inputStyle} type="email" value={form.site_contact_email} onChange={e => setForm(f => ({ ...f, site_contact_email: e.target.value }))} placeholder="john@client.com.au" /></Field>
+            </div>
             <div style={{ gridColumn: '1 / -1' }}>
               <Field label="Required Roles">
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
@@ -699,7 +990,7 @@ function JobsPanel({ client, showToast }) {
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 10 }}>
             <button onClick={closeJobModal} style={btnSecondary}>Cancel</button>
-            <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save Job'}</button>
+            <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save Project'}</button>
           </div>
         </div>
       )}
