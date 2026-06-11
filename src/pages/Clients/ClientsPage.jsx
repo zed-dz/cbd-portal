@@ -392,6 +392,7 @@ function RatesPanel({ client, showToast }) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null); // null | 'add' | cardObj
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const draftKey = editing === 'add'
     ? `rate_card_add_${client.id}`
     : editing && typeof editing === 'object'
@@ -484,12 +485,13 @@ function RatesPanel({ client, showToast }) {
   return (
     <div>
       <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 12 }}>
-        Each line item carries its own A / B / C rate. If a description has no row here, the client's default rates above apply. <strong>Use "Add many"</strong> when entering a full Schedule of Rates.
+        Each line item carries its own A / B / C rate. If a description has no row here, the client's default rates above apply. <strong>Use "Upload rates"</strong> to paste a full Schedule of Rates from a PDF or Excel.
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14, gap: 8, flexWrap: 'wrap' }}>
-        <button onClick={() => setBulkOpen(true)} style={btnSecondary} disabled={!!editing || bulkOpen}>+ Add many</button>
-        <button onClick={openAdd} style={btnPrimary} disabled={!!editing || bulkOpen}>+ Add line item</button>
+        <button onClick={() => setUploadOpen(true)} style={btnSecondary} disabled={!!editing || bulkOpen || uploadOpen}>📤 Upload rates</button>
+        <button onClick={() => setBulkOpen(true)} style={btnSecondary} disabled={!!editing || bulkOpen || uploadOpen}>+ Add many</button>
+        <button onClick={openAdd} style={btnPrimary} disabled={!!editing || bulkOpen || uploadOpen}>+ Add line item</button>
       </div>
 
       {bulkOpen && (
@@ -498,6 +500,15 @@ function RatesPanel({ client, showToast }) {
           allRoles={allRoles}
           onCancel={() => setBulkOpen(false)}
           onSaved={() => { setBulkOpen(false); load(); }}
+          showToast={showToast}
+        />
+      )}
+
+      {uploadOpen && (
+        <UploadRatesModal
+          client={client}
+          onClose={() => setUploadOpen(false)}
+          onSaved={() => { setUploadOpen(false); load(); }}
           showToast={showToast}
         />
       )}
@@ -995,6 +1006,312 @@ function JobsPanel({ client, showToast }) {
         </div>
       )}
     </div>
+  );
+}
+
+// ── Upload Rates: paste a Schedule of Rates from PDF / Excel / CSV ───────────
+
+// Normalise a user-typed UOM to one of our canonical values. Accepts plain
+// English ("Hour", "Hr", "ea"), the symbols m²/m³, and common typos.
+function normaliseUom(raw) {
+  const s = (raw || '').toString().trim().toLowerCase().replace(/[\s.]/g, '');
+  if (!s) return 'hour';
+  const map = {
+    hour: 'hour', hr: 'hour', hrs: 'hour', hours: 'hour', h: 'hour',
+    shift: 'shift', shifts: 'shift', sh: 'shift',
+    day: 'day', days: 'day', d: 'day',
+    ton: 'ton', tonne: 'ton', tonnes: 'ton', t: 'ton', mt: 'ton',
+    unit: 'unit', units: 'unit', u: 'unit',
+    each: 'each', ea: 'each',
+    km: 'km', kilometre: 'km', kilometer: 'km',
+    m3: 'm3', 'm³': 'm3', cubicmetre: 'm3', cubicmeter: 'm3',
+    m2: 'm2', 'm²': 'm2', squaremetre: 'm2', squaremeter: 'm2',
+    lm: 'lm', linealmetre: 'lm', linealmeter: 'lm', linealm: 'lm', linearmetre: 'lm',
+  };
+  return map[s] || 'hour';
+}
+
+// Normalise a category string. Accepts the exact PDF section headers
+// ("LABOUR", "PLANT & MACHINERY – WET HIRE", "MATERIALS & TIPPING") and
+// returns a canonical value or null.
+function normaliseCategory(raw) {
+  const s = (raw || '').toString().toLowerCase();
+  if (!s.trim()) return null;
+  if (s.includes('labour') || s.includes('labor')) return 'labour';
+  if (s.includes('attach') || s.includes('hammer')) return 'attachments';
+  if (s.includes('plant') || s.includes('machinery') || s.includes('hire')) return 'plant';
+  if (s.includes('material') || s.includes('tipping')) return 'materials';
+  if (s.includes('allowance') || s.includes('travel') || s.includes('lafha') || s.includes('meal')) return 'allowances';
+  if (s === 'other') return 'other';
+  return null;
+}
+
+// Parse a price like "$ 60.15", "60.15", "$60.15", "1,407.60", "POR" → number or null.
+function parsePrice(raw) {
+  if (raw == null) return null;
+  const s = raw.toString().trim();
+  if (!s) return null;
+  if (/^(POR|POA|TBA|N\/A)$/i.test(s)) return null;
+  const cleaned = s.replace(/[$,\s]/g, '');
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? null : n;
+}
+
+// Auto-detect delimiter (comma vs tab vs pipe) by counting candidate chars on
+// the first non-empty line. Tabs win when present — that's what you get when
+// pasting from Excel / PDF tables.
+function detectDelimiter(text) {
+  const firstLine = text.split(/\r?\n/).find(l => l.trim()) || '';
+  if (firstLine.includes('\t')) return '\t';
+  if (firstLine.includes('|'))  return '|';
+  return ',';
+}
+
+// Minimal CSV-ish line splitter that respects double-quoted fields containing
+// the delimiter. Sufficient for human-entered SOR data.
+function splitLine(line, delim) {
+  const out = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; continue; }
+    if (c === '"') { inQuotes = !inQuotes; continue; }
+    if (c === delim && !inQuotes) { out.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  out.push(cur);
+  return out.map(s => s.trim());
+}
+
+// Header detection: known synonyms → canonical column key. Returns either a
+// map { columnIndex: canonicalKey } when the first row looks like headers,
+// or null when the parser should fall back to positional defaults.
+function detectHeaders(firstRow) {
+  const synonyms = {
+    category:    ['category','section','group','type'],
+    description: ['description','desc','item','name','role','line'],
+    uom:         ['uom','unit','units','um'],
+    rate_a:      ['a','rate a','rate_a','normal','mon-fri','monfri','col a','column a'],
+    rate_b:      ['b','rate b','rate_b','ot','ot 1.5','overtime','sat','col b','column b','>8 hrs','night'],
+    rate_c:      ['c','rate c','rate_c','ot 2','sun','ph','public holiday','col c','column c'],
+    notes:       ['notes','note','comment','remark','basis'],
+  };
+  const norm = s => (s || '').toString().toLowerCase().replace(/[\s_·\-+/().]+/g, ' ').replace(/\s+/g,' ').trim();
+  const headers = firstRow.map(norm);
+  let matches = 0;
+  const result = {};
+  headers.forEach((h, idx) => {
+    for (const [canon, syns] of Object.entries(synonyms)) {
+      if (syns.some(s => h === s || h.includes(s))) {
+        result[idx] = canon;
+        matches++;
+        break;
+      }
+    }
+  });
+  // Need at least 2 header matches to trust this as a header row.
+  return matches >= 2 ? result : null;
+}
+
+function parseSorText(text) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (!lines.length) return { rows: [], skipped: [] };
+  const delim = detectDelimiter(text);
+  const allCells = lines.map(l => splitLine(l, delim));
+  const headerMap = detectHeaders(allCells[0]);
+
+  // Positional fallback: when there's no recognisable header row, assume
+  // (category, description, uom, rate_a, rate_b, rate_c, notes). The user
+  // can override by including a header.
+  const positional = ['category','description','uom','rate_a','rate_b','rate_c','notes'];
+
+  const rows = [];
+  const skipped = [];
+  const dataStart = headerMap ? 1 : 0;
+
+  // If the first data column looks like a row number ("1", "2", "12") and
+  // there's no explicit "#" header, strip it from each row so columns line up.
+  const looksNumbered = !headerMap && allCells.slice(dataStart, dataStart + 3).every(r => /^\d+$/.test((r[0] || '').trim()));
+
+  for (let i = dataStart; i < allCells.length; i++) {
+    let cells = allCells[i].slice();
+    if (looksNumbered) cells.shift();
+
+    const get = (key) => {
+      if (headerMap) {
+        const idx = Object.entries(headerMap).find(([, v]) => v === key)?.[0];
+        return idx != null ? cells[idx] : '';
+      }
+      const idx = positional.indexOf(key);
+      return idx >= 0 ? cells[idx] : '';
+    };
+
+    const description = (get('description') || '').trim();
+    if (!description) { skipped.push({ line: i + 1, reason: 'no description', raw: allCells[i].join(delim) }); continue; }
+
+    const rate_a = parsePrice(get('rate_a'));
+    const rate_b = parsePrice(get('rate_b'));
+    const rate_c = parsePrice(get('rate_c'));
+
+    if (rate_a == null && rate_b == null && rate_c == null) {
+      skipped.push({ line: i + 1, reason: 'no rates', raw: allCells[i].join(delim) });
+      continue;
+    }
+
+    rows.push({
+      category:   normaliseCategory(get('category')),
+      description,
+      uom:        normaliseUom(get('uom')),
+      rate_a, rate_b, rate_c,
+      notes:      (get('notes') || '').trim() || null,
+    });
+  }
+  return { rows, skipped };
+}
+
+function UploadRatesModal({ client, onClose, onSaved, showToast }) {
+  const [text, setText] = useState('');
+  const [parsed, setParsed] = useState({ rows: [], skipped: [] });
+  const [saving, setSaving] = useState(false);
+  const [replace, setReplace] = useState(false);
+
+  useEffect(() => { setParsed(parseSorText(text)); }, [text]);
+
+  const onFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const content = await file.text();
+    setText(content);
+  };
+
+  const handleSave = async () => {
+    if (!parsed.rows.length) { showToast('Nothing to save.', 'error'); return; }
+    setSaving(true);
+    if (replace) {
+      const { error: dErr } = await supabase.from('client_rate_cards').delete().eq('client_id', client.id);
+      if (dErr) { showToast(dErr.message, 'error'); setSaving(false); return; }
+    }
+    const payload = parsed.rows.map((r, idx) => ({
+      client_id:  client.id,
+      role_name:  r.description,
+      uom:        r.uom,
+      category:   r.category,
+      rate_a:     r.rate_a,
+      rate_b:     r.rate_b,
+      rate_c:     r.rate_c,
+      notes:      r.notes,
+      sort_order: idx,
+    }));
+    const { error } = await supabase.from('client_rate_cards').insert(payload);
+    setSaving(false);
+    if (error) { showToast(error.message, 'error'); return; }
+    showToast(`${payload.length} line item${payload.length === 1 ? '' : 's'} uploaded`, 'success');
+    onSaved();
+  };
+
+  return (
+    <Modal title="📤 Upload Schedule of Rates" onClose={onClose} width={780}>
+      <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 14, lineHeight: 1.55 }}>
+        Paste rows from Excel or a PDF table, or upload a CSV. Format is auto-detected.
+        Each row should have a <strong>description</strong> and at least one rate.
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, marginBottom: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <label style={{ ...btnSecondary, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          📁 Choose CSV file
+          <input type="file" accept=".csv,.tsv,.txt" style={{ display: 'none' }} onChange={onFile} />
+        </label>
+        <span style={{ fontSize: 12, color: C.textDim }}>— or paste below —</span>
+      </div>
+
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        spellCheck={false}
+        placeholder={`Examples (any of these formats work):\n\nCategory,Description,UOM,Rate A,Rate B,Rate C,Notes\nlabour,General Labour,hour,60.15,85.05,103.50,\nlabour,Skilled Labourer,hour,73.05,95.00,110.25,\nplant,8T Excavator,hour,121.80,167.35,178.75,\nmaterials,VENM,ton,28.85,,,T&D rates\n\n— OR — paste tab-separated cells straight from Excel.`}
+        style={{
+          ...inputStyle, minHeight: 200, resize: 'vertical',
+          fontFamily: '"DM Mono", monospace', fontSize: 12, lineHeight: 1.5,
+        }}
+      />
+
+      {/* Preview */}
+      {(parsed.rows.length > 0 || parsed.skipped.length > 0) && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 8, fontSize: 12 }}>
+            <span style={{ color: C.success }}>✓ {parsed.rows.length} valid</span>
+            {parsed.skipped.length > 0 && (
+              <span style={{ color: C.warning }}>⚠ {parsed.skipped.length} skipped (no description or no rates)</span>
+            )}
+          </div>
+
+          {parsed.rows.length > 0 && (
+            <div style={{ maxHeight: 260, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead style={{ position: 'sticky', top: 0, background: C.card }}>
+                  <tr style={{ color: C.textMuted, textAlign: 'left' }}>
+                    <th style={{ padding: '6px 10px', fontFamily: '"DM Mono", monospace', fontSize: 10, letterSpacing: 1 }}>CAT</th>
+                    <th style={{ padding: '6px 10px', fontFamily: '"DM Mono", monospace', fontSize: 10, letterSpacing: 1 }}>DESCRIPTION</th>
+                    <th style={{ padding: '6px 10px', fontFamily: '"DM Mono", monospace', fontSize: 10, letterSpacing: 1 }}>UOM</th>
+                    <th style={{ padding: '6px 10px', fontFamily: '"DM Mono", monospace', fontSize: 10, letterSpacing: 1, textAlign: 'right' }}>A</th>
+                    <th style={{ padding: '6px 10px', fontFamily: '"DM Mono", monospace', fontSize: 10, letterSpacing: 1, textAlign: 'right' }}>B</th>
+                    <th style={{ padding: '6px 10px', fontFamily: '"DM Mono", monospace', fontSize: 10, letterSpacing: 1, textAlign: 'right' }}>C</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {parsed.rows.map((r, i) => (
+                    <tr key={i} style={{ borderTop: `1px solid ${C.border}` }}>
+                      <td style={{ padding: '4px 10px', color: C.textDim, fontFamily: '"DM Mono", monospace', fontSize: 10 }}>
+                        {(r.category || '—').toUpperCase()}
+                      </td>
+                      <td style={{ padding: '4px 10px', color: C.text }}>{r.description}</td>
+                      <td style={{ padding: '4px 10px', color: C.textMuted, fontFamily: '"DM Mono", monospace', fontSize: 10 }}>{r.uom.toUpperCase()}</td>
+                      <td style={{ padding: '4px 10px', textAlign: 'right', color: C.accent, fontFamily: '"DM Mono", monospace' }}>
+                        {r.rate_a != null ? `$${r.rate_a.toFixed(2)}` : <span style={{ color: C.textDim }}>—</span>}
+                      </td>
+                      <td style={{ padding: '4px 10px', textAlign: 'right', color: C.accent, fontFamily: '"DM Mono", monospace' }}>
+                        {r.rate_b != null ? `$${r.rate_b.toFixed(2)}` : <span style={{ color: C.textDim }}>—</span>}
+                      </td>
+                      <td style={{ padding: '4px 10px', textAlign: 'right', color: C.accent, fontFamily: '"DM Mono", monospace' }}>
+                        {r.rate_c != null ? `$${r.rate_c.toFixed(2)}` : <span style={{ color: C.textDim }}>—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {parsed.skipped.length > 0 && (
+            <details style={{ marginTop: 8, fontSize: 11, color: C.textMuted }}>
+              <summary style={{ cursor: 'pointer' }}>{parsed.skipped.length} skipped row(s) — click to expand</summary>
+              <ul style={{ marginTop: 6, paddingLeft: 18, fontFamily: '"DM Mono", monospace' }}>
+                {parsed.skipped.slice(0, 20).map((s, i) => (
+                  <li key={i}>line {s.line}: {s.reason} <span style={{ opacity: 0.6 }}>· {s.raw.slice(0, 60)}</span></li>
+                ))}
+              </ul>
+            </details>
+          )}
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.textMuted, marginTop: 10 }}>
+            <input type="checkbox" checked={replace} onChange={e => setReplace(e.target.checked)} />
+            Replace this client's existing line items first (clean slate)
+          </label>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 14 }}>
+        <button onClick={onClose} style={btnSecondary}>Cancel</button>
+        <button
+          onClick={handleSave}
+          disabled={saving || !parsed.rows.length}
+          style={btnPrimary}
+        >
+          {saving ? 'Saving…' : `Save ${parsed.rows.length || ''} line items`}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
