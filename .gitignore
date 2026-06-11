@@ -28,6 +28,7 @@ yarn-error.log*
 !README.md
 !CLAUDE.md
 !DOCS.md
+!TEAM_GUIDE.md
 /package-lock.json
 .claude/settings.local.json
 

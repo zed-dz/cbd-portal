@@ -242,6 +242,15 @@ pandoc/npm cache failures). Use `Z:\tmp` as a scratch area if needed.
   UI groups items by category, shows UOM next to description, includes an
   "+ Add many" bulk-entry table. See migration
   `20260603_projects_site_contact_and_rate_line_items`.
+- **📤 Upload rates** — paste-or-upload a whole SOR from PDF/Excel/CSV in one
+  shot. `UploadRatesModal` in `src/pages/Clients/ClientsPage.jsx` auto-detects
+  tab / pipe / comma delimiters, fuzzy-matches headers (Description, UOM,
+  A/B/C, Category, Notes — plus the synthetic `row_number` canonical so a
+  leading "Item" or "#" column gets ignored), normalises UOM/category, and
+  treats POR/POA/TBA/blank as null. Includes a live preview table and an
+  optional "replace existing items" toggle that inserts BEFORE deleting old
+  rows (so a failed insert never strands the user with an empty list).
+  See `TEAM_GUIDE.md` for the team-facing how-to.
 - **Projects per client** (formerly "Jobs"). `client_jobs` got
   `site_contact_name` / `site_contact_email` / `site_contact_phone` so a
   single client with multiple active projects can carry a different on-site

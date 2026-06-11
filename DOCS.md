@@ -40,33 +40,45 @@ Each user logs in with their email — the role is set on their worker record.
 
 ### 3.1 Adding a Client
 
-**Clients & Rates → + Add Client**
+**Clients → + Add Client**
 
 Fill in:
 - **Name** (required)
-- **Contact details** — person, phone, email
-- **Charge rates** — Regular, OT, Night, Weekend ($/hr you bill the client)
+- **Contact details** — person, phone, email (this is the billing/admin contact)
+- **Default client rates** (formerly "charge bands") — A (Normal), B (OT 1.5×), C (OT 2×) in $/hr. These are the fall-back rates used when a timesheet description has no matching Schedule of Rates line item.
 - **Allowance charges** — Travel, Meal (what you bill on top per shift)
 
 These rates feed the payroll calculator: when a timesheet is approved, the system uses the client's rates to compute `charge_amount` (what to invoice).
 
-### 3.2 Adding Jobs Under a Client
+### 3.2 Adding Projects (sites) Under a Client
 
-**Clients & Rates → click "Jobs" button on a client row**
+**Clients → click "Projects" button on a client row**
 
-Each client can have unlimited jobs/projects. For each job:
+Each client can have multiple projects/sites. For each project:
 - Name (e.g. "Rail Corridor Maintenance – Eastern Line")
 - Site, address, start/end date, status
+- **Site contact** — name, email, phone for the on-site person (separate from the client's billing contact above). A client with 3 active job sites can have 3 different site contacts.
 - **Required Roles** — toggle which roles are needed (Excavator Operator, Dogman, etc.)
 - Notes
 
-This gives you a clean record of every active project per client.
+### 3.3 Schedule of Rates (per client)
 
-### 3.3 Managing Job Roles
+**Clients → click "Schedule of Rates" tab on a client row**
 
-**Clients & Rates → Job Roles tab**
+This is where you record the **line-item rates** the client has agreed to. Each row is one billable item — Labourer, Confined Space Entry, 8t Excavator, Tipping Fee, Travel/km, etc. — with its own UOM (Hour / Shift / Day / Ton / m³ / m² / lm / each / km / unit) and A/B/C rates.
 
-This is the global pool of role types — Excavator Operator, Dogman, Skilled Labourer, Foreman, etc. Add or remove any role here and it instantly becomes available when creating jobs.
+Three ways to add items:
+1. **+ Add line item** — single row, useful for a one-off addition.
+2. **+ Add many** — tabular form for typing 3–10 rows at once.
+3. **📤 Upload rates** — paste a whole SOR from PDF or Excel, or upload a CSV/TSV file. The parser auto-detects the delimiter and headers, normalises UOMs ("Hour"/"hr"/"H" → `hour`; "m²" → `m2`), maps section names to canonical categories, and treats POR/POA/TBA/blank as null. There's a live preview showing what will be saved and what got skipped before you commit. See **TEAM_GUIDE.md** for a step-by-step walkthrough.
+
+Items are grouped on screen by category (Labour / Plant / Attachments / Materials / Allowances / Other / Uncategorised) and sorted by `sort_order` within each group.
+
+### 3.4 Managing the Common Roles library
+
+**Clients → Common Roles tab**
+
+This is the global pool of role types — Excavator Operator, Dogman, Skilled Labourer, Foreman, etc. It's used only for the autocomplete suggestions when typing a description on a rate card or project. Add or remove any role here and it instantly becomes available as a typeahead option.
 
 ### 3.4 Adding a Worker
 

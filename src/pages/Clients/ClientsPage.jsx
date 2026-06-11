@@ -578,11 +578,11 @@ function RatesPanel({ client, showToast }) {
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12 }}>
             <Field label="Description">
               <>
-                <input style={inputStyle} list={`roles-list-${client.id}`}
+                <input style={inputStyle} list={`roles-list-${client.id}-edit`}
                   value={form.role_name}
                   onChange={e => setForm(f => ({ ...f, role_name: e.target.value }))}
                   placeholder="e.g. General Labour · 8T Excavator · VENM" />
-                <datalist id={`roles-list-${client.id}`}>
+                <datalist id={`roles-list-${client.id}-edit`}>
                   {allRoles.map(r => <option key={r.id} value={r.name} />)}
                 </datalist>
               </>
@@ -718,7 +718,7 @@ function BulkRateAdd({ client, allRoles, onCancel, onSaved, showToast }) {
                 <td style={{ padding: '4px 4px' }}>
                   <input
                     style={{ ...inputStyle, padding: '6px 8px', minWidth: 180 }}
-                    list={`roles-list-${client.id}`}
+                    list={`roles-list-${client.id}-bulk`}
                     value={r.role_name}
                     onChange={e => updateRow(i, { role_name: e.target.value })}
                     placeholder="e.g. General Labour"
@@ -771,7 +771,7 @@ function BulkRateAdd({ client, allRoles, onCancel, onSaved, showToast }) {
         </table>
       </div>
 
-      <datalist id={`roles-list-${client.id}`}>
+      <datalist id={`roles-list-${client.id}-bulk`}>
         {allRoles.map(r => <option key={r.id} value={r.name} />)}
       </datalist>
 
@@ -1088,10 +1088,13 @@ function splitLine(line, delim) {
 // map { columnIndex: canonicalKey } when the first row looks like headers,
 // or null when the parser should fall back to positional defaults.
 function detectHeaders(firstRow) {
+  // `row_number` is a synthetic canonical for CBD's "Item" / "#" column — it
+  // gets mapped but ignored in get(), so the actual Description column wins.
   const synonyms = {
+    row_number:  ['#','no','no.','item','item no','item number','number','row','line no'],
     category:    ['category','section','group','type'],
-    description: ['description','desc','item','name','role','line'],
-    uom:         ['uom','unit','units','um'],
+    description: ['description','desc','name','role','line item','line'],
+    uom:         ['uom','unit','units','um','u m'],
     rate_a:      ['a','rate a','rate_a','normal','mon-fri','monfri','col a','column a'],
     rate_b:      ['b','rate b','rate_b','ot','ot 1.5','overtime','sat','col b','column b','>8 hrs','night'],
     rate_c:      ['c','rate c','rate_c','ot 2','sun','ph','public holiday','col c','column c'],
@@ -1103,7 +1106,10 @@ function detectHeaders(firstRow) {
   const result = {};
   headers.forEach((h, idx) => {
     for (const [canon, syns] of Object.entries(synonyms)) {
-      if (syns.some(s => h === s || h.includes(s))) {
+      // Short synonyms (≤2 chars like "a","b","c","no") must match exactly,
+      // otherwise "Labour".includes("a") wrongly tags a category cell as rate_a.
+      const matched = syns.some(s => s.length <= 2 ? h === s : (h === s || h.includes(s)));
+      if (matched) {
         result[idx] = canon;
         matches++;
         break;
@@ -1187,11 +1193,8 @@ function UploadRatesModal({ client, onClose, onSaved, showToast }) {
 
   const handleSave = async () => {
     if (!parsed.rows.length) { showToast('Nothing to save.', 'error'); return; }
+    if (replace && !window.confirm(`Replace ALL existing line items for ${client.name} with the ${parsed.rows.length} parsed rows? This cannot be undone.`)) return;
     setSaving(true);
-    if (replace) {
-      const { error: dErr } = await supabase.from('client_rate_cards').delete().eq('client_id', client.id);
-      if (dErr) { showToast(dErr.message, 'error'); setSaving(false); return; }
-    }
     const payload = parsed.rows.map((r, idx) => ({
       client_id:  client.id,
       role_name:  r.description,
@@ -1203,9 +1206,20 @@ function UploadRatesModal({ client, onClose, onSaved, showToast }) {
       notes:      r.notes,
       sort_order: idx,
     }));
-    const { error } = await supabase.from('client_rate_cards').insert(payload);
+    // Insert FIRST, then delete the old rows. If the insert fails the user
+    // still has their original data; we never strand them with an empty list.
+    const { data: inserted, error } = await supabase.from('client_rate_cards').insert(payload).select('id');
+    if (error) { setSaving(false); showToast(error.message, 'error'); return; }
+    if (replace && inserted?.length) {
+      const newIds = inserted.map(r => r.id);
+      const { error: dErr } = await supabase
+        .from('client_rate_cards')
+        .delete()
+        .eq('client_id', client.id)
+        .not('id', 'in', `(${newIds.join(',')})`);
+      if (dErr) { setSaving(false); showToast(`Uploaded but failed to clear old rows: ${dErr.message}`, 'error'); return; }
+    }
     setSaving(false);
-    if (error) { showToast(error.message, 'error'); return; }
     showToast(`${payload.length} line item${payload.length === 1 ? '' : 's'} uploaded`, 'success');
     onSaved();
   };
