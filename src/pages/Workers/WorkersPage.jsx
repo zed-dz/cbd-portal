@@ -7,6 +7,7 @@ import { Spinner, Badge, Modal, Field, TableWrap, Th, Td, EmptyState, certBadge 
 import { EmailHistoryPanel } from '../../components/inbox/EmailHistoryPanel';
 import { JOB_TITLES } from '../../constants/jobTitles';
 import { WORKER_TYPES } from '../../constants/scenarios';
+import { onboardLink, publicProfileLink, smsLink, whatsappLink, inviteMessage } from '../../utils/inviteLinks';
 
 const ARCHIVE_REASONS = [
   { value: 'resigned',        label: 'Resigned (left voluntarily)' },
@@ -155,7 +156,7 @@ export function WorkersPage({ showToast }) {
       if (error) { showToast(error.message, 'error'); setSaving(false); return; }
 
       if (send_invite && data?.profile_token) {
-        const link = `${window.location.origin}/onboard/${data.profile_token}`;
+        const link = onboardLink(data.profile_token);
         try { await navigator.clipboard.writeText(link); } catch (e) {}
 
         // Try to send the email via the Supabase edge function. If RESEND_API_KEY
@@ -259,7 +260,7 @@ export function WorkersPage({ showToast }) {
       const { data, error } = await supabase.functions.invoke('send-invite', { body: { worker_id: w.id } });
       if (error || (data && data.error)) {
         const msg = data?.message || error?.message || 'Email not sent';
-        const link = `${window.location.origin}/onboard/${w.profile_token}`;
+        const link = onboardLink(w.profile_token);
         try { await navigator.clipboard.writeText(link); } catch (e) {}
         showToast(`${msg} Link copied to clipboard.`, 'info');
       } else {
@@ -273,12 +274,25 @@ export function WorkersPage({ showToast }) {
 
   const copyShareLink = async (w, kind) => {
     if (!w.profile_token) { showToast('Worker has no profile token yet. Re-save the record.', 'error'); return; }
-    const path = kind === 'onboard' ? `/onboard/${w.profile_token}` : `/p/${w.profile_token}`;
-    const link = `${window.location.origin}${path}`;
+    const link = kind === 'onboard' ? onboardLink(w.profile_token) : publicProfileLink(w.profile_token);
     try {
       await navigator.clipboard.writeText(link);
       showToast(`${kind === 'onboard' ? 'Onboarding' : 'Profile'} link copied`, 'success');
     } catch (e) { showToast(link, 'info'); }
+  };
+
+  // SMS + WhatsApp share — open the OS messenger app pre-populated. Same
+  // backup path the Pending Workers page offers, but exposed here so an admin
+  // editing a worker can send the invite without leaving the modal.
+  const shareViaSms = (w) => {
+    if (!w.profile_token) { showToast('Worker has no profile token yet. Re-save the record.', 'error'); return; }
+    const firstName = (w.name || '').split(' ')[0];
+    window.open(smsLink({ mobile: w.mobile, body: inviteMessage({ firstName, link: onboardLink(w.profile_token) }) }), '_blank');
+  };
+  const shareViaWhatsApp = (w) => {
+    if (!w.profile_token) { showToast('Worker has no profile token yet. Re-save the record.', 'error'); return; }
+    const firstName = (w.name || '').split(' ')[0];
+    window.open(whatsappLink({ mobile: w.mobile, body: inviteMessage({ firstName, link: onboardLink(w.profile_token) }) }), '_blank');
   };
 
   const archivedCount = workers.filter(w => w.archived_at).length;
@@ -580,6 +594,12 @@ export function WorkersPage({ showToast }) {
             <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button onClick={() => sendInviteEmail(modal)} style={btnSmall} type="button">
                 ✉️ {modal.profile_invite_sent_at ? 'Resend' : 'Send'} Invite Email
+              </button>
+              <button onClick={() => shareViaWhatsApp(modal)} style={btnSmall} type="button" title={modal.mobile ? `WhatsApp ${modal.mobile}` : 'Open WhatsApp'}>
+                💬 WhatsApp Invite
+              </button>
+              <button onClick={() => shareViaSms(modal)} style={btnSmall} type="button" title={modal.mobile ? `SMS ${modal.mobile}` : 'Open SMS'}>
+                📨 SMS Invite
               </button>
               <button onClick={() => copyShareLink(modal, 'onboard')} style={btnSmall} type="button">
                 📋 Copy Onboarding Link

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, btnSmall } from '../../theme';
 import { Spinner, Badge, EmptyState } from '../../components';
+import { onboardLink, smsLink, whatsappLink, inviteMessage } from '../../utils/inviteLinks';
 
 export function PendingWorkersPage({ showToast }) {
   const [workers, setWorkers] = useState([]);
@@ -25,7 +26,7 @@ export function PendingWorkersPage({ showToast }) {
       if (error || (data && data.error)) {
         const msg = data?.message || error?.message || 'Email not sent';
         if (w.profile_token) {
-          const link = `${window.location.origin}/onboard/${w.profile_token}`;
+          const link = onboardLink(w.profile_token);
           try { await navigator.clipboard.writeText(link); } catch (e) {}
           showToast(`${msg} Link copied to clipboard.`, 'info');
         } else {
@@ -43,13 +44,29 @@ export function PendingWorkersPage({ showToast }) {
 
   const copyLink = async (w) => {
     if (!w.profile_token) { showToast('No profile token — re-save the worker first.', 'error'); return; }
-    const link = `${window.location.origin}/onboard/${w.profile_token}`;
+    const link = onboardLink(w.profile_token);
     try {
       await navigator.clipboard.writeText(link);
       showToast('Onboarding link copied', 'success');
     } catch (e) {
       showToast(link, 'info');
     }
+  };
+
+  // SMS + WhatsApp open the OS messenger app pre-populated with the worker's
+  // mobile (when known) and the invite message. Email-free backup path for
+  // when Gmail/Resend delivery fails or the worker doesn't check email.
+  const openSms = (w) => {
+    if (!w.profile_token) { showToast('No profile token — re-save the worker first.', 'error'); return; }
+    const firstName = (w.name || '').split(' ')[0];
+    const link = onboardLink(w.profile_token);
+    window.open(smsLink({ mobile: w.mobile, body: inviteMessage({ firstName, link }) }), '_blank');
+  };
+  const openWhatsApp = (w) => {
+    if (!w.profile_token) { showToast('No profile token — re-save the worker first.', 'error'); return; }
+    const firstName = (w.name || '').split(' ')[0];
+    const link = onboardLink(w.profile_token);
+    window.open(whatsappLink({ mobile: w.mobile, body: inviteMessage({ firstName, link }) }), '_blank');
   };
 
   const appStatusColor = (s) => s === 'Invite Sent' ? 'blue' : s === 'Completing Profile' ? 'yellow' : s === 'Profile Incomplete' ? 'yellow' : 'gray';
@@ -59,7 +76,9 @@ export function PendingWorkersPage({ showToast }) {
 
   return (
     <div>
-      <div style={{ color: C.textMuted, fontSize: 14, marginBottom: 20 }}>Workers who haven't completed their profile or accepted their invite.</div>
+      <div style={{ color: C.textMuted, fontSize: 14, marginBottom: 20 }}>
+        Workers who haven't completed their profile or accepted their invite. If email delivery is slow, use SMS or WhatsApp as a backup — both open your phone's messenger app pre-filled with their onboarding link.
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
         {workers.map(w => (
           <div key={w.id} style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: 18 }}>
@@ -77,11 +96,13 @@ export function PendingWorkersPage({ showToast }) {
                 Last invite: {new Date(w.profile_invite_sent_at).toLocaleString('en-AU', { dateStyle: 'short', timeStyle: 'short' })}
               </div>
             )}
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button onClick={() => handleRemind(w)} disabled={sendingId === w.id} style={{ ...btnSmall, flex: 1 }}>
-                {sendingId === w.id ? 'Sending…' : '✉️ Send Reminder'}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button onClick={() => handleRemind(w)} disabled={sendingId === w.id} style={{ ...btnSmall, flex: '1 1 130px' }}>
+                {sendingId === w.id ? 'Sending…' : '✉️ Send Email'}
               </button>
-              <button onClick={() => copyLink(w)} style={btnSmall} title="Copy onboarding link">🔗</button>
+              <button onClick={() => openWhatsApp(w)} style={btnSmall} title={w.mobile ? `WhatsApp ${w.mobile}` : 'Open WhatsApp'}>💬 WhatsApp</button>
+              <button onClick={() => openSms(w)} style={btnSmall} title={w.mobile ? `SMS ${w.mobile}` : 'Open SMS'}>📨 SMS</button>
+              <button onClick={() => copyLink(w)} style={btnSmall} title="Copy onboarding link">🔗 Copy</button>
             </div>
           </div>
         ))}

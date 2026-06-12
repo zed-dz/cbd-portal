@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, R, MONO, inputStyle, btnPrimary } from '../../theme';
 import { Spinner, Field } from '../../components';
+import { portalBaseUrl } from '../../utils/inviteLinks';
 
 // Two-mode login screen. `signin` calls the parent's onSubmit (existing flow).
 // `signup` calls supabase.auth.signUp directly — a Postgres trigger on
@@ -19,10 +20,17 @@ export function LoginPage({ email, setEmail, password, setPassword, error, loadi
     if (!email || !password) { setSignupError('Email and password are required.'); return; }
     if (password.length < 8) { setSignupError('Password must be at least 8 characters.'); return; }
     setSignupBusy(true);
+    // emailRedirectTo defends against Site URL misconfig — Supabase's
+    // confirmation email uses THIS value over Site URL when present, so even
+    // if the project's Site URL is wrong, the confirm link still lands on
+    // the right portal.
     const { data, error: err } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { name: name.trim() || null } },
+      options: {
+        data: { name: name.trim() || null },
+        emailRedirectTo: portalBaseUrl(),
+      },
     });
     setSignupBusy(false);
     if (err) { setSignupError(err.message); return; }
