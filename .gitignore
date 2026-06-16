@@ -29,6 +29,8 @@ yarn-error.log*
 !CLAUDE.md
 !DOCS.md
 !TEAM_GUIDE.md
+!FIX_REPORT_*.md
+!APPLICATIONS_PIPELINE.md
 /package-lock.json
 .claude/settings.local.json
 

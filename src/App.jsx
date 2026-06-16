@@ -7,10 +7,12 @@ import { AdminPortal } from './portals/AdminPortal';
 import { WorkerPortal } from './portals/WorkerPortal';
 import { PublicProfilePage } from './pages/PublicProfile/PublicProfilePage';
 import { OnboardProfilePage } from './pages/OnboardProfile/OnboardProfilePage';
+import { ApplyPage } from './pages/Apply/ApplyPage';
 
 const PUBLIC_ROUTE_PATTERNS = [
   { kind: 'profile',  re: /^\/p\/([0-9a-f-]{36})\/?$/i },
   { kind: 'onboard',  re: /^\/onboard\/([0-9a-f-]{36})\/?$/i },
+  { kind: 'apply',    re: /^\/apply\/?$/i },
 ];
 
 function matchPublicRoute(pathname) {
@@ -107,9 +109,10 @@ export default function App() {
     return (
       <>
         <GlobalStyles />
-        {publicRoute.kind === 'profile'
-          ? <PublicProfilePage token={publicRoute.token} />
-          : <OnboardProfilePage token={publicRoute.token} />}
+        {publicRoute.kind === 'profile' ? <PublicProfilePage token={publicRoute.token} />
+         : publicRoute.kind === 'onboard' ? <OnboardProfilePage token={publicRoute.token} />
+         : publicRoute.kind === 'apply'   ? <ApplyPage />
+         : null}
       </>
     );
   }

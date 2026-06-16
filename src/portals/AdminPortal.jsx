@@ -20,6 +20,7 @@ import { InboxPage } from '../pages/Inbox/InboxPage';
 import { TemplatesPage } from '../pages/Templates/TemplatesPage';
 import { AppViewsPage } from '../pages/AppViews/AppViewsPage';
 import { PendingWorkersPage } from '../pages/PendingWorkers/PendingWorkersPage';
+import { ApplicationsPage } from '../pages/Applications/ApplicationsPage';
 import { WorkerPortal } from './WorkerPortal';
 
 export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpen, setSidebarOpen }) {
@@ -35,10 +36,10 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
   const [previewMode, setPreviewMode] = useState(false);
   const [blastOpen, setBlastOpen] = useState(false);
   const [scanOpen, setScanOpen]   = useState(false);
-  const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, client_approvals: 0, licence_agent: 0, pending_workers: 0, payroll: 0 });
+  const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, client_approvals: 0, licence_agent: 0, pending_workers: 0, payroll: 0, applications: 0 });
 
   const refreshBadge = useCallback(async () => {
-    const [w, a, ts, ca, lic, pw, pr] = await Promise.all([
+    const [w, a, ts, ca, lic, pw, pr, ap] = await Promise.all([
       supabase.from('workers').select('*', { count: 'exact', head: true }).is('archived_at', null),
       supabase.from('allocations').select('*', { count: 'exact', head: true }).in('status', ['pending', 'confirmed']),
       supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
@@ -46,6 +47,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       supabase.from('certifications').select('*', { count: 'exact', head: true }).lt('expiry', new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]),
       supabase.from('workers').select('*', { count: 'exact', head: true }).neq('app_status', 'Active').is('archived_at', null),
       supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'approved').eq('xero_exported', false),
+      supabase.from('worker_applications').select('*', { count: 'exact', head: true }).eq('status', 'new'),
     ]);
     setBadges({
       workers: w.count || 0,
@@ -55,6 +57,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       licence_agent: lic.count || 0,
       pending_workers: pw.count || 0,
       payroll: pr.count || 0,
+      applications: ap.count || 0,
     });
   }, []);
 
@@ -107,6 +110,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         { id: 'templates',     label: '📝 Email Templates' },
         { id: 'bulk_messages', label: '📢 Bulk Messages' },
         { id: 'licence_agent', label: '🪪 Licence Agent', badge: badges.licence_agent || null, badgeColor: 'red' },
+        { id: 'applications', label: '📥 Applications', badge: badges.applications || null, badgeColor: 'orange' },
         { id: 'pending_workers', label: '📱 Pending Workers', badge: badges.pending_workers || null, badgeColor: 'yellow' },
         { id: 'app_views', label: '📲 App Views' },
         { id: 'reports', label: '📁 Reports' },
@@ -208,6 +212,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'allocations'      && <AllocationsPage showToast={showToast} />}
           {activePage === 'calendar'         && <AllocationsCalendarPage showToast={showToast} />}
           {activePage === 'pending_workers'  && <PendingWorkersPage showToast={showToast} />}
+          {activePage === 'applications'     && <ApplicationsPage    showToast={showToast} onNavigate={navigate} />}
           {activePage === 'timesheets'       && <TimesheetsPage showToast={showToast} isMobile={isMobile} refreshBadge={refreshBadge} />}
           {activePage === 'clients'          && <ClientsPage showToast={showToast} />}
           {activePage === 'client_approvals' && <ClientApprovalsPage showToast={showToast} />}
