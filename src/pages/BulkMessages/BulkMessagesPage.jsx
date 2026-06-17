@@ -3,7 +3,8 @@ import { supabase } from '../../supabaseClient';
 import { C, R, MONO, inputStyle, btnPrimary, btnSecondary, btnSmall } from '../../theme';
 import { Field, Spinner, EmptyState } from '../../components';
 
-const SMS_DISABLED_HINT = 'SMS needs a paid provider (Twilio ≈ $0.01/msg). Email is the free path — wired below.';
+const SMS_BODY_LIMIT = 1600; // Twilio splits at 160 GSM-7 chars per segment;
+                             // we cap at 1600 (10 segments) as a sensible safety net.
 
 function fmtSentAt(ts) {
   if (!ts) return '';
@@ -125,6 +126,57 @@ export function BulkMessagesPage({ showToast }) {
     setSending(false);
   }
 
+  async function sendTwilio(audience, channel) {
+    const isWorkers = audience === 'workers';
+    const body = (isWorkers ? workerMsg : clientMsg).trim();
+    const selectedIds = isWorkers ? selectedWorkers : selectedClients;
+
+    if (!body) { showToast('Enter a message.', 'error'); return; }
+    if (body.length > SMS_BODY_LIMIT) { showToast(`Message too long (${body.length}/${SMS_BODY_LIMIT}).`, 'error'); return; }
+    if (!selectedIds.length) { showToast('Select at least one recipient.', 'error'); return; }
+
+    const pool = isWorkers ? workers : clients;
+    const recipients = selectedIds
+      .map(id => pool.find(p => p.id === id))
+      .filter(Boolean)
+      .map(r => ({
+        id: r.id,
+        name:   r.name || (isWorkers ? '' : r.contact),
+        mobile: isWorkers ? r.mobile : r.contact_phone,
+      }))
+      .filter(r => r.mobile);
+
+    if (!recipients.length) {
+      showToast(`None of the selected ${audience} have a mobile on file.`, 'error');
+      return;
+    }
+
+    setSending(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data, error } = await supabase.functions.invoke('send-bulk-twilio', {
+        body: { channel, recipients, body, audience, sent_by: user?.id || null },
+      });
+      if (error || data?.error) {
+        // 503 = Twilio creds not configured. Surface the friendly message.
+        showToast(data?.message || data?.firstError || data?.error || error?.message || 'Send failed.', 'error');
+      } else {
+        const channelLabel = channel === 'sms' ? 'SMS' : 'WhatsApp';
+        const skipped = recipients.length < selectedIds.length ? ` (${selectedIds.length - recipients.length} skipped — no mobile)` : '';
+        const failed  = data.failed > 0 ? ` · ${data.failed} failed` : '';
+        showToast(`Sent ${data.sent}/${data.total} ${channelLabel}${skipped}${failed}`, data.sent > 0 ? 'success' : 'error');
+        if (data.sent > 0) {
+          if (isWorkers) { setWorkerMsg(''); setSelectedWorkers([]); }
+          else           { setClientMsg(''); setSelectedClients([]); }
+          loadHistory();
+        }
+      }
+    } catch (e) {
+      showToast(e.message || 'Send failed.', 'error');
+    }
+    setSending(false);
+  }
+
   // Group history rows by batch_id so the same blast collapses into one card.
   const groupedHistory = (() => {
     const search = historySearch.toLowerCase();
@@ -148,12 +200,17 @@ export function BulkMessagesPage({ showToast }) {
 
   const panelStyle = { background: C.card, borderRadius: R.lg, border: `1px solid ${C.border}`, padding: 20, display: 'flex', flexDirection: 'column', gap: 14 };
 
-  const recipientStats = (pool, selectedIds, emailKey) => {
-    const selected = selectedIds.map(id => pool.find(p => p.id === id)).filter(Boolean);
-    const withEmail = selected.filter(r => r[emailKey]).length;
-    const noEmail = selected.length - withEmail;
-    return { withEmail, noEmail };
+  const recipientReach = (pool, selectedIds, emailKey, mobileKey) => {
+    let withEmail = 0, withMobile = 0;
+    selectedIds.forEach(id => {
+      const r = pool.find(p => p.id === id);
+      if (!r) return;
+      if (r[emailKey])  withEmail++;
+      if (r[mobileKey]) withMobile++;
+    });
+    return { withEmail, withMobile, total: selectedIds.length };
   };
+
 
   return (
     <div>
@@ -180,9 +237,13 @@ export function BulkMessagesPage({ showToast }) {
           }}>
             <span style={{ fontSize: 16 }}>ⓘ</span>
             <span>
-              <strong style={{ color: C.text }}>Email is wired</strong> via Resend (3,000/month free).
-              For two-way conversations with replies, connect Gmail under <strong>Inbox</strong>.
-              SMS needs a paid provider like Twilio (~$0.01/msg).
+              <strong style={{ color: C.text }}>Email</strong> goes via Gmail (if connected under <strong>Inbox</strong>) or Resend.
+              <strong style={{ color: C.text }}> SMS &amp; WhatsApp</strong> go via Twilio — add
+              <code style={{ fontFamily: MONO, fontSize: 10.5, color: C.accent, margin: '0 2px' }}>TWILIO_ACCOUNT_SID</code>,
+              <code style={{ fontFamily: MONO, fontSize: 10.5, color: C.accent, margin: '0 2px' }}>TWILIO_AUTH_TOKEN</code>,
+              <code style={{ fontFamily: MONO, fontSize: 10.5, color: C.accent, margin: '0 2px' }}>TWILIO_SMS_FROM</code> and
+              <code style={{ fontFamily: MONO, fontSize: 10.5, color: C.accent, margin: '0 2px' }}>TWILIO_WHATSAPP_FROM</code>
+              under Supabase Edge Function secrets. Until then the buttons return a friendly "not configured" error.
             </span>
           </div>
 
@@ -230,19 +291,22 @@ export function BulkMessagesPage({ showToast }) {
               <Field label="Message">
                 <textarea style={{ ...inputStyle, minHeight: 100, resize: 'vertical', fontFamily: 'inherit' }} value={workerMsg} onChange={e => setWorkerMsg(e.target.value)} placeholder="Type your message…" />
               </Field>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button disabled title={SMS_DISABLED_HINT} style={{ ...btnSecondary, flex: 1, cursor: 'not-allowed' }}>
-                  📱 SMS <span style={{ fontSize: 9, marginLeft: 4, padding: '1px 5px', borderRadius: 999, background: C.cardHover, color: C.textDim, fontFamily: MONO, letterSpacing: 0.5 }}>SOON</span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button onClick={() => sendTwilio('workers', 'sms')} disabled={sending} style={{ ...btnSecondary, flex: 1, minWidth: 90 }} title="Send via Twilio SMS">
+                  📱 SMS
                 </button>
-                <button onClick={() => sendEmail('workers')} disabled={sending} style={{ ...btnPrimary, flex: 1 }}>
+                <button onClick={() => sendTwilio('workers', 'whatsapp')} disabled={sending} style={{ ...btnSecondary, flex: 1, minWidth: 110 }} title="Send via Twilio WhatsApp">
+                  📲 WhatsApp
+                </button>
+                <button onClick={() => sendEmail('workers')} disabled={sending} style={{ ...btnPrimary, flex: 1.4, minWidth: 130 }}>
                   {sending ? 'Sending…' : '✉️ Send Email'}
                 </button>
               </div>
               {selectedWorkers.length > 0 && (() => {
-                const { withEmail, noEmail } = recipientStats(workers, selectedWorkers, 'email');
+                const { withEmail, withMobile, total } = recipientReach(workers, selectedWorkers, 'email', 'mobile');
                 return (
-                  <div style={{ fontSize: 11, color: C.textDim, marginTop: -4 }}>
-                    Will reach <strong style={{ color: C.text }}>{withEmail}</strong> via email{noEmail > 0 ? ` · skipping ${noEmail} without email` : ''}
+                  <div style={{ fontSize: 11, color: C.textDim, marginTop: -4, lineHeight: 1.6 }}>
+                    Reach: <strong style={{ color: C.text }}>{withEmail}/{total}</strong> via email · <strong style={{ color: C.text }}>{withMobile}/{total}</strong> via SMS/WhatsApp
                   </div>
                 );
               })()}
@@ -291,19 +355,22 @@ export function BulkMessagesPage({ showToast }) {
               <Field label="Message">
                 <textarea style={{ ...inputStyle, minHeight: 100, resize: 'vertical', fontFamily: 'inherit' }} value={clientMsg} onChange={e => setClientMsg(e.target.value)} placeholder="Type your message…" />
               </Field>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button disabled title={SMS_DISABLED_HINT} style={{ ...btnSecondary, flex: 1, cursor: 'not-allowed' }}>
-                  📱 SMS <span style={{ fontSize: 9, marginLeft: 4, padding: '1px 5px', borderRadius: 999, background: C.cardHover, color: C.textDim, fontFamily: MONO, letterSpacing: 0.5 }}>SOON</span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button onClick={() => sendTwilio('clients', 'sms')} disabled={sending} style={{ ...btnSecondary, flex: 1, minWidth: 90 }} title="Send via Twilio SMS">
+                  📱 SMS
                 </button>
-                <button onClick={() => sendEmail('clients')} disabled={sending} style={{ ...btnPrimary, flex: 1 }}>
+                <button onClick={() => sendTwilio('clients', 'whatsapp')} disabled={sending} style={{ ...btnSecondary, flex: 1, minWidth: 110 }} title="Send via Twilio WhatsApp">
+                  📲 WhatsApp
+                </button>
+                <button onClick={() => sendEmail('clients')} disabled={sending} style={{ ...btnPrimary, flex: 1.4, minWidth: 130 }}>
                   {sending ? 'Sending…' : '✉️ Send Email'}
                 </button>
               </div>
               {selectedClients.length > 0 && (() => {
-                const { withEmail, noEmail } = recipientStats(clients, selectedClients, 'contact_email');
+                const { withEmail, withMobile, total } = recipientReach(clients, selectedClients, 'contact_email', 'contact_phone');
                 return (
-                  <div style={{ fontSize: 11, color: C.textDim, marginTop: -4 }}>
-                    Will reach <strong style={{ color: C.text }}>{withEmail}</strong> via email{noEmail > 0 ? ` · skipping ${noEmail} without email` : ''}
+                  <div style={{ fontSize: 11, color: C.textDim, marginTop: -4, lineHeight: 1.6 }}>
+                    Reach: <strong style={{ color: C.text }}>{withEmail}/{total}</strong> via email · <strong style={{ color: C.text }}>{withMobile}/{total}</strong> via SMS/WhatsApp
                   </div>
                 );
               })()}
