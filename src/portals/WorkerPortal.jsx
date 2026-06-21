@@ -10,6 +10,7 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
   const tabs = [
     { id: 'allocations', label: '📋 My Allocations' },
     { id: 'timesheets', label: '🕐 My Timesheets' },
+    { id: 'profile', label: '👤 My Profile' },
     { id: 'certifications', label: '📜 My Certifications' },
     { id: 'clockin', label: '⏱ Clock In/Out' },
   ];
@@ -39,6 +40,7 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
       <div style={{ padding: isMobile ? 12 : 24, maxWidth: 900, margin: '0 auto' }}>
         {activeTab === 'allocations'    && <WorkerAllocations currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'timesheets'     && <WorkerTimesheets currentWorker={currentWorker} showToast={showToast} />}
+        {activeTab === 'profile'        && <WorkerMyProfile currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'certifications' && <WorkerCertifications currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'clockin'        && <WorkerClockIn currentWorker={currentWorker} showToast={showToast} />}
       </div>
@@ -172,6 +174,67 @@ function WorkerTimesheets({ currentWorker, showToast }) {
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+function WorkerMyProfile({ currentWorker, showToast }) {
+  const [f, setF] = useState({
+    mobile: currentWorker.mobile || '',
+    alternate_phone: currentWorker.alternate_phone || '',
+    address: currentWorker.address || '',
+    postal_address: currentWorker.postal_address || '',
+    drivers_licence_number: currentWorker.drivers_licence_number || '',
+    drivers_licence_expiry: currentWorker.drivers_licence_expiry || '',
+    licences: currentWorker.licences || '',
+    emergency_name: currentWorker.emergency_name || '',
+    emergency_relationship: currentWorker.emergency_relationship || '',
+    emergency_phone: currentWorker.emergency_phone || '',
+    emergency_phone_alt: currentWorker.emergency_phone_alt || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
+
+  const save = async () => {
+    setSaving(true);
+    const { data, error } = await supabase.rpc('update_my_worker_profile', {
+      p_mobile: f.mobile,
+      p_alternate_phone: f.alternate_phone,
+      p_address: f.address,
+      p_postal_address: f.postal_address,
+      p_drivers_licence_number: f.drivers_licence_number,
+      p_drivers_licence_expiry: f.drivers_licence_expiry || null,
+      p_licences: f.licences,
+      p_emergency_name: f.emergency_name,
+      p_emergency_relationship: f.emergency_relationship,
+      p_emergency_phone: f.emergency_phone,
+      p_emergency_phone_alt: f.emergency_phone_alt,
+    });
+    setSaving(false);
+    if (error || data === false) showToast(error?.message || 'Could not save profile', 'error');
+    else showToast('Profile updated', 'success');
+  };
+
+  return (
+    <div style={{ maxWidth: 560, margin: '0 auto', display: 'grid', gap: 12 }}>
+      <div style={{ color: C.textMuted, fontSize: 13 }}>
+        Keep these up to date — new tickets, a house move, or a new phone number.
+      </div>
+      <Field label="Mobile"><input style={inputStyle} value={f.mobile} onChange={set('mobile')} /></Field>
+      <Field label="Alternate phone"><input style={inputStyle} value={f.alternate_phone} onChange={set('alternate_phone')} /></Field>
+      <Field label="Residential address"><input style={inputStyle} value={f.address} onChange={set('address')} /></Field>
+      <Field label="Postal address"><input style={inputStyle} value={f.postal_address} onChange={set('postal_address')} /></Field>
+      <Field label="Tickets / licences (White Card, HR licence, EWP…)">
+        <textarea style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }} value={f.licences} onChange={set('licences')} />
+      </Field>
+      <Field label="Driver licence number"><input style={inputStyle} value={f.drivers_licence_number} onChange={set('drivers_licence_number')} /></Field>
+      <Field label="Driver licence expiry"><input style={inputStyle} type="date" value={f.drivers_licence_expiry || ''} onChange={set('drivers_licence_expiry')} /></Field>
+      <Field label="Emergency contact name"><input style={inputStyle} value={f.emergency_name} onChange={set('emergency_name')} /></Field>
+      <Field label="Emergency contact relationship"><input style={inputStyle} value={f.emergency_relationship} onChange={set('emergency_relationship')} /></Field>
+      <Field label="Emergency contact phone"><input style={inputStyle} value={f.emergency_phone} onChange={set('emergency_phone')} /></Field>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button onClick={save} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save profile'}</button>
+      </div>
     </div>
   );
 }
