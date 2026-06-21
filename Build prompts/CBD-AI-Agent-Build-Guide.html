@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>CBD Portal — AI Agent Build Guide</title>
+<style>
+:root{
+  --orange:#F47B20;--navy:#1D2E55;--navy2:#2A3F6F;
+  --bg:#0B0E14;--surface:#111520;--surface2:#171D2C;
+  --border:#232B3E;--text:#DCE4F5;--muted:#7A8BB0;--dim:#3D4F6E;
+  --green:#2ECC71;--red:#E74C3C;--amber:#F39C12;--cyan:#1ABC9C;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);padding-bottom:60px;}
+
+/* HEADER */
+.header{background:var(--surface);border-bottom:3px solid var(--orange);padding:16px 20px;position:sticky;top:0;z-index:100;}
+.header-inner{max-width:800px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.header h1{font-size:16px;font-weight:800;color:var(--text);}
+.header h1 span{color:var(--orange);}
+.header-sub{font-size:11px;color:var(--muted);}
+.cost-pill{background:rgba(46,204,113,.12);border:1px solid rgba(46,204,113,.3);padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;color:var(--green);white-space:nowrap;}
+
+/* PROGRESS */
+.progress-bar{background:var(--surface2);border-bottom:1px solid var(--border);overflow-x:auto;padding:0;}
+.progress-inner{display:flex;min-width:max-content;padding:0 12px;}
+.ptab{padding:10px 14px;font-size:11px;font-weight:700;color:var(--dim);cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;transition:all .15s;text-transform:uppercase;letter-spacing:.5px;}
+.ptab:hover{color:var(--muted);}
+.ptab.active{color:var(--orange);border-bottom-color:var(--orange);}
+.ptab.done{color:var(--green);}
+
+/* MAIN */
+.main{max-width:800px;margin:0 auto;padding:16px 16px 0;}
+
+/* SECTION */
+.section{display:none;}
+.section.active{display:block;}
+
+/* CARDS */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;overflow:hidden;}
+.card-hdr{padding:14px 16px;background:var(--surface2);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;}
+.card-hdr h2{font-size:15px;font-weight:800;color:var(--text);}
+.card-hdr .num{background:var(--orange);color:#000;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;}
+.card-body{padding:16px;}
+
+/* STEP LIST */
+.steps{list-style:none;counter-reset:steps;}
+.steps li{counter-increment:steps;display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);}
+.steps li:last-child{border-bottom:none;}
+.steps li::before{content:counter(steps);background:var(--navy);color:var(--orange);width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;margin-top:1px;}
+.step-content{flex:1;}
+.step-title{font-size:13px;font-weight:700;color:var(--text);margin-bottom:3px;}
+.step-desc{font-size:12px;color:var(--muted);line-height:1.6;}
+.step-link{font-size:12px;color:var(--orange);font-weight:600;}
+.step-warn{font-size:11px;background:rgba(243,156,18,.1);border:1px solid rgba(243,156,18,.2);color:var(--amber);padding:6px 10px;border-radius:6px;margin-top:6px;line-height:1.5;}
+.step-tip{font-size:11px;background:rgba(46,204,113,.08);border:1px solid rgba(46,204,113,.15);color:var(--green);padding:6px 10px;border-radius:6px;margin-top:6px;line-height:1.5;}
+
+/* PROMPT BOX */
+.prompt-box{background:#0a0d12;border:1px solid var(--border);border-left:3px solid var(--orange);border-radius:8px;margin:10px 0;position:relative;}
+.prompt-label{font-size:10px;font-weight:700;color:var(--orange);padding:8px 12px 0;text-transform:uppercase;letter-spacing:1px;}
+.prompt-text{font-size:12px;color:#a0c0ff;padding:6px 12px 10px;line-height:1.7;font-family:'Courier New',monospace;white-space:pre-wrap;word-break:break-word;}
+.copy-btn{position:absolute;top:6px;right:8px;background:var(--surface2);border:1px solid var(--border);color:var(--muted);font-size:11px;font-weight:600;padding:3px 9px;border-radius:5px;cursor:pointer;}
+.copy-btn:hover{color:var(--orange);border-color:var(--orange);}
+
+/* ENV TABLE */
+.env-table{width:100%;border-collapse:collapse;font-size:12px;}
+.env-table th{text-align:left;padding:8px 10px;background:var(--surface2);color:var(--muted);font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid var(--border);}
+.env-table td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top;}
+.env-table tr:last-child td{border-bottom:none;}
+.env-key{font-family:'Courier New',monospace;color:var(--cyan);font-weight:600;}
+.env-where{color:var(--orange);font-size:11px;}
+
+/* COST TABLE */
+.cost-table{width:100%;border-collapse:collapse;font-size:12px;}
+.cost-table th{text-align:left;padding:8px 10px;background:var(--surface2);color:var(--muted);font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid var(--border);}
+.cost-table td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.cost-table tr:last-child td{border-bottom:none;}
+.cost-0{color:var(--green);font-weight:700;}
+.cost-low{color:var(--amber);font-weight:700;}
+.cost-mid{color:var(--orange);font-weight:700;}
+.cancel-tag{font-size:10px;background:rgba(231,76,60,.1);border:1px solid rgba(231,76,60,.2);color:var(--red);padding:2px 6px;border-radius:4px;margin-left:4px;}
+.keep-tag{font-size:10px;background:rgba(26,188,156,.1);border:1px solid rgba(26,188,156,.2);color:var(--cyan);padding:2px 6px;border-radius:4px;margin-left:4px;}
+
+/* BADGES */
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;margin-left:6px;}
+.b-free{background:rgba(46,204,113,.12);color:var(--green);border:1px solid rgba(46,204,113,.25);}
+.b-cancel{background:rgba(231,76,60,.1);color:var(--red);border:1px solid rgba(231,76,60,.2);}
+.b-paid{background:rgba(244,123,32,.1);color:var(--orange);border:1px solid rgba(244,123,32,.2);}
+
+/* DAY HEADER */
+.day-hdr{background:linear-gradient(135deg,var(--navy) 0%,var(--navy2) 100%);padding:14px 16px;display:flex;align-items:center;gap:12px;}
+.day-num{background:var(--orange);color:#000;padding:4px 10px;border-radius:6px;font-size:13px;font-weight:800;}
+.day-title{font-size:15px;font-weight:800;color:var(--text);}
+.day-time{font-size:11px;color:rgba(255,255,255,.5);margin-top:2px;}
+
+/* ZAP TABLE */
+.zap-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden;}
+.zap-hdr{background:var(--navy);padding:10px 14px;display:flex;align-items:center;gap:10px;}
+.zap-num{background:var(--orange);color:#000;width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;}
+.zap-title{font-size:13px;font-weight:700;color:var(--text);}
+.zap-body{padding:12px 14px;}
+.zap-row{display:flex;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px;}
+.zap-row:last-child{border-bottom:none;}
+.zap-type{font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;flex-shrink:0;margin-top:1px;text-transform:uppercase;letter-spacing:.5px;}
+.zt-trigger{background:rgba(243,156,18,.12);color:var(--amber);}
+.zt-action{background:rgba(46,204,113,.1);color:var(--green);}
+.zt-then{background:rgba(52,152,219,.1);color:#3498DB;}
+.zap-text{color:var(--muted);line-height:1.5;}
+
+/* ALERT */
+.alert{display:flex;gap:10px;padding:12px 14px;border-radius:8px;margin-bottom:10px;}
+.alert-icon{font-size:18px;flex-shrink:0;}
+.alert-body{flex:1;}
+.alert-title{font-size:13px;font-weight:700;margin-bottom:2px;}
+.alert-sub{font-size:12px;color:var(--muted);line-height:1.5;}
+.a-orange{background:rgba(244,123,32,.08);border:1px solid rgba(244,123,32,.2);}
+.a-green{background:rgba(46,204,113,.08);border:1px solid rgba(46,204,113,.2);}
+.a-amber{background:rgba(243,156,18,.08);border:1px solid rgba(243,156,18,.2);}
+
+/* NAV BTNS */
+.nav-btns{display:flex;gap:8px;justify-content:space-between;padding:16px 0;}
+.nav-btn{flex:1;padding:12px;background:var(--surface);border:1px solid var(--border);color:var(--muted);font-size:13px;font-weight:700;border-radius:8px;cursor:pointer;text-align:center;}
+.nav-btn:hover{border-color:var(--orange);color:var(--orange);}
+.nav-btn.primary{background:var(--orange);border-color:var(--orange);color:#000;}
+.nav-btn.primary:hover{background:#FF9A50;}
+
+@media(max-width:480px){
+  .header h1{font-size:14px;}
+  .day-title{font-size:13px;}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-inner">
+    <div>
+      <h1>CBD Portal — <span>AI Agent Build</span></h1>
+      <div class="header-sub">Step-by-step guide · Lowest cost stack</div>
+    </div>
+    <div class="cost-pill">~$45/mo running</div>
+  </div>
+</div>
+
+<div class="progress-bar">
+  <div class="progress-inner">
+    <div class="ptab active" onclick="show('overview',this)">Overview</div>
+    <div class="ptab" onclick="show('setup',this)">Setup</div>
+    <div class="ptab" onclick="show('day1',this)">Day 1</div>
+    <div class="ptab" onclick="show('day2',this)">Day 2</div>
+    <div class="ptab" onclick="show('day3',this)">Day 3</div>
+    <div class="ptab" onclick="show('day4',this)">Day 4</div>
+    <div class="ptab" onclick="show('day5',this)">Day 5</div>
+    <div class="ptab" onclick="show('day6',this)">Day 6</div>
+    <div class="ptab" onclick="show('day7',this)">Day 7</div>
+    <div class="ptab" onclick="show('zaps',this)">15 Zaps</div>
+    <div class="ptab" onclick="show('prompts',this)">Prompts</div>
+    <div class="ptab" onclick="show('costs',this)">Costs</div>
+    <div class="ptab" onclick="show('envvars',this)">Env Vars</div>
+  </div>
+</div>
+
+<div class="main">
+
+<!-- ═══ OVERVIEW ═══ -->
+<div class="section active" id="s-overview">
+
+  <div class="alert a-orange" style="margin-top:4px;">
+    <span class="alert-icon">⚡</span>
+    <div class="alert-body">
+      <div class="alert-title" style="color:var(--orange);">The plan in one sentence</div>
+      <div class="alert-sub">Paste your finished HTML into Lovable.dev → it builds a real React + Supabase app → Zapier connects the automations → total build cost ~$40, ongoing ~$45/month.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">✓</div><h2>What you already have</h2></div>
+    <div class="card-body">
+      <ul class="steps" style="counter-reset:none;list-style:disc;padding-left:16px;">
+        <li style="display:list-item;padding:4px 0;border:none;font-size:13px;color:var(--muted);">Complete HTML prototype — all 10 screens, navigation, modals, styling, sample data</li>
+        <li style="display:list-item;padding:4px 0;border:none;font-size:13px;color:var(--muted);">Brand colours, fonts, ISO cert branding, ABN, contact details</li>
+        <li style="display:list-item;padding:4px 0;border:none;font-size:13px;color:var(--muted);">Worker data structures, client data structures, all Airtable field names</li>
+        <li style="display:list-item;padding:4px 0;border:none;font-size:13px;color:var(--muted);">JotForm employee profile form already live</li>
+        <li style="display:list-item;padding:4px 0;border:none;font-size:13px;color:var(--muted);">The Zapier blueprint with all 15 Zaps designed</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">💰</div><h2>Cost-optimised stack</h2></div>
+    <div class="card-body">
+      <div class="alert a-green" style="margin-bottom:10px;">
+        <span class="alert-icon">✓</span>
+        <div class="alert-body">
+          <div class="alert-title" style="color:var(--green);">Original plan: ~$220/mo → Optimised: ~$45/mo</div>
+          <div class="alert-sub">Main savings: cancel Lovable + Cursor after build, skip Glide ($49/mo saved by building worker pages into main app), use Zapier Starter not Professional.</div>
+        </div>
+      </div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.8;">
+        <div><strong style="color:var(--text);">Build tools</strong> (cancel after build month — ~$40 one-time)</div>
+        <div style="padding-left:12px;margin-bottom:8px;">Lovable.dev $20 + Cursor AI $20 → cancel both</div>
+        <div><strong style="color:var(--text);">Ongoing tools</strong> (keep forever)</div>
+        <div style="padding-left:12px;">Twilio ~$20/mo · Zapier Starter $25/mo · everything else FREE</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">🗓</div><h2>7-day build overview</h2></div>
+    <div class="card-body">
+      <ol class="steps">
+        <li><div class="step-content"><div class="step-title">Day 1 — Foundation (2–3 hrs)</div><div class="step-desc">Create all accounts. Paste HTML into Lovable. Connect Supabase database. First live preview URL.</div></div></li>
+        <li><div class="step-content"><div class="step-title">Day 2 — Workers + Clients live (2–3 hrs)</div><div class="step-desc">Wire up Workers and Clients pages to real Supabase data. CRUD working. Enter your real data.</div></div></li>
+        <li><div class="step-content"><div class="step-title">Day 3 — Allocations + Timesheets + Auth (3–4 hrs)</div><div class="step-desc">Allocations kanban live. Timesheet submission. Admin login screen.</div></div></li>
+        <li><div class="step-content"><div class="step-title">Day 4 — Approval SMS/Email + Twilio (3–4 hrs)</div><div class="step-desc">Daily approval flow. Signed tokens. No-login approval page. Dispute flow.</div></div></li>
+        <li><div class="step-content"><div class="step-title">Day 5 — PDF Reports + Cert Alerts (2–3 hrs)</div><div class="step-desc">Friday PDF cron. Daily cert expiry check. Worker alerts at 90/60/30/0 days.</div></div></li>
+        <li><div class="step-content"><div class="step-title">Day 6 — Xero Integration (3–4 hrs)</div><div class="step-desc">OAuth flow in Cursor AI. Auto payroll entry. Auto draft invoice. Xero ref numbers in portal.</div></div></li>
+        <li><div class="step-content"><div class="step-title">Day 7 — Worker App + Deploy (3–4 hrs)</div><div class="step-desc">Worker login within main app (no Glide needed). Final Vercel deploy. Custom domain. Smoke test.</div></div></li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="nav-btns">
+    <button class="nav-btn primary" onclick="show('setup',document.querySelectorAll('.ptab')[1])">Start Setup →</button>
+  </div>
+</div>
+
+<!-- ═══ SETUP ═══ -->
+<div class="section" id="s-setup">
+
+  <div class="alert a-amber" style="margin-top:4px;">
+    <span class="alert-icon">⚠️</span>
+    <div class="alert-body">
+      <div class="alert-title" style="color:var(--amber);">Do this before Day 1</div>
+      <div class="alert-sub">Having all accounts and assets ready means no interruptions during the build. Takes about 45 minutes total.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">1</div><h2>Create these accounts (all free to start)</h2></div>
+    <div class="card-body">
+      <ol class="steps">
+        <li><div class="step-content">
+          <div class="step-title">Lovable.dev <span class="badge b-cancel">$20/mo — cancel after build</span></div>
+          <div class="step-desc">Go to lovable.dev → Sign Up → Connect your GitHub account. This is critical — Lovable deploys to GitHub so you own the code.</div>
+          <a class="step-link" href="https://lovable.dev" target="_blank">→ lovable.dev</a>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Cursor AI <span class="badge b-cancel">$20/mo — cancel after build</span></div>
+          <div class="step-desc">Go to cursor.sh → Download the app → Install on your Mac or PC → Sign in. You use this only on Day 6 for Xero.</div>
+          <a class="step-link" href="https://cursor.sh" target="_blank">→ cursor.sh</a>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Supabase <span class="badge b-free">FREE</span></div>
+          <div class="step-desc">Go to supabase.com → New Project → Name: "CBD Operations" → Region: ap-southeast-2 (Sydney) → Save your Project URL and anon key from Settings → API.</div>
+          <a class="step-link" href="https://supabase.com" target="_blank">→ supabase.com</a>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Vercel <span class="badge b-free">FREE</span></div>
+          <div class="step-desc">Go to vercel.com → Sign Up with GitHub → Authorise Vercel to access your GitHub repos. This auto-deploys your app every time Lovable pushes code.</div>
+          <a class="step-link" href="https://vercel.com" target="_blank">→ vercel.com</a>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Airtable <span class="badge b-free">FREE</span></div>
+          <div class="step-desc">Go to airtable.com → Create base → Name: "CBD Operations" → You'll build the tables in Day 1. The Zapier automations connect here.</div>
+          <a class="step-link" href="https://airtable.com" target="_blank">→ airtable.com</a>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Twilio <span class="badge b-paid">~$20/mo ongoing</span></div>
+          <div class="step-desc">Go to twilio.com → Sign Up → Buy Phone Numbers → Search Australia → Buy a mobile number (~$2/mo). Copy: Account SID, Auth Token, Phone Number.</div>
+          <a class="step-link" href="https://twilio.com" target="_blank">→ twilio.com</a>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Resend <span class="badge b-free">FREE (3,000 emails/mo)</span></div>
+          <div class="step-desc">Go to resend.com → Sign Up → Add Domain → Enter cbdplantlabour.com.au → Follow DNS instructions to verify. This sends all automated emails.</div>
+          <a class="step-link" href="https://resend.com" target="_blank">→ resend.com</a>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Zapier Starter <span class="badge b-paid">$25/mo ongoing</span></div>
+          <div class="step-desc">Go to zapier.com → Sign Up → Starter plan ($25/mo). This runs all 15 Zaps. Important: Starter allows 15 Zaps with 3 steps each — enough for all automations.</div>
+          <a class="step-link" href="https://zapier.com" target="_blank">→ zapier.com</a>
+          <div class="step-warn">⚠️ Do NOT get the Free plan. It only allows 5 Zaps and single-step. Starter at $25/mo is essential.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">DocuPilot <span class="badge b-free">FREE (100 docs/mo)</span></div>
+          <div class="step-desc">Go to docupilot.app → Sign Up → You will upload your CBD Weekly Summary PDF template here in Day 5. 100 free docs/month is plenty.</div>
+          <a class="step-link" href="https://docupilot.app" target="_blank">→ docupilot.app</a>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Xero Developer App <span class="badge b-free">FREE</span></div>
+          <div class="step-desc">Go to developer.xero.com → New App → App Name: "CBD Operations Portal" → Redirect URI: https://your-vercel-domain.vercel.app/api/xero/callback → Save Client ID and Client Secret.</div>
+          <a class="step-link" href="https://developer.xero.com" target="_blank">→ developer.xero.com</a>
+          <div class="step-warn">⚠️ You need your Vercel domain before this step. If you don't have it yet, skip until Day 6 and come back.</div>
+        </div></li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">2</div><h2>Assets to have ready</h2></div>
+    <div class="card-body">
+      <ol class="steps">
+        <li><div class="step-content"><div class="step-title">CBD Operations Portal HTML file</div><div class="step-desc">This is CBD-Plant-Labour-Portal-v3.html — the complete portal I built. You paste the entire contents into Lovable on Day 1.</div></div></li>
+        <li><div class="step-content"><div class="step-title">CBD logo files</div><div class="step-desc">CBD.png (white/transparent background) and CBD_-_1.png (cream background). Both needed in the app.</div></div></li>
+        <li><div class="step-content"><div class="step-title">ISO cert image</div><div class="step-desc">IMG_6413.jpeg — the Southpac ISO 9001, 45001, 14001 certification badges. Used in app header.</div></div></li>
+        <li><div class="step-content"><div class="step-title">All worker details spreadsheet</div><div class="step-desc">Name, mobile, email, roles, cert names + expiry dates for all current workers. You'll enter these into Supabase on Day 2.</div></div></li>
+        <li><div class="step-content"><div class="step-title">All client details spreadsheet</div><div class="step-desc">Company, project, site manager name + mobile + email, base rate, OT multiplier, LAFHA, ute allowance for all 5 current clients.</div></div></li>
+        <li><div class="step-content"><div class="step-title">Your business domain access</div><div class="step-desc">You need to add DNS records to cbdplantlabour.com.au to verify your email with Resend. Access your domain registrar (GoDaddy, Squarespace etc).</div></div></li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">3</div><h2>Generate your secret keys (do this now)</h2></div>
+    <div class="card-body">
+      <div class="step-desc" style="margin-bottom:12px;">Two environment variables need to be random strings you generate. Go to a password generator site and create two separate 32-character random strings. Save them somewhere safe (notes app is fine).</div>
+      <div class="prompt-box">
+        <div class="prompt-label">APPROVAL_SECRET — generate at:</div>
+        <div class="prompt-text">https://1password.com/password-generator/
+Set to: 32 characters, letters + numbers only
+Save it. You'll need it on Day 4.</div>
+      </div>
+      <div class="prompt-box">
+        <div class="prompt-label">ENCRYPTION_KEY — same process:</div>
+        <div class="prompt-text">Generate a second separate 32-character random string.
+This one encrypts the Xero tokens.
+Save it. You'll need it on Day 6.</div>
+      </div>
+      <div class="step-tip">✓ Also save Matt's mobile number as ADMIN_MOBILE: +61413962001</div>
+    </div>
+  </div>
+
+  <div class="nav-btns">
+    <button class="nav-btn" onclick="show('overview',document.querySelectorAll('.ptab')[0])">← Back</button>
+    <button class="nav-btn primary" onclick="show('day1',document.querySelectorAll('.ptab')[2])">Day 1 →</button>
+  </div>
+</div>
+
+<!-- ═══ DAY 1 ═══ -->
+<div class="section" id="s-day1">
+  <div class="card" style="margin-top:4px;">
+    <div class="day-hdr"><span class="day-num">DAY 1</span><div><div class="day-title">Foundation + First Build</div><div class="day-time">2–3 hours · All on Lovable.dev</div></div></div>
+    <div class="card-body">
+      <ol class="steps">
+        <li><div class="step-content">
+          <div class="step-title">Open Lovable.dev → New Project</div>
+          <div class="step-desc">Name it "CBD Operations Portal". You'll see a chat window on the left and a live preview on the right. This is where all your build work happens.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Open your CBD portal HTML file</div>
+          <div class="step-desc">Open CBD-Plant-Labour-Portal-v3.html in a text editor (Notepad on Windows, TextEdit on Mac, or VS Code). Select All → Copy Everything.</div>
+          <div class="step-warn">⚠️ The file is large (~750KB). On mobile, use a file manager app to open it. On desktop this is easiest.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Paste Prompt #1 into Lovable chat</div>
+          <div class="step-desc">Go to the Prompts tab in this guide. Copy Prompt #1 exactly. Paste it into the Lovable chat. Then immediately paste your entire HTML file contents below it in the same message. Hit Send.</div>
+          <div class="step-tip">✓ Lovable will take 10–15 minutes to process this. Do not type anything else until it finishes.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Check the live preview</div>
+          <div class="step-desc">Lovable gives you a preview URL. Open it. Check all 10 screens: Dashboard, Workers, Timesheets, Clients, Payroll, Messages, Licence Agent, Allocations, Client Approvals, Pending Workers. All should look identical to your HTML.</div>
+          <div class="step-warn">⚠️ If anything looks wrong, describe it in the Lovable chat. E.g. "The sidebar logo is not showing — fix it." Lovable will correct it.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Connect Supabase to Lovable</div>
+          <div class="step-desc">In Lovable → Settings → Supabase. Paste your Supabase Project URL and Anon Key. Lovable will auto-create all database tables based on the data structures in your HTML. Confirm in your Supabase dashboard that tables were created.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Build Airtable tables (for Zapier automations)</div>
+          <div class="step-desc">In Airtable → CBD Operations base → Create these tables with exact field names from the Env Vars tab: Workers, Timesheets, Allocations, Certifications, Clients, Messages_Log. The Zapier Zaps will write to these.</div>
+          <div class="step-tip">✓ Supabase = your app's live database. Airtable = Zapier's working database. They sync via Zapier.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Push to GitHub + Vercel</div>
+          <div class="step-desc">In Lovable → Settings → GitHub → Push to GitHub. Then in Vercel → New Project → Import from GitHub → Select your Lovable repo → Deploy. You now have a live URL like cbd-portal.vercel.app.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Save your Vercel URL</div>
+          <div class="step-desc">Write down your Vercel URL. You'll need it for Xero developer app setup and for all Zapier webhook URLs.</div>
+        </div></li>
+      </ol>
+    </div>
+  </div>
+  <div class="nav-btns">
+    <button class="nav-btn" onclick="show('setup',document.querySelectorAll('.ptab')[1])">← Setup</button>
+    <button class="nav-btn primary" onclick="show('day2',document.querySelectorAll('.ptab')[3])">Day 2 →</button>
+  </div>
+</div>
+
+<!-- ═══ DAY 2 ═══ -->
+<div class="section" id="s-day2">
+  <div class="card" style="margin-top:4px;">
+    <div class="day-hdr"><span class="day-num">DAY 2</span><div><div class="day-title">Workers + Clients — Live Data</div><div class="day-time">2–3 hours · Lovable.dev</div></div></div>
+    <div class="card-body">
+      <ol class="steps">
+        <li><div class="step-content">
+          <div class="step-title">Paste Prompt #2 into Lovable</div>
+          <div class="step-desc">This wires the Workers page to real Supabase data. After Lovable builds — you can add, edit, and delete workers. Worker cards show live data from the database.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Test: Add a real worker</div>
+          <div class="step-desc">In your app, click + Add Worker. Enter a real worker's details. Check your Supabase dashboard → workers table. The record should appear instantly.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Paste Prompt #3 into Lovable</div>
+          <div class="step-desc">This wires the Clients & Rates page. Add, edit, store site manager contacts, and the Schedule of Rates auto-calculator saves real data.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Enter all your real workers and clients</div>
+          <div class="step-desc">Now that CRUD works, enter all 10 current workers and all 5 current clients. This is your real database from this point forward. Include all cert details for workers.</div>
+          <div class="step-tip">✓ Pro tip: Add workers via the JotForm employee profile form — it already exists and can be connected to auto-populate Supabase via Zapier (Zap 01).</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Enable document uploads</div>
+          <div class="step-desc">In Lovable chat: "Enable file uploads for worker certification documents. Store files in Supabase Storage in a bucket called worker-certs. Link each file to the worker's certifications record." This allows white cards, licences etc to be uploaded and stored.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Fix any visual issues</div>
+          <div class="step-desc">Open every page and check it matches your original HTML design. If anything is off — describe it to Lovable. Be specific: "The keyword chips on the worker card are showing as a list instead of horizontal tags. Fix to match the original HTML."</div>
+        </div></li>
+      </ol>
+    </div>
+  </div>
+  <div class="nav-btns">
+    <button class="nav-btn" onclick="show('day1',document.querySelectorAll('.ptab')[2])">← Day 1</button>
+    <button class="nav-btn primary" onclick="show('day3',document.querySelectorAll('.ptab')[4])">Day 3 →</button>
+  </div>
+</div>
+
+<!-- ═══ DAY 3 ═══ -->
+<div class="section" id="s-day3">
+  <div class="card" style="margin-top:4px;">
+    <div class="day-hdr"><span class="day-num">DAY 3</span><div><div class="day-title">Allocations + Timesheets + Auth</div><div class="day-time">3–4 hours · Lovable.dev</div></div></div>
+    <div class="card-body">
+      <ol class="steps">
+        <li><div class="step-content">
+          <div class="step-title">Paste Prompt #4 — Allocations Kanban</div>
+          <div class="step-desc">This builds the live Allocations kanban. Workers drag between Available → Job Sent → On Site columns. Each move updates Supabase in real time. Allocation records store worker_id, client_id, start_date, start_time, site_address, site_manager_contact, notes, status.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Test: Create an allocation</div>
+          <div class="step-desc">Move a worker to "Job Sent". Check Supabase allocations table. Verify the record was created with all fields. Then drag them to "On Site" — verify the status field updates.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Paste Prompt #5 — Timesheet Submission</div>
+          <div class="step-desc">Workers (and admins on their behalf) can submit hours. Each submission creates a timesheet record with status = "submitted". Admin sees all pending timesheets in the Timesheet Approvals page. Approve button sets status = "approved".</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Paste Prompt #6 — Admin Login</div>
+          <div class="step-desc">Adds a login screen. Only users with email in the admin list can access the portal. Uses Supabase Auth. Default admin email: your email address. Workers get a separate login view (built Day 7).</div>
+          <div class="step-warn">⚠️ After adding auth, you'll need to log in to access the portal. Make sure you remember the password you set.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Test the full workflow</div>
+          <div class="step-desc">1. Create an allocation for a worker → 2. Submit a timesheet for that worker → 3. Approve it in the admin portal → 4. Check the Payroll Tracker updates with the hours and calculates gross pay correctly.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Wire Zapier Zap 10 (Allocation → Worker SMS)</div>
+          <div class="step-desc">Set up Zap 10 in Zapier: Trigger = New record in Airtable Allocations table. Action = Send Twilio SMS to worker with site details. Test by creating an allocation and confirming the worker's phone receives the SMS.</div>
+          <div class="step-tip">✓ You need Twilio credentials for this. Go to the Env Vars tab for the exact values to enter in Zapier.</div>
+        </div></li>
+      </ol>
+    </div>
+  </div>
+  <div class="nav-btns">
+    <button class="nav-btn" onclick="show('day2',document.querySelectorAll('.ptab')[3])">← Day 2</button>
+    <button class="nav-btn primary" onclick="show('day4',document.querySelectorAll('.ptab')[5])">Day 4 →</button>
+  </div>
+</div>
+
+<!-- ═══ DAY 4 ═══ -->
+<div class="section" id="s-day4">
+  <div class="card" style="margin-top:4px;">
+    <div class="day-hdr"><span class="day-num">DAY 4</span><div><div class="day-title">Approval Links + Twilio SMS</div><div class="day-time">3–4 hours · Lovable.dev + Zapier</div></div></div>
+    <div class="card-body">
+      <ol class="steps">
+        <li><div class="step-content">
+          <div class="step-title">Add Twilio credentials to Lovable</div>
+          <div class="step-desc">In Lovable → Settings → Environment Variables. Add: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER. Lovable will now be able to send SMS from your portal.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Add Resend credentials to Lovable</div>
+          <div class="step-desc">Add RESEND_API_KEY to environment variables. Add APPROVAL_SECRET (your 32-char string). These enable the signed approval token emails.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Paste Prompt #7 — Daily Approval Flow</div>
+          <div class="step-desc">Builds the API route that runs at 5:30 PM every day. It finds all timesheets with status = "submitted" and for each one: generates a signed approval token, sends an SMS via Twilio to the site manager, sends an HTML email via Resend with Approve/Dispute buttons.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Paste Prompt #8 — Approval Page</div>
+          <div class="step-desc">Builds the /approve/[token] page. Site manager receives this URL in their SMS/email. They tap it on their phone — no login needed. They see the worker, hours, site, date and tap Approve or Dispute. 24-hour countdown timer visible. After 24 hours — auto-approve cron runs.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Paste Prompt #9 — Dispute Flow</div>
+          <div class="step-desc">When site manager taps Dispute — a simple form appears asking for the reason. On submit: dispute reason saved to Supabase, timesheet status = "disputed", admin (Matt) receives immediate SMS alert on 0413 962 001.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Wire Zapier Zaps 4, 5, 6, 7</div>
+          <div class="step-desc">Set up Zap 4 (timesheet submitted → approval SMS/email), Zap 5 (site manager approves → Airtable update), Zap 6 (dispute → SMS to Matt), Zap 7 (24hr auto-approve). See the Zaps tab for full details.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Live test the full approval flow</div>
+          <div class="step-desc">Submit a test timesheet → wait for the 5:30 PM cron or trigger it manually → receive the SMS and email on your phone → tap the approval link → tap Approve → verify the Supabase record updates to "approved". This is the most important flow in the whole app.</div>
+          <div class="step-tip">✓ To trigger the approval send manually without waiting for 5:30 PM, in Lovable chat ask: "Add a Test Send button on the timesheets admin page that manually triggers the approval flow for all pending timesheets."</div>
+        </div></li>
+      </ol>
+    </div>
+  </div>
+  <div class="nav-btns">
+    <button class="nav-btn" onclick="show('day3',document.querySelectorAll('.ptab')[4])">← Day 3</button>
+    <button class="nav-btn primary" onclick="show('day5',document.querySelectorAll('.ptab')[6])">Day 5 →</button>
+  </div>
+</div>
+
+<!-- ═══ DAY 5 ═══ -->
+<div class="section" id="s-day5">
+  <div class="card" style="margin-top:4px;">
+    <div class="day-hdr"><span class="day-num">DAY 5</span><div><div class="day-title">PDF Reports + Cert Alerts</div><div class="day-time">2–3 hours · Lovable.dev + Vercel Cron</div></div></div>
+    <div class="card-body">
+      <ol class="steps">
+        <li><div class="step-content">
+          <div class="step-title">Create your CBD Weekly Summary template in DocuPilot</div>
+          <div class="step-desc">Log into docupilot.app → New Template → Upload or build a template. Include: CBD logo, week ending date, worker name, site, hours worked, rate, total. DocuPilot generates a PDF from this template with real data each Friday.</div>
+          <div class="step-tip">✓ DocuPilot has a visual template builder. It's like Canva for PDF documents. Use {{worker_name}}, {{hours}}, {{total}} as placeholders.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Paste Prompt #10 — Friday PDF Cron</div>
+          <div class="step-desc">Builds a Vercel cron job that runs every Friday at 5 PM AEST. For each client: pulls all approved timesheets for the week, sends to DocuPilot with CBD template, receives PDF back, emails it via Resend to site manager CC ops@cbdplantlabour.com.au.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Paste Prompt #11 — Cert Expiry Cron</div>
+          <div class="step-desc">Daily cron at 8 AM AEST checks all cert expiry dates. Sends personalised SMS via Twilio at 90 days, 60 days, 30 days ("Your [cert] expires in [X] days"). At 0 days: sends URGENT SMS to worker AND admin SMS to Matt and David.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Wire Zapier Zaps 8 and 9</div>
+          <div class="step-desc">Zap 8: Friday schedule → Airtable search approved timesheets → DocuPilot PDF → Gmail to site managers. Zap 9: Daily cert expiry check → Twilio SMS to workers. These Zapier versions run alongside the Vercel crons as backup.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Test cert alerts</div>
+          <div class="step-desc">In Supabase → certifications table → manually set one cert expiry_date to tomorrow. In Lovable chat: "Trigger the cert expiry cron manually for testing." Confirm you receive the SMS on the worker's number and admin alert on Matt's number.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Test the Friday PDF</div>
+          <div class="step-desc">In Lovable chat: "Add a Generate PDF Now button on the admin dashboard that triggers the weekly PDF generation for all clients immediately." Test it. Open the PDF. Confirm CBD branding and correct data.</div>
+        </div></li>
+      </ol>
+    </div>
+  </div>
+  <div class="nav-btns">
+    <button class="nav-btn" onclick="show('day4',document.querySelectorAll('.ptab')[5])">← Day 4</button>
+    <button class="nav-btn primary" onclick="show('day6',document.querySelectorAll('.ptab')[7])">Day 6 →</button>
+  </div>
+</div>
+
+<!-- ═══ DAY 6 ═══ -->
+<div class="section" id="s-day6">
+  <div class="card" style="margin-top:4px;">
+    <div class="day-hdr"><span class="day-num">DAY 6</span><div><div class="day-title">Xero Integration</div><div class="day-time">3–4 hours · Cursor AI (switch to Cursor today)</div></div></div>
+    <div class="card-body">
+      <div class="alert a-amber" style="margin-bottom:12px;">
+        <span class="alert-icon">⚠️</span>
+        <div class="alert-body">
+          <div class="alert-title" style="color:var(--amber);">Use Cursor AI today — not Lovable</div>
+          <div class="alert-sub">Xero OAuth is complex. Lovable struggles with it. Open your codebase in Cursor AI instead. You downloaded Cursor on Setup day.</div>
+        </div>
+      </div>
+      <ol class="steps">
+        <li><div class="step-content">
+          <div class="step-title">Open your codebase in Cursor</div>
+          <div class="step-desc">In Lovable → Settings → GitHub → Clone the repo URL. Open Cursor → File → Open Folder → select the cloned folder. Your entire codebase is now visible in Cursor.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Create your Xero developer app</div>
+          <div class="step-desc">Go to developer.xero.com → New App → App Name: "CBD Operations Portal" → Set Redirect URI to your Vercel URL + /api/xero/callback → Copy Client ID and Client Secret.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Add Xero env vars to Vercel</div>
+          <div class="step-desc">In Vercel → your project → Settings → Environment Variables. Add: XERO_CLIENT_ID, XERO_CLIENT_SECRET, ENCRYPTION_KEY. Redeploy Vercel after adding.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Paste Cursor Prompt #1 — Xero OAuth flow</div>
+          <div class="step-desc">In Cursor → open the Chat panel (Cmd+L) → paste Cursor Prompt #1 from the Prompts tab. Cursor will write the OAuth connection and token storage code. Review and accept the changes.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Paste Cursor Prompt #2 — Auto payroll entry</div>
+          <div class="step-desc">When a timesheet is approved in the portal, Cursor builds the code to automatically create a Xero Payroll timesheet entry for that worker at their stored pay rate. Test by approving a timesheet and checking your Xero dashboard for the entry.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Paste Cursor Prompt #3 — Auto invoice creation</div>
+          <div class="step-desc">Simultaneously with payroll, creates a draft Xero invoice for the client at their Schedule of Rates billing rate. Invoice appears in Xero Drafts. Matt reviews and sends from Xero.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Wire Zapier Zaps 5 and 14</div>
+          <div class="step-desc">Zap 5: approval → Xero invoice creation (backup to the code path). Zap 14: Xero invoice marked PAID → update Airtable record → email admin. See Zaps tab.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Push updated code to GitHub</div>
+          <div class="step-desc">In Cursor terminal: git add . → git commit -m "Add Xero integration" → git push. Vercel will auto-deploy. Check the live Vercel URL to confirm the deployment succeeded.</div>
+        </div></li>
+      </ol>
+    </div>
+  </div>
+  <div class="nav-btns">
+    <button class="nav-btn" onclick="show('day5',document.querySelectorAll('.ptab')[6])">← Day 5</button>
+    <button class="nav-btn primary" onclick="show('day7',document.querySelectorAll('.ptab')[8])">Day 7 →</button>
+  </div>
+</div>
+
+<!-- ═══ DAY 7 ═══ -->
+<div class="section" id="s-day7">
+  <div class="card" style="margin-top:4px;">
+    <div class="day-hdr"><span class="day-num">DAY 7</span><div><div class="day-title">Worker App + Deploy + Smoke Test</div><div class="day-time">3–4 hours · Lovable.dev + Vercel</div></div></div>
+    <div class="card-body">
+      <div class="alert a-green" style="margin-bottom:12px;">
+        <span class="alert-icon">💰</span>
+        <div class="alert-body">
+          <div class="alert-title" style="color:var(--green);">Cost saving: Skip Glide ($49/mo saved)</div>
+          <div class="alert-sub">Instead of Glide, build a worker-facing login view within the existing app. Workers get the same data — no extra $49/mo. This is the biggest ongoing cost saving.</div>
+        </div>
+      </div>
+      <ol class="steps">
+        <li><div class="step-content">
+          <div class="step-title">Build the worker login view in Lovable</div>
+          <div class="step-desc">In Lovable chat, paste this: "Build a separate worker view within the app. When a user logs in as a worker (not admin), show only these pages: Today's Job (their current allocation with site address, manager contact, start time), Clock In/Out (with GPS capture), My Timesheets (their own hours only), My Profile (edit mobile, availability), My Certs (their certs with expiry dates). Workers cannot see other workers, admin pages, or client rates."</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Set up worker invites via Zapier (Zap 2)</div>
+          <div class="step-desc">Zap 2: When admin approves a worker in Airtable → Twilio sends them an SMS with their app login link. The link is your Vercel URL — it's a web app, not an App Store app. Workers bookmark it on their phone home screen (works like a native app).</div>
+          <div class="step-tip">✓ Workers can Add to Home Screen on iPhone or Android. It will appear as an app icon with the CBD logo. No App Store required. This saves the $49/mo Glide cost.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Connect your custom domain</div>
+          <div class="step-desc">In Vercel → your project → Settings → Domains → Add domain: ops.cbdplantlabour.com.au (or cbdops.com.au). In your domain registrar (GoDaddy) → add the DNS records Vercel provides. Takes up to 1 hour to propagate.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Cancel Lovable subscription</div>
+          <div class="step-desc">Your app is built and deployed on Vercel. You no longer need Lovable for daily operation. Cancel the subscription to stop the $20/mo charge. If you need to make changes later, you can resubscribe just for that month.</div>
+          <div class="step-tip">✓ Also cancel Cursor AI subscription after this step. Your code is in GitHub and Vercel. You don't need Cursor unless you're making changes.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Full smoke test — all devices</div>
+          <div class="step-desc">Test on desktop, tablet, and phone. Run through this checklist:</div>
+          <div style="margin-top:8px;font-size:12px;color:var(--muted);line-height:2;">
+            ☐ Admin login works<br/>
+            ☐ Worker login shows only worker pages<br/>
+            ☐ Add a worker → appears in directory<br/>
+            ☐ Create an allocation → worker receives SMS<br/>
+            ☐ Submit a timesheet → approval SMS arrives<br/>
+            ☐ Tap approval link → approve → Xero invoice created<br/>
+            ☐ Friday PDF generates with CBD branding<br/>
+            ☐ Cert expiry alert triggers on test cert<br/>
+            ☐ All pages render correctly on phone<br/>
+            ☐ App can be added to phone home screen
+          </div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">Set up remaining Zapier Zaps</div>
+          <div class="step-desc">Wire up remaining Zaps from the Zaps tab: Zap 1 (JotForm → Airtable), Zap 3 (profile complete notification), Zaps 11–13 (SMS reply handling), Zap 15 (message audit log). Most take 5 minutes each in Zapier.</div>
+        </div></li>
+        <li><div class="step-content">
+          <div class="step-title">You're live 🎉</div>
+          <div class="step-desc">Your app is running at your custom domain. All automations are active. Share ops.cbdplantlabour.com.au with Matt and David. Send worker invite SMS to all current workers. You are now running on approximately $45/month.</div>
+        </div></li>
+      </ol>
+    </div>
+  </div>
+  <div class="nav-btns">
+    <button class="nav-btn" onclick="show('day6',document.querySelectorAll('.ptab')[7])">← Day 6</button>
+    <button class="nav-btn primary" onclick="show('zaps',document.querySelectorAll('.ptab')[9])">View All 15 Zaps →</button>
+  </div>
+</div>
+
+<!-- ═══ ZAPS ═══ -->
+<div class="section" id="s-zaps">
+  <div class="alert a-orange" style="margin-top:4px;">
+    <span class="alert-icon">⚡</span>
+    <div class="alert-body">
+      <div class="alert-title" style="color:var(--orange);">15 Zaps on Zapier Starter ($25/mo)</div>
+      <div class="alert-sub">Build these in Zapier one by one. Each takes 5–10 minutes. Trigger = what starts the Zap. Action/Then = what it does.</div>
+    </div>
+  </div>
+
+  <!-- ZAP 01 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">01</div><div class="zap-title">New Worker Onboarding (JotForm → Airtable → SMS → Email)</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">New JotForm Employee Profile Form submission</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Create Airtable Workers record — status = pending_approval</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Send Twilio SMS to worker mobile: "Welcome to CBD Plant & Labour. Your profile is under review. We'll be in touch shortly. Questions? Call Matt on 0413 962 001."</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Send Resend welcome email to worker with: what to expect, how shifts work, pay info</span></div>
+    </div>
+  </div>
+
+  <!-- ZAP 02 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">02</div><div class="zap-title">Worker Approved → Send App Invite</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">Airtable Workers record — status field changes to "approved"</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Send Twilio SMS: "Hi [name], you're approved with CBD Plant & Labour! Log in to view your jobs and timesheets: [YOUR_VERCEL_URL]. Tap the link and add it to your home screen."</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Send Resend onboarding email with app guide and profile completion instructions</span></div>
+    </div>
+  </div>
+
+  <!-- ZAP 03 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">03</div><div class="zap-title">Profile Complete → Notify Admin</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">Airtable Workers — profile_complete field changes to TRUE</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Send Resend email to ops@cbdplantlabour.com.au: "[name] has completed their profile — ready for allocation. Keyword roles: [roles]."</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Send Twilio SMS to Matt (0413 962 001): "New worker profile complete: [name] — [roles]. Check portal."</span></div>
+    </div>
+  </div>
+
+  <!-- ZAP 04 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">04</div><div class="zap-title">Timesheet Submitted → Send Approval to Site Manager</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">Airtable Timesheets — status changes to "submitted"</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Lookup client record → get site_manager_mobile and site_manager_email</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Send Twilio SMS to site manager: "CBD Labour — [site]: [worker] worked [hours]hrs on [date]. Approve: [approval_link] | Dispute: [dispute_link]. Expires 24hrs."</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Send Resend HTML email with Approve / Dispute buttons and timesheet summary</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Update Airtable timesheet: sent_at = now, expires_at = now + 24hrs</span></div>
+    </div>
+  </div>
+
+  <!-- ZAP 05 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">05</div><div class="zap-title">Site Manager Approves → Xero Invoice</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">New JotForm Daily Approval submission — response = "approve"</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Update Airtable timesheet — status = "approved", approved_at = now</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Create Xero draft invoice for client at their Schedule of Rates billing rate</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Update Airtable with xero_invoice_id</span></div>
+    </div>
+  </div>
+
+  <!-- ZAP 06 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">06</div><div class="zap-title">Site Manager Disputes → Escalate to Matt</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">New JotForm Dispute Form submission</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Send URGENT Twilio SMS to Matt (0413 962 001): "DISPUTE: [client] — [worker] [hours]hrs on [date] at [site]. Reason: [reason]. Call [site_manager_name] on [site_manager_mobile]."</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Update Airtable timesheet — status = "disputed", disputed_at = now, dispute_reason = [reason]</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Send Resend confirmation email to site manager</span></div>
+    </div>
+  </div>
+
+  <!-- ZAP 07 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">07</div><div class="zap-title">Auto-Approve After 24 Hours</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">Zapier Schedule — every day at 07:30 UTC (5:30 PM AEST)</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Search Airtable Timesheets — status = "client_pending" AND sent_at is more than 24hrs ago</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Update each record — status = "auto_approved", auto_approved_at = now</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Create Xero invoice for each auto-approved timesheet</span></div>
+    </div>
+  </div>
+
+  <!-- ZAP 08 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">08</div><div class="zap-title">Friday Weekly PDF to Site Managers</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">Zapier Schedule — every Friday at 07:00 UTC (5 PM AEST)</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Search Airtable — approved timesheets this week grouped by client</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Send to DocuPilot with CBD Weekly Summary template — one PDF per client</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Save PDF to Google Drive folder "CBD Weekly PDFs"</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Email PDF via Resend to site manager — CC ops@cbdplantlabour.com.au</span></div>
+    </div>
+  </div>
+
+  <!-- ZAP 09 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">09</div><div class="zap-title">Daily Cert Expiry Check + SMS Alerts</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">Zapier Schedule — every day at 22:00 UTC (8 AM AEST)</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Search Airtable Certifications — days_remaining = 90, 60, or 30</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Send Twilio SMS to worker: "Hi [name], your [cert] expires in [X] days. Please book renewal to stay eligible. Questions? Call David on 0421 842 175. — CBD Plant & Labour"</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">If days_remaining = 0: Send URGENT SMS to Matt and David. Update Airtable cert status = "expired"</span></div>
+    </div>
+  </div>
+
+  <!-- ZAP 10 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">10</div><div class="zap-title">New Allocation → Job Details SMS to Worker</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">New record created in Airtable Allocations table</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Lookup worker mobile from Workers table using worker_id</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Send Twilio SMS: "Hi [name], you've been booked for [client] at [site_address] starting [date] at [time]. Site manager: [name] [mobile]. Notes: [notes]. Reply CONFIRM to confirm. — CBD Plant & Labour"</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Update Allocation record — job_details_sent_at = now</span></div>
+    </div>
+  </div>
+
+  <!-- ZAP 11 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">11</div><div class="zap-title">Worker Replies CONFIRM via SMS</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">Twilio incoming SMS containing word "CONFIRM"</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Search Airtable Allocations — match sender mobile to worker's most recent allocation</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Update Allocation status = "confirmed"</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Send Twilio reply: "Confirmed! See you at [site_address] on [date] at [time]. Call [site_manager_name] on [mobile] if needed. — CBD Plant & Labour"</span></div>
+    </div>
+  </div>
+
+  <!-- ZAP 12 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">12</div><div class="zap-title">Sunday Availability Check Blast</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">Zapier Schedule — every Sunday at 23:00 UTC (9 AM Monday AEST)</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Search Airtable Workers — status = "available" or "unallocated"</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Send Twilio SMS to each: "Hi [name], are you available for work this week? Reply YES, NO, or a date (e.g. WED). — CBD Plant & Labour"</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Update Airtable Workers — availability_check_sent_at = now</span></div>
+    </div>
+  </div>
+
+  <!-- ZAP 13 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">13</div><div class="zap-title">Worker Availability Reply → Update + Notify Admin</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">Twilio incoming SMS with YES, NO, or a day/date</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Search Airtable Workers by sender mobile number</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Update availability_confirmed and available_from fields in worker record</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">If YES: send Resend email to ops@cbdplantlabour.com.au: "[name] is available from [date]. Roles: [roles]. Mobile: [mobile]."</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Send Twilio reply to worker confirming their response was received</span></div>
+    </div>
+  </div>
+
+  <!-- ZAP 14 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">14</div><div class="zap-title">Xero Invoice Paid → Update Records</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">Xero — invoice status changes to PAID</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Search Airtable Timesheets for record matching xero_invoice_id</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Update Airtable record — status = "paid", paid_at = now</span></div>
+      <div class="zap-row"><span class="zap-type zt-then">Then</span><span class="zap-text">Send Resend notification to ops@cbdplantlabour.com.au: "Invoice paid: [client] $[amount] for [date] — Xero ref [ref]."</span></div>
+    </div>
+  </div>
+
+  <!-- ZAP 15 -->
+  <div class="zap-card">
+    <div class="zap-hdr"><div class="zap-num">15</div><div class="zap-title">Message Audit Log (Every Send)</div></div>
+    <div class="zap-body">
+      <div class="zap-row"><span class="zap-type zt-trigger">Trigger</span><span class="zap-text">Twilio SMS sent event OR Resend email sent event</span></div>
+      <div class="zap-row"><span class="zap-type zt-action">Action</span><span class="zap-text">Create Airtable Messages_Log record: type (SMS/Email), recipient, channel, preview (first 80 chars of message), sent_at, delivery_status</span></div>
+    </div>
+  </div>
+
+  <div class="nav-btns">
+    <button class="nav-btn" onclick="show('day7',document.querySelectorAll('.ptab')[8])">← Day 7</button>
+    <button class="nav-btn primary" onclick="show('prompts',document.querySelectorAll('.ptab')[10])">View Prompts →</button>
+  </div>
+</div>
+
+<!-- ═══ PROMPTS ═══ -->
+<div class="section" id="s-prompts">
+  <div class="alert a-orange" style="margin-top:4px;">
+    <span class="alert-icon">📋</span>
+    <div class="alert-body">
+      <div class="alert-title" style="color:var(--orange);">Copy these exactly into Lovable chat</div>
+      <div class="alert-sub">Paste each prompt and wait for Lovable to finish before pasting the next. Use Lovable prompts 1–9 in the Lovable chat. Use Cursor prompts 1–3 in Cursor AI on Day 6.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">L1</div><h2>Lovable Prompt #1 — Initial HTML Conversion</h2></div>
+    <div class="card-body">
+      <div class="prompt-box">
+        <div class="prompt-label">Paste into Lovable chat FIRST — then paste entire HTML file below it</div>
+        <button class="copy-btn" onclick="copyText('p1')">Copy</button>
+        <div class="prompt-text" id="p1">I have a complete HTML prototype of an operations portal for a civil construction labour hire company called CBD Plant & Labour Solutions (ABN: 75 663 693 070, ACN: 663 693 070). The HTML file contains all 10 screens, navigation, modals, styling and sample data. I need you to:
+
+1. Convert this entire HTML file into a production Next.js 14 app using React and Tailwind CSS. Preserve every design detail exactly — colours (orange #F47B20, navy #1D2E55, dark background #0B0E14), fonts (DM Sans for body, DM Mono for code/labels), spacing, and all component styles.
+
+2. Create a Supabase backend with tables for: workers, clients, allocations, timesheets, certifications, client_approvals, weekly_summaries, payroll, and messages_log.
+
+3. Wire up the sidebar navigation so each menu item loads the correct page.
+
+4. Keep all modals functional — they should open and close correctly.
+
+5. Replace all hardcoded sample data with Supabase queries so the app reads and writes real data.
+
+6. Preserve the CBD logo (the orange CBD text logo), ISO certification images, ABN, ACN, and all contact details exactly as they appear in the HTML.
+
+[PASTE YOUR ENTIRE HTML FILE CONTENTS BELOW THIS LINE]</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">L2</div><h2>Lovable Prompt #2 — Workers CRUD</h2></div>
+    <div class="card-body">
+      <div class="prompt-box">
+        <button class="copy-btn" onclick="copyText('p2')">Copy</button>
+        <div class="prompt-text" id="p2">Wire up the Workers page to real Supabase data. I need:
+
+1. Load all workers from the Supabase workers table on page load
+2. Add Worker button opens a modal form — saves to Supabase on submit
+3. Click worker card opens full profile modal with all their details
+4. Edit and Delete buttons work on each worker
+5. Filter by status (On Site / Available / Pool) filters the live Supabase data
+6. Search by name or role filters live data
+7. Certification status badges (Valid/Expiring/Expired) calculated from cert expiry dates
+8. Photo upload — store in Supabase Storage bucket called worker-photos
+9. Document upload for certifications — store in Supabase Storage bucket called worker-certs
+
+Workers table fields: id, name, phone, email, suburb, keyword_roles (array), skills, status, pay_rate, onboard_date, availability, photo_url</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">L3</div><h2>Lovable Prompt #3 — Clients CRUD</h2></div>
+    <div class="card-body">
+      <div class="prompt-box">
+        <button class="copy-btn" onclick="copyText('p3')">Copy</button>
+        <div class="prompt-text" id="p3">Wire up the Clients & Rates page to real Supabase data:
+
+1. Load all clients from Supabase clients table
+2. Add Client button opens onboarding modal — saves to Supabase
+3. Schedule of Rates calculator reads the selected client's rates from Supabase and auto-calculates all rates (OT, Saturday, Sunday, Public Holiday) based on base_rate and multipliers
+4. Edit client details and rates — saves to Supabase
+5. Site manager contact details stored per client
+
+Clients table fields: id, company, abn, project, site_address, site_manager_name, site_manager_mobile, site_manager_email, base_rate, ot_multiplier (default 1.5), we_multiplier (default 1.75), ph_multiplier (default 2.0), travel_rate, lafha_day, ute_day, meal_allowance, min_callout_hours, xero_contact_id</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">L4</div><h2>Lovable Prompt #4 — Allocations Kanban</h2></div>
+    <div class="card-body">
+      <div class="prompt-box">
+        <button class="copy-btn" onclick="copyText('p4')">Copy</button>
+        <div class="prompt-text" id="p4">Wire up the Allocations page with a live Supabase-backed Kanban board:
+
+1. Three columns: Available Pool | Job Sent | On Site
+2. Drag worker cards between columns — updates allocation status in Supabase in real time
+3. Create Allocation button — select worker + client + date + time + site details — saves to Supabase allocations table
+4. Each allocation card shows: worker name, role, client name, site address, start date/time
+5. Click allocation card opens detail modal — edit all fields, see site manager contact
+6. Status changes trigger real-time updates across all connected browsers
+
+Allocations table fields: id, worker_id, client_id, start_date, start_time, site_address, notes, status (available/job_sent/on_site/completed), job_details_sent_at, confirmed_at</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">L5</div><h2>Lovable Prompt #5 — Timesheet Submission + Approval</h2></div>
+    <div class="card-body">
+      <div class="prompt-box">
+        <button class="copy-btn" onclick="copyText('p5')">Copy</button>
+        <div class="prompt-text" id="p5">Build the complete timesheet flow:
+
+1. Admin can submit hours on behalf of any worker — select worker, client, date, clock_in, clock_out — hours auto-calculated
+2. All submitted timesheets appear in the Timesheet Approvals page grouped by status: Pending | Approved | Disputed | Auto-Approved
+3. Approve button updates status to "approved" in Supabase — triggers Xero sync indicator
+4. Reject button prompts for reason — updates status to "rejected"
+5. Payroll Tracker page pulls all approved timesheets for the current week — shows hours, rate, gross pay, super (11.5%), total cost per worker
+6. Xero reference number field on each timesheet — populated after Xero sync
+
+Timesheets table fields: id, worker_id, client_id, date, hours, clock_in, clock_out, status, pay_rate, billing_rate, gross_pay, super_amount, sent_at, expires_at, approved_at, auto_approved_at, disputed_at, dispute_reason, xero_invoice_id, xero_payroll_id</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">L6</div><h2>Lovable Prompt #6 — Admin Auth</h2></div>
+    <div class="card-body">
+      <div class="prompt-box">
+        <button class="copy-btn" onclick="copyText('p6')">Copy</button>
+        <div class="prompt-text" id="p6">Add Supabase Auth to the portal:
+
+1. Login page at /login — email + password using Supabase Auth
+2. Admin users (role = admin) see the full portal with all 10 pages
+3. Worker users (role = worker) see only: Today's Job, Clock In/Out, My Timesheets, My Profile, My Certs
+4. Worker view shows only their own data — filtered by worker_id matching their auth user_id
+5. Protect all API routes — unauthenticated requests return 401
+6. Add a user_profiles table in Supabase: id (matches auth.users.id), role (admin/worker), worker_id (links to workers table)
+7. Logout button in sidebar
+
+Default admin email: [YOUR EMAIL ADDRESS]
+Make the worker view mobile-first — this is used from phones on construction sites.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">L7</div><h2>Lovable Prompt #7 — Daily Approval Flow</h2></div>
+    <div class="card-body">
+      <div class="prompt-box">
+        <button class="copy-btn" onclick="copyText('p7')">Copy</button>
+        <div class="prompt-text" id="p7">Build the daily timesheet approval system:
+
+1. API route at /api/send-approvals — finds all timesheets with status="submitted" and sent_at is null
+2. For each timesheet: generate a signed JWT approval token containing timesheet_id, expires in 24 hours, signed with APPROVAL_SECRET env variable
+3. Send Twilio SMS to site manager: "CBD Labour - [site_name]: [worker_name] worked [hours]hrs on [date]. Approve: [YOUR_VERCEL_URL]/approve/[token] — Link expires 24hrs."
+4. Send Resend HTML email with CBD branding, timesheet summary table, and two large buttons: green APPROVE and red DISPUTE
+5. Update timesheet: sent_at = now, expires_at = now + 24 hours, status = "client_pending"
+6. Set up Vercel Cron to call this route every day at 07:30 UTC (5:30 PM AEST) — add to vercel.json
+
+Use environment variables: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER, RESEND_API_KEY, APPROVAL_SECRET</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">L8</div><h2>Lovable Prompt #8 — Approval Page</h2></div>
+    <div class="card-body">
+      <div class="prompt-box">
+        <button class="copy-btn" onclick="copyText('p8')">Copy</button>
+        <div class="prompt-text" id="p8">Build the no-login approval page at /approve/[token]:
+
+1. Verify the JWT token — if invalid or expired, show a clear error message
+2. Display CBD branding (orange + navy), worker name, hours, date, site, client name
+3. Show a countdown timer: "This approval expires in X hours Y minutes"
+4. Large green APPROVE button — on tap: update Supabase timesheet status = "approved", approved_at = now, show confirmation screen
+5. Red DISPUTE button — on tap: show a text input asking for dispute reason, submit button sends the dispute
+6. After approve: show "Thank you. Approved timesheet for [worker] — [hours]hrs on [date]. CBD Plant & Labour will be notified."
+7. Auto-approve cron: Vercel cron at 07:30 UTC daily — find all timesheets where status="client_pending" AND expires_at < now — update to status="auto_approved", auto_approved_at=now
+
+This page must work perfectly on mobile — site managers use it from their phones on site.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">L9</div><h2>Lovable Prompt #9 — Dispute Flow</h2></div>
+    <div class="card-body">
+      <div class="prompt-box">
+        <button class="copy-btn" onclick="copyText('p9')">Copy</button>
+        <div class="prompt-text" id="p9">Build the dispute flow:
+
+1. When site manager taps DISPUTE on the approval page — show a simple form: text area "Please describe the issue" + submit button
+2. On submit: update Supabase timesheet status = "disputed", disputed_at = now, dispute_reason = [their text]
+3. Immediately send Twilio SMS to ADMIN_MOBILE env variable: "DISPUTE: [client] — [worker_name] [hours]hrs on [date] at [site_name]. Reason: [reason]. Call [site_manager_name]: [site_manager_mobile]"
+4. Send Resend email to ops@cbdplantlabour.com.au with full dispute details
+5. Show confirmation to site manager: "Your dispute has been submitted. CBD Plant & Labour will contact you within 2 hours."
+6. In the admin portal: disputed timesheets appear with a red DISPUTED badge and the dispute reason visible. Admin can Resolve (mark as approved after discussion) or Reject (mark hours as not payable).</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">C1</div><h2>Cursor Prompt #1 — Xero OAuth (Day 6)</h2></div>
+    <div class="card-body">
+      <div class="alert a-amber" style="margin-bottom:8px;"><span class="alert-icon">⚠️</span><div class="alert-body"><div class="alert-sub">Use this in Cursor AI — open your codebase in Cursor first (see Day 6 steps)</div></div></div>
+      <div class="prompt-box">
+        <button class="copy-btn" onclick="copyText('c1')">Copy</button>
+        <div class="prompt-text" id="c1">Build the complete Xero OAuth 2.0 integration for this Next.js app:
+
+1. /api/xero/connect — redirects user to Xero OAuth authorization URL with scopes: accounting.transactions, payroll.employees, payroll.timesheets, offline_access
+2. /api/xero/callback — exchanges authorization code for access + refresh tokens. Encrypt tokens with ENCRYPTION_KEY env var (AES-256). Store encrypted tokens in Supabase table xero_tokens (id, access_token_encrypted, refresh_token_encrypted, expires_at, tenant_id)
+3. /api/xero/refresh — called automatically before any Xero API call if access token is within 5 minutes of expiry
+4. Add "Connect to Xero" button in portal settings page — shows green "Connected" status with tenant name when authenticated
+
+Environment variables needed: XERO_CLIENT_ID, XERO_CLIENT_SECRET, ENCRYPTION_KEY
+Redirect URI: [YOUR_VERCEL_URL]/api/xero/callback
+
+Use the xero-node npm package. Handle token refresh automatically.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">C2</div><h2>Cursor Prompt #2 — Auto Payroll Entry</h2></div>
+    <div class="card-body">
+      <div class="prompt-box">
+        <button class="copy-btn" onclick="copyText('c2')">Copy</button>
+        <div class="prompt-text" id="c2">When a timesheet is approved (status changes to "approved" or "auto_approved" in Supabase), automatically create a Xero Payroll timesheet entry:
+
+1. Trigger: Supabase database webhook on timesheets table when status changes to "approved" or "auto_approved"
+2. Look up the worker's pay_rate from the workers table
+3. Create a Xero Payroll timesheet for the pay period containing timesheet.date
+4. Add timesheet line: worker_id (matched to Xero employee by name or stored xero_employee_id), hours = timesheet.hours, earnings rate = "Ordinary Hours" at timesheet.pay_rate
+5. On success: update Supabase timesheet.xero_payroll_id with the Xero timesheet ID
+6. On error: send Twilio SMS to ADMIN_MOBILE: "Xero payroll sync failed for [worker_name] [hours]hrs — check portal."
+
+Store Xero employee IDs in the workers table as xero_employee_id field.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">C3</div><h2>Cursor Prompt #3 — Auto Invoice Creation</h2></div>
+    <div class="card-body">
+      <div class="prompt-box">
+        <button class="copy-btn" onclick="copyText('c3')">Copy</button>
+        <div class="prompt-text" id="c3">Simultaneously with the payroll entry, create a Xero draft invoice for the client:
+
+1. Look up the client's billing rates from Supabase clients table (base_rate × role multiplier from Schedule of Rates)
+2. Determine the correct billing rate: if hours > 38 in week, OT rate applies for excess; if Saturday, weekend rate; if Sunday, Sunday rate
+3. Create Xero draft invoice: contact = client's xero_contact_id, date = timesheet.date, due_date = date + 14 days
+4. Line item: description = "[worker_name] — [role] — [site_name] — [date]", quantity = hours, unit_amount = billing_rate
+5. Add line items for: travel allowance (if travel_km recorded), LAFHA (if applicable), ute allowance (if applicable)
+6. On success: update Supabase timesheet.xero_invoice_id and portal shows "Xero Synced" badge
+7. On error: SMS to ADMIN_MOBILE with error details
+
+All amounts in AUD. Invoice reference: "CBD-[client_initials]-[date]-[worker_initials]"</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="nav-btns">
+    <button class="nav-btn" onclick="show('zaps',document.querySelectorAll('.ptab')[9])">← Zaps</button>
+    <button class="nav-btn primary" onclick="show('costs',document.querySelectorAll('.ptab')[11])">Costs →</button>
+  </div>
+</div>
+
+<!-- ═══ COSTS ═══ -->
+<div class="section" id="s-costs">
+  <div class="card" style="margin-top:4px;">
+    <div class="card-hdr"><div class="num">💰</div><h2>Build cost (one-time — cancel after)</h2></div>
+    <div class="card-body">
+      <table class="cost-table">
+        <thead><tr><th>Tool</th><th>Cost</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Lovable.dev</strong><br/><span style="font-size:11px;color:var(--muted);">Builds the app from your HTML</span></td><td class="cost-low">$20/mo</td><td><span class="cancel-tag">Cancel after Day 7</span></td></tr>
+          <tr><td><strong>Cursor AI</strong><br/><span style="font-size:11px;color:var(--muted);">Xero integration (Day 6 only)</span></td><td class="cost-low">$20/mo</td><td><span class="cancel-tag">Cancel after Day 7</span></td></tr>
+        </tbody>
+      </table>
+      <div style="margin-top:10px;padding:10px 12px;background:rgba(244,123,32,.08);border-radius:8px;font-size:13px;color:var(--orange);font-weight:700;">Total build cost: ~$40 one-time</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">📅</div><h2>Ongoing monthly cost (keep forever)</h2></div>
+    <div class="card-body">
+      <table class="cost-table">
+        <thead><tr><th>Tool</th><th>Cost/mo</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Supabase</strong><br/><span style="font-size:11px;color:var(--muted);">Database + Auth + Storage</span></td><td class="cost-0">FREE</td><td style="font-size:11px;color:var(--muted);">500MB DB, 1GB storage — enough for years</td></tr>
+          <tr><td><strong>Vercel</strong><br/><span style="font-size:11px;color:var(--muted);">Hosting + Cron jobs</span></td><td class="cost-0">FREE</td><td style="font-size:11px;color:var(--muted);">Hobby tier includes cron jobs</td></tr>
+          <tr><td><strong>Resend</strong><br/><span style="font-size:11px;color:var(--muted);">All automated emails</span></td><td class="cost-0">FREE</td><td style="font-size:11px;color:var(--muted);">3,000 emails/mo free — more than enough</td></tr>
+          <tr><td><strong>Airtable</strong><br/><span style="font-size:11px;color:var(--muted);">Zapier automation database</span></td><td class="cost-0">FREE</td><td style="font-size:11px;color:var(--muted);">Free tier handles all Zap operations</td></tr>
+          <tr><td><strong>DocuPilot</strong><br/><span style="font-size:11px;color:var(--muted);">Weekly PDF reports</span></td><td class="cost-0">FREE</td><td style="font-size:11px;color:var(--muted);">100 docs/mo free — 4 clients × 4 weeks = 16/mo</td></tr>
+          <tr><td><strong>JotForm</strong><br/><span style="font-size:11px;color:var(--muted);">Worker onboarding form</span></td><td class="cost-0">FREE</td><td style="font-size:11px;color:var(--muted);">Already on free tier</td></tr>
+          <tr><td><strong>GitHub</strong><br/><span style="font-size:11px;color:var(--muted);">Code repository</span></td><td class="cost-0">FREE</td><td style="font-size:11px;color:var(--muted);">Free for public + private repos</td></tr>
+          <tr><td><strong>Twilio</strong><br/><span style="font-size:11px;color:var(--muted);">All SMS sends</span></td><td class="cost-low">~$20/mo</td><td style="font-size:11px;color:var(--muted);">$2 AUS number + ~$0.08/SMS. ~200 SMS/mo = ~$18</td></tr>
+          <tr><td><strong>Zapier Starter</strong><br/><span style="font-size:11px;color:var(--muted);">All 15 automations</span></td><td class="cost-low">$25/mo</td><td style="font-size:11px;color:var(--muted);">Starter: 15 Zaps, 3 steps each — fits perfectly</td></tr>
+          <tr style="background:rgba(46,204,113,.05);"><td><strong>TOTAL ONGOING</strong></td><td class="cost-0" style="font-size:16px;">~$45/mo</td><td style="font-size:11px;color:var(--green);">vs $220/mo in original plan</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">📈</div><h2>What you saved vs other options</h2></div>
+    <div class="card-body">
+      <table class="cost-table">
+        <thead><tr><th>Option</th><th>Cost</th><th>vs This Plan</th></tr></thead>
+        <tbody>
+          <tr><td>Hire a developer</td><td style="color:var(--red);font-weight:700;">$40,000–60,000</td><td class="cost-0">Save $59,955</td></tr>
+          <tr><td>Agency build (offshore)</td><td style="color:var(--red);font-weight:700;">$15,000–25,000</td><td class="cost-0">Save $24,955</td></tr>
+          <tr><td>Original plan ($220/mo ongoing)</td><td style="color:var(--amber);font-weight:700;">$220/mo</td><td class="cost-0">Save $175/mo = $2,100/yr</td></tr>
+          <tr><td><strong>This plan</strong></td><td class="cost-0"><strong>$40 build + $45/mo</strong></td><td style="color:var(--cyan);font-weight:700;">✓ Minimum viable</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="alert a-green">
+    <span class="alert-icon">✓</span>
+    <div class="alert-body">
+      <div class="alert-title" style="color:var(--green);">If you outgrow free tiers</div>
+      <div class="alert-sub">Supabase Pro kicks in at $25/mo when you hit 500MB DB or 50K users — you're unlikely to hit that for years. Vercel Pro ($20/mo) adds more cron capacity. Resend paid starts at $20/mo for 50K emails. None of these are urgent.</div>
+    </div>
+  </div>
+
+  <div class="nav-btns">
+    <button class="nav-btn" onclick="show('prompts',document.querySelectorAll('.ptab')[10])">← Prompts</button>
+    <button class="nav-btn primary" onclick="show('envvars',document.querySelectorAll('.ptab')[12])">Env Vars →</button>
+  </div>
+</div>
+
+<!-- ═══ ENV VARS ═══ -->
+<div class="section" id="s-envvars">
+  <div class="alert a-amber" style="margin-top:4px;">
+    <span class="alert-icon">🔑</span>
+    <div class="alert-body">
+      <div class="alert-title" style="color:var(--amber);">Add all of these to Vercel → Settings → Environment Variables</div>
+      <div class="alert-sub">Also add them to Lovable → Settings → Env Vars. Never share these publicly.</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-body" style="padding:0;">
+      <table class="env-table">
+        <thead><tr><th>Variable Name</th><th>Where to Get It</th></tr></thead>
+        <tbody>
+          <tr><td><span class="env-key">NEXT_PUBLIC_SUPABASE_URL</span></td><td><span class="env-where">supabase.com → Project Settings → API → Project URL</span></td></tr>
+          <tr><td><span class="env-key">NEXT_PUBLIC_SUPABASE_ANON_KEY</span></td><td><span class="env-where">supabase.com → Project Settings → API → anon public key</span></td></tr>
+          <tr><td><span class="env-key">SUPABASE_SERVICE_ROLE_KEY</span></td><td><span class="env-where">supabase.com → Project Settings → API → service_role key (keep secret)</span></td></tr>
+          <tr><td><span class="env-key">TWILIO_ACCOUNT_SID</span></td><td><span class="env-where">twilio.com → Console Dashboard → Account SID</span></td></tr>
+          <tr><td><span class="env-key">TWILIO_AUTH_TOKEN</span></td><td><span class="env-where">twilio.com → Console Dashboard → Auth Token</span></td></tr>
+          <tr><td><span class="env-key">TWILIO_PHONE_NUMBER</span></td><td><span class="env-where">twilio.com → Phone Numbers → Your Australian number (e.g. +61412345678)</span></td></tr>
+          <tr><td><span class="env-key">RESEND_API_KEY</span></td><td><span class="env-where">resend.com → API Keys → Create API Key</span></td></tr>
+          <tr><td><span class="env-key">RESEND_FROM_EMAIL</span></td><td><span class="env-where">ops@cbdplantlabour.com.au (after verifying domain in Resend)</span></td></tr>
+          <tr><td><span class="env-key">XERO_CLIENT_ID</span></td><td><span class="env-where">developer.xero.com → Your App → Client ID</span></td></tr>
+          <tr><td><span class="env-key">XERO_CLIENT_SECRET</span></td><td><span class="env-where">developer.xero.com → Your App → Client Secret</span></td></tr>
+          <tr><td><span class="env-key">XERO_REDIRECT_URI</span></td><td><span class="env-where">https://[your-vercel-domain]/api/xero/callback</span></td></tr>
+          <tr><td><span class="env-key">APPROVAL_SECRET</span></td><td><span class="env-where">Your generated 32-character random string (from Setup step 3)</span></td></tr>
+          <tr><td><span class="env-key">ENCRYPTION_KEY</span></td><td><span class="env-where">Your second generated 32-character random string (from Setup step 3)</span></td></tr>
+          <tr><td><span class="env-key">ADMIN_MOBILE</span></td><td><span class="env-where">+61413962001 (Matt's number — receives all dispute/urgent alerts)</span></td></tr>
+          <tr><td><span class="env-key">ADMIN_EMAIL</span></td><td><span class="env-where">ops@cbdplantlabour.com.au</span></td></tr>
+          <tr><td><span class="env-key">DOCUPILOT_API_KEY</span></td><td><span class="env-where">docupilot.app → Account Settings → API Key</span></td></tr>
+          <tr><td><span class="env-key">DOCUPILOT_TEMPLATE_ID</span></td><td><span class="env-where">docupilot.app → Your weekly summary template → Template ID</span></td></tr>
+          <tr><td><span class="env-key">NEXT_PUBLIC_APP_URL</span></td><td><span class="env-where">https://[your-vercel-domain] or https://ops.cbdplantlabour.com.au</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr"><div class="num">📋</div><h2>Airtable Field Names (exact — case sensitive)</h2></div>
+    <div class="card-body">
+      <div style="font-size:12px;color:var(--muted);line-height:2;font-family:'Courier New',monospace;">
+        <div style="color:var(--orange);font-weight:700;margin-bottom:4px;">Workers table:</div>
+        id, name, mobile, email, roles, status, app_invite_sent, profile_complete, availability_date, availability_confirmed, pay_rate, keyword_roles, xero_employee_id
+        <div style="color:var(--orange);font-weight:700;margin:8px 0 4px;">Timesheets table:</div>
+        id, worker_id, client_id, date, hours, clock_in, clock_out, status, sent_at, expires_at, approved_at, auto_approved_at, disputed_at, dispute_reason, xero_invoice_id, xero_payroll_id, pay_rate, billing_rate
+        <div style="color:var(--orange);font-weight:700;margin:8px 0 4px;">Allocations table:</div>
+        id, worker_id, client_id, start_date, start_time, site_address, site_manager_contact, notes, status, job_details_sent_at, confirmed_at
+        <div style="color:var(--orange);font-weight:700;margin:8px 0 4px;">Certifications table:</div>
+        id, worker_id, cert_type, expiry_date, days_remaining, status, alert_sent_at, document_url
+        <div style="color:var(--orange);font-weight:700;margin:8px 0 4px;">Clients table:</div>
+        id, company, project, site_address, site_manager_name, site_manager_mobile, site_manager_email, base_rate, ot_multiplier, lafha_day, ute_day, xero_contact_id, abn
+        <div style="color:var(--orange);font-weight:700;margin:8px 0 4px;">Messages_Log table:</div>
+        id, type, recipient, channel, preview, sent_at, delivery_status, zap_ref
+      </div>
+    </div>
+  </div>
+
+  <div class="nav-btns">
+    <button class="nav-btn" onclick="show('costs',document.querySelectorAll('.ptab')[11])">← Costs</button>
+    <button class="nav-btn primary" onclick="show('overview',document.querySelectorAll('.ptab')[0])">Back to Start ↑</button>
+  </div>
+</div>
+
+</div><!-- /.main -->
+
+<script>
+function show(id, el) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.ptab').forEach(t => t.classList.remove('active'));
+  document.getElementById('s-' + id).classList.add('active');
+  if (el) el.classList.add('active');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function copyText(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent.trim()).then(() => {
+    const btns = document.querySelectorAll('.copy-btn');
+    btns.forEach(b => {
+      if (b.onclick && b.onclick.toString().includes(id)) {
+        const orig = b.textContent;
+        b.textContent = '✓ Copied!';
+        b.style.color = 'var(--green)';
+        setTimeout(() => { b.textContent = orig; b.style.color = ''; }, 2000);
+      }
+    });
+  });
+}
+</script>
+</body>
+</html>
