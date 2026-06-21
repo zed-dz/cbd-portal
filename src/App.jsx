@@ -8,6 +8,7 @@ import { WorkerPortal } from './portals/WorkerPortal';
 import { PublicProfilePage } from './pages/PublicProfile/PublicProfilePage';
 import { OnboardProfilePage } from './pages/OnboardProfile/OnboardProfilePage';
 import { ApplyPage } from './pages/Apply/ApplyPage';
+import { OmniHelpBubble } from './components/help/OmniHelpBubble';
 
 const PUBLIC_ROUTE_PATTERNS = [
   { kind: 'profile',  re: /^\/p\/([0-9a-f-]{36})\/?$/i },
@@ -229,6 +230,7 @@ function AppShell() {
   return (
     <>
       <ToastContainer toasts={toasts} onRemove={removeToast} />
+      {session && currentWorker && <OmniHelpBubble />}
       {!session ? (
         <LoginPage
           email={loginEmail} setEmail={setLoginEmail}
