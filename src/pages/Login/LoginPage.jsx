@@ -34,8 +34,17 @@ export function LoginPage({ email, setEmail, password, setPassword, error, loadi
     });
     setSignupBusy(false);
     if (err) { setSignupError(err.message); return; }
+    // Fire a branded welcome/confirmation email via our own edge function
+    // (Gmail-first, Resend-fallback). Best-effort: never block the signup UX
+    // on the email. The user has no session yet at this point, so this call
+    // carries only the anon key — send-welcome runs with verify_jwt=false.
+    supabase.functions
+      .invoke('send-welcome', { body: { email, name: name.trim() || null } })
+      .catch((e) => console.error('send-welcome failed:', e));
     if (!data.session) {
       setSignupSuccess('Account created. Check your email to confirm, then sign in.');
+    } else {
+      setSignupSuccess('Account created. A welcome email is on its way.');
     }
   }
 
