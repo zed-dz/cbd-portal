@@ -15,6 +15,7 @@ export function LoginPage({ email, setEmail, password, setPassword, error, loadi
   const [signupSuccess, setSignupSuccess] = useState(null);
   const [magicBusy, setMagicBusy] = useState(false);
   const [magicMsg, setMagicMsg]   = useState('');
+  const [notice, setNotice]       = useState('');
 
   // Passwordless recovery: send a one-tap sign-in link. Covers workers who were
   // invited before they had a password, or who forgot it. shouldCreateUser:false
@@ -51,6 +52,20 @@ export function LoginPage({ email, setEmail, password, setPassword, error, loadi
     });
     setSignupBusy(false);
     if (err) { setSignupError(err.message); return; }
+    // Supabase (with email-enumeration protection ON) returns a fake "success"
+    // for an email that ALREADY exists: no error, but data.user.identities is
+    // EMPTY and the password is NOT changed. Without this guard the UI says
+    // "account created" while the chosen password silently never applies — the
+    // exact "invalid login details right after signing up" bug. Detect it and
+    // route the user to sign in / the sign-in link instead.
+    const alreadyRegistered =
+      !!data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0;
+    if (alreadyRegistered) {
+      setPassword('');
+      setNotice('That email already has an account. Sign in below with your password — or tap “Forgot your password? Email me a sign-in link” to get straight in.');
+      setMode('signin');
+      return;
+    }
     // Fire a branded welcome/confirmation email via our own edge function
     // (Gmail-first, Resend-fallback). Best-effort: never block the signup UX
     // on the email. The user has no session yet at this point, so this call
@@ -107,7 +122,7 @@ export function LoginPage({ email, setEmail, password, setPassword, error, loadi
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => { setMode(t.id); setSignupError(''); setSignupSuccess(null); }}
+                  onClick={() => { setMode(t.id); setSignupError(''); setSignupSuccess(null); setNotice(''); }}
                   style={{
                     flex: 1, padding: '7px 8px', border: 'none', cursor: 'pointer',
                     background: active ? C.cardHover : 'transparent',
@@ -170,6 +185,15 @@ export function LoginPage({ email, setEmail, password, setPassword, error, loadi
                 <h2 style={{ color: C.text, fontSize: 19, fontWeight: 700, letterSpacing: -0.3 }}>Sign in</h2>
                 <p style={{ color: C.textMuted, fontSize: 13, marginTop: 4 }}>Welcome back. Enter your credentials below.</p>
               </div>
+              {notice && (
+                <div style={{
+                  background: 'rgba(249,115,22,0.10)', border: '1px solid rgba(249,115,22,0.32)',
+                  color: '#fdba74', fontSize: 12.5, padding: '10px 12px', borderRadius: R.md,
+                  marginBottom: 14, lineHeight: 1.5,
+                }}>
+                  {notice}
+                </div>
+              )}
               <form onSubmit={onSubmit}>
                 <Field label="Email">
                   <input style={inputStyle} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" autoFocus />
