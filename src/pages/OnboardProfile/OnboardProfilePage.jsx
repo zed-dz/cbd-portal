@@ -17,6 +17,7 @@ const STEPS = [
   { id: 'super',     label: 'Super' },
   { id: 'emergency', label: 'Emergency' },
   { id: 'medical',   label: 'Medical' },
+  { id: 'login',     label: 'Login' },
   { id: 'review',    label: 'Review' },
 ];
 
@@ -45,6 +46,8 @@ const EMPTY = {
   // Medical
   blood_type: '', allergies: '', conditions: '', medications: '',
   gp_name: '', gp_phone: '', medicare_number: '',
+  // Login
+  password: '', password_confirm: '',
 };
 
 export function OnboardProfilePage({ token }) {
@@ -76,8 +79,21 @@ export function OnboardProfilePage({ token }) {
   const set = (patch) => setForm(f => ({ ...f, ...patch }));
 
   const handleSubmit = async () => {
-    setSaving(true);
     setError(null);
+    // The worker must set a login password so they can sign straight into the
+    // portal with email + password (this is what was previously missing).
+    const pw = form.password || '';
+    if (pw.length < 8) {
+      setError('Please set a password of at least 8 characters so you can log in.');
+      setStep(STEPS.findIndex(s => s.id === 'login'));
+      return;
+    }
+    if (pw !== form.password_confirm) {
+      setError("The two passwords don't match.");
+      setStep(STEPS.findIndex(s => s.id === 'login'));
+      return;
+    }
+    setSaving(true);
     const blank = (v) => (v === '' || v == null) ? null : v;
     const params = {
       token,
@@ -124,12 +140,19 @@ export function OnboardProfilePage({ token }) {
       return;
     }
 
-    // Fire-and-forget the auth invite. If it fails (SMTP not set, etc.) the
-    // worker still has their profile saved; admin can resend manually.
+    // Create the worker's login (email + the password they just set) so they
+    // can sign straight into the portal. This is what makes login actually work
+    // — previously this created a passwordless account, so email+password login
+    // always failed with "invalid credentials".
     try {
-      await supabase.functions.invoke('worker-finalize', { body: { token } });
-    } catch {
-      // Swallow — primary success is RPC. Don't block the worker.
+      const { data: fin, error: finErr } = await supabase.functions.invoke('worker-finalize', {
+        body: { token, password: pw },
+      });
+      if (finErr || (fin && fin.error)) {
+        console.error('worker-finalize failed:', finErr || fin?.error);
+      }
+    } catch (e) {
+      console.error('worker-finalize threw:', e);
     }
 
     setSaved(true);
@@ -164,9 +187,9 @@ export function OnboardProfilePage({ token }) {
           Thanks, {(profile.name || 'there').split(' ')[0]}!
         </div>
         <div style={{ color: C.textMuted, fontSize: 14, maxWidth: 420, textAlign: 'center', lineHeight: 1.6 }}>
-          Your profile's saved. We'll review it shortly and send you a sign-in link
-          to <strong style={{ color: C.text }}>{profile.email || 'your email'}</strong> so you can log into the worker portal,
-          see your bookings and submit timesheets.
+          Your profile's saved and your login is ready. Sign in at the portal with
+          your email <strong style={{ color: C.text }}>{profile.email || ''}</strong> and the
+          password you just set to see your bookings and submit timesheets.
         </div>
       </Centered>
     );
@@ -196,6 +219,7 @@ export function OnboardProfilePage({ token }) {
           {STEPS[step].id === 'super'     && <StepSuper     form={form} set={set} />}
           {STEPS[step].id === 'emergency' && <StepEmergency form={form} set={set} />}
           {STEPS[step].id === 'medical'   && <StepMedical   form={form} set={set} />}
+          {STEPS[step].id === 'login'     && <StepLogin     form={form} set={set} profile={profile} />}
           {STEPS[step].id === 'review'    && <StepReview    form={form} profile={profile} />}
 
           {error && (
@@ -492,6 +516,28 @@ function StepMedical({ form, set }) {
   );
 }
 
+function StepLogin({ form, set, profile }) {
+  return (
+    <>
+      <SectionHeader title="Create your login" subtitle="You'll use this to sign into the worker portal — see your jobs, submit timesheets and update your details." />
+      <Field label="Your email">
+        <input style={{ ...inputStyle, opacity: 0.65 }} type="email" value={profile.email || ''} readOnly disabled />
+      </Field>
+      {!profile.email && (
+        <div style={{ marginBottom: 12, padding: '8px 12px', background: 'rgba(244,63,94,0.10)', border: '1px solid rgba(244,63,94,0.4)', borderRadius: 8, color: '#fda4af', fontSize: 12 }}>
+          No email is on file for you yet. Ask your CBD contact to add your email — you'll log in with it.
+        </div>
+      )}
+      <Field label="Password *" hint="At least 8 characters. You'll sign in with your email and this password.">
+        <input style={inputStyle} type="password" value={form.password} onChange={e => set({ password: e.target.value })} placeholder="••••••••" autoComplete="new-password" />
+      </Field>
+      <Field label="Confirm password *">
+        <input style={inputStyle} type="password" value={form.password_confirm} onChange={e => set({ password_confirm: e.target.value })} placeholder="••••••••" autoComplete="new-password" />
+      </Field>
+    </>
+  );
+}
+
 function StepReview({ form, profile }) {
   const rows = useMemo(() => [
     ['Name',          profile.name],
@@ -528,7 +574,7 @@ function StepReview({ form, profile }) {
         ))}
       </div>
       <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(34,197,94,0.10)', border: `1px solid rgba(34,197,94,0.3)`, borderRadius: 8, fontSize: 12, color: C.success, lineHeight: 1.55 }}>
-        After submitting we'll email you a sign-in link to <strong>{profile.email || 'your email'}</strong> so you can log in and see your bookings.
+        After submitting you can sign in straight away at the portal with <strong>{profile.email || 'your email'}</strong> and the password you set.
       </div>
     </>
   );

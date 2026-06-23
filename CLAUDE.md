@@ -6,6 +6,10 @@ future session can resume work without re-deriving context.
 
 ---
 
+## Verification discipline (always)
+
+Before starting any task, state in one line **how it will be verified** (the command, endpoint, query, or screen that proves it works). After finishing, **run that verification and report the actual result** — real output, not a claim. If a check failed or a step was skipped, say so.
+
 ## What this app is
 
 A React 19 + Supabase + Vercel ops portal for **CBD Plant & Labour** (NSW, AU

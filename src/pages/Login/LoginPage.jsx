@@ -13,6 +13,23 @@ export function LoginPage({ email, setEmail, password, setPassword, error, loadi
   const [signupBusy, setSignupBusy]   = useState(false);
   const [signupError, setSignupError] = useState('');
   const [signupSuccess, setSignupSuccess] = useState(null);
+  const [magicBusy, setMagicBusy] = useState(false);
+  const [magicMsg, setMagicMsg]   = useState('');
+
+  // Passwordless recovery: send a one-tap sign-in link. Covers workers who were
+  // invited before they had a password, or who forgot it. shouldCreateUser:false
+  // so this never silently makes a brand-new account.
+  async function handleMagicLink() {
+    setMagicMsg('');
+    if (!email) { setMagicMsg('Enter your email above first.'); return; }
+    setMagicBusy(true);
+    const { error: err } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: portalBaseUrl(), shouldCreateUser: false },
+    });
+    setMagicBusy(false);
+    setMagicMsg(err ? err.message : 'Check your email — we sent you a one-tap sign-in link.');
+  }
 
   async function handleSignUp(e) {
     e.preventDefault();
@@ -177,6 +194,19 @@ export function LoginPage({ email, setEmail, password, setPassword, error, loadi
                   {loading ? <><Spinner size={14} /> Signing in…</> : 'Sign In →'}
                 </button>
               </form>
+              <div style={{ marginTop: 14, textAlign: 'center' }}>
+                <button
+                  type="button"
+                  onClick={handleMagicLink}
+                  disabled={magicBusy}
+                  style={{ background: 'none', border: 'none', color: C.textMuted, fontSize: 12.5, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                >
+                  {magicBusy ? 'Sending…' : 'Forgot your password? Email me a sign-in link'}
+                </button>
+                {magicMsg && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>{magicMsg}</div>
+                )}
+              </div>
             </>
           )}
         </div>
