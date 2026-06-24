@@ -5,7 +5,7 @@ import { todayISO, fmtDate } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
 import { computeTimesheetHours, buildXeroCSV } from '../../utils/payroll';
 import { SCENARIOS } from '../../constants/scenarios';
-import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, timesheetBadge } from '../../components';
+import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, timesheetBadge, DailyTimesheetForm, dailyFromHeader, blankDaily } from '../../components';
 
 const tsDefaults = {
   worker_id: '', client: '', site: '', date: '', scenario: 'standard',
@@ -17,7 +17,29 @@ const tsDefaults = {
   admin_override_hours: '', status: 'pending', notes: '',
 };
 
-export function TimesheetsPage({ showToast, refreshBadge }) {
+export function TimesheetsPage({ showToast, refreshBadge, isMobile }) {
+  const [view, setView] = useState('daily');
+  const tabBtn = (id, label) => (
+    <button key={id} onClick={() => setView(id)} style={{
+      padding: '8px 16px', background: view === id ? C.accentSoft : 'transparent',
+      border: `1px solid ${view === id ? C.accentBorder : C.border}`, borderRadius: 8,
+      color: view === id ? C.accent : C.textMuted, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+    }}>{label}</button>
+  );
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        {tabBtn('daily', 'Daily Timesheets')}
+        {tabBtn('line', 'Line Timesheets')}
+      </div>
+      {view === 'daily'
+        ? <DailyTimesheetsAdmin showToast={showToast} refreshBadge={refreshBadge} isMobile={isMobile} />
+        : <LineTimesheetsPage showToast={showToast} refreshBadge={refreshBadge} />}
+    </div>
+  );
+}
+
+function LineTimesheetsPage({ showToast, refreshBadge }) {
   const [timesheets, setTimesheets] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [configMap, setConfigMap] = useState({});
@@ -371,6 +393,149 @@ export function TimesheetsPage({ showToast, refreshBadge }) {
             <button onClick={closeModal} style={btnSecondary}>Cancel</button>
             <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
           </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ---- Daily Timesheets (detailed) admin: list + full edit of submitted ones ----
+function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
+  const [headers, setHeaders] = useState([]);
+  const [workers, setWorkers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filterStatus, setFilterStatus] = useState('');
+  const [search, setSearch] = useState('');
+  const [modal, setModal] = useState(null);      // 'add' | header object | null
+  const [editInitial, setEditInitial] = useState(null);
+  const [editWorkerId, setEditWorkerId] = useState('');
+  const [loadingForm, setLoadingForm] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [h, w] = await Promise.all([
+      supabase.from('timesheet_headers').select('*, workers(name)').order('created_at', { ascending: false }),
+      supabase.from('workers').select('id, name').is('archived_at', null).order('name'),
+    ]);
+    if (h.error) showToast(h.error.message, 'error');
+    else setHeaders(h.data || []);
+    if (w.data) setWorkers(w.data);
+    setLoading(false);
+  }, [showToast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openAdd = () => {
+    setEditInitial(blankDaily());
+    setEditWorkerId('');
+    setModal('add');
+  };
+
+  // Admin edit: pull the header + its line rows, hydrate the shared form.
+  const openEdit = async (header) => {
+    setLoadingForm(true);
+    setModal(header);
+    setEditWorkerId(header.worker_id || '');
+    const { data: lines, error } = await supabase.from('timesheets').select('*')
+      .eq('header_id', header.id).order('date');
+    if (error) showToast(error.message, 'error');
+    setEditInitial(dailyFromHeader(header, lines || []));
+    setLoadingForm(false);
+  };
+
+  const closeModal = () => { setModal(null); setEditInitial(null); setEditWorkerId(''); };
+  const onSaved = () => { closeModal(); load(); refreshBadge?.(); };
+
+  const setStatus = async (header, status) => {
+    const { error } = await supabase.from('timesheet_headers').update({ status }).eq('id', header.id);
+    if (error) { showToast(error.message, 'error'); return; }
+    // keep line rows in sync so payroll/Xero sees the same status
+    await supabase.from('timesheets').update({ status }).eq('header_id', header.id);
+    showToast(`Timesheet ${status}`, status === 'rejected' ? 'info' : 'success');
+    load(); refreshBadge?.();
+  };
+
+  const handleDelete = async (header) => {
+    if (!window.confirm('Delete this daily timesheet and all its line rows?')) return;
+    // line rows cascade via FK on delete
+    const { error } = await supabase.from('timesheet_headers').delete().eq('id', header.id);
+    if (error) { showToast(error.message, 'error'); return; }
+    showToast('Daily timesheet deleted', 'success');
+    load(); refreshBadge?.();
+  };
+
+  const filtered = headers.filter(h => {
+    const matchStatus = !filterStatus || h.status === filterStatus;
+    const q = search.toLowerCase();
+    const matchSearch = !search || (h.workers?.name || '').toLowerCase().includes(q)
+      || (h.client || '').toLowerCase().includes(q) || (h.project || '').toLowerCase().includes(q);
+    return matchStatus && matchSearch;
+  });
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', flex: 1 }}>
+          <input style={{ ...inputStyle, maxWidth: 240 }} placeholder="Search worker, client, project…" value={search} onChange={e => setSearch(e.target.value)} />
+          <select style={{ ...inputStyle, maxWidth: 180 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+            <option value="">All Statuses</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+        </div>
+        <button onClick={openAdd} style={btnPrimary}>+ Add Daily Timesheet</button>
+      </div>
+
+      {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : filtered.length === 0 ? (
+        <EmptyState message="No daily timesheets found." />
+      ) : (
+        <TableWrap>
+          <thead><tr><Th>Worker</Th><Th>Submitted</Th><Th>Client</Th><Th>Project</Th><Th>Role</Th><Th>Total / Reg</Th><Th>Wet Hire</Th><Th>Sig</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
+          <tbody>
+            {filtered.map(h => (
+              <tr key={h.id}>
+                <Td>{h.workers?.name || '—'}</Td>
+                <Td>{fmtDate(h.created_at)}</Td>
+                <Td>{h.client || '—'}</Td>
+                <Td>{h.project || '—'}</Td>
+                <Td>{h.role || '—'}</Td>
+                <Td><span style={{ fontWeight: 700 }}>{Number(h.total_hours || 0).toFixed(2)}</span> / {Number(h.total_regular_hours || 0).toFixed(2)}</Td>
+                <Td>{h.wet_hire ? 'Yes' : 'No'}</Td>
+                <Td>{h.client_signature ? '✓' : '—'}</Td>
+                <Td>{timesheetBadge(h.status)}</Td>
+                <Td>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {h.status === 'pending' && <>
+                      <button onClick={() => setStatus(h, 'approved')} style={{ ...btnSmall, color: '#4ade80' }}>✓ Approve</button>
+                      <button onClick={() => setStatus(h, 'rejected')} style={{ ...btnSmall, color: '#fca5a5' }}>✗ Reject</button>
+                    </>}
+                    <button onClick={() => openEdit(h)} style={btnSmall}>Edit</button>
+                    <button onClick={() => handleDelete(h)} style={btnDanger}>Delete</button>
+                  </div>
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </TableWrap>
+      )}
+
+      {modal && (
+        <Modal title={modal === 'add' ? 'Add Daily Timesheet' : 'Edit Daily Timesheet'} onClose={closeModal} width={820}>
+          {loadingForm || !editInitial ? (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner /></div>
+          ) : (
+            <DailyTimesheetForm
+              initial={editInitial}
+              workerId={editWorkerId}
+              workers={workers}
+              allowAdmin
+              onWorkerChange={setEditWorkerId}
+              onSaved={onSaved}
+              onCancel={closeModal}
+              showToast={showToast}
+            />
+          )}
         </Modal>
       )}
     </div>
