@@ -56,6 +56,42 @@ export function computeTimesheetHours(form, workerType, config = {}) {
   return { pay_hours, charge_hours, overtime_hours, is_weekend, travel_allowance, meal_allowance };
 }
 
+// --- Daily Timesheet (detailed) line computations ---------------------------
+// Each "Hours worked" line: Total Hours = end - start - break (in hours).
+// Regular Hours reuses the daily overtime threshold if configured, else = Total.
+
+export const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+// Day-of-week label from an ISO date (uses noon to dodge DST/tz edges).
+export function dayFromDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T12:00:00');
+  if (isNaN(d)) return '';
+  return DAY_NAMES[d.getDay()];
+}
+
+// Total Hours = (end - start) - break, in decimal hours, never negative.
+// start/end are "HH:MM" strings; crosses-midnight handled by adding 24h.
+export function computeLineTotalHours(startTime, endTime, breakHours) {
+  if (!startTime || !endTime) return 0;
+  const [sh, sm] = startTime.split(':').map(Number);
+  const [eh, em] = endTime.split(':').map(Number);
+  if ([sh, sm, eh, em].some(isNaN)) return 0;
+  let mins = (eh * 60 + em) - (sh * 60 + sm);
+  if (mins < 0) mins += 24 * 60; // overnight shift
+  const hrs = mins / 60 - (parseFloat(breakHours) || 0);
+  return roundTo15Min(Math.max(0, hrs));
+}
+
+// Regular Hours — reuse the existing daily OT threshold if present, else = total.
+export function computeLineRegularHours(totalHours, config = {}) {
+  const OT_THRESHOLD = config.ot_threshold_daily != null ? parseFloat(config.ot_threshold_daily) : null;
+  if (OT_THRESHOLD == null || isNaN(OT_THRESHOLD)) return totalHours;
+  return Math.min(totalHours, OT_THRESHOLD);
+}
+
+export const SHIFT_TYPES = ['Day', 'Night', 'Weekend', 'Public Holiday'];
+
 export function computePayrollRow(ts, worker, clientRecord, config = {}) {
   const OT_MULT      = parseFloat(config.ot_multiplier               ?? 1.5);
   const GEO_PCT      = parseFloat(config.geo_loading_pct             ?? 0.10);

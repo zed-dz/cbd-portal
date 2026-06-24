@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary } from '../theme';
 import { todayISO, fmtDate, fmtDateTime } from '../utils/dates';
-import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, timesheetBadge, certBadge } from '../components';
+import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, timesheetBadge, certBadge, DailyTimesheetForm } from '../components';
 
 export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) {
   const [activeTab, setActiveTab] = useState('allocations');
@@ -88,49 +88,36 @@ function WorkerAllocations({ currentWorker, showToast }) {
   );
 }
 
-const WORKER_SCENARIOS = [
-  { value: 'standard', label: 'Standard Shift' },
-  { value: 'rain_off_cancelled', label: 'Rain Day' },
-];
-
 function WorkerTimesheets({ currentWorker, showToast }) {
-  const [timesheets, setTimesheets] = useState([]);
+  const [headers, setHeaders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
-  const [form, setForm] = useState({ scenario: 'standard', client: '', site: '', date: todayISO(), hours: '', notes: '' });
-  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('timesheets').select('*').eq('worker_id', currentWorker.id).order('date', { ascending: false });
+    const { data, error } = await supabase.from('timesheet_headers').select('*')
+      .eq('worker_id', currentWorker.id).order('created_at', { ascending: false });
     if (error) showToast(error.message, 'error');
-    else setTimesheets(data || []);
+    else setHeaders(data || []);
     setLoading(false);
   }, [currentWorker.id, showToast]);
 
   useEffect(() => { load(); }, [load]);
 
-  const handleSubmit = async () => {
-    if (!form.date || form.hours === '') { showToast('Date and hours are required.', 'error'); return; }
-    setSaving(true);
-    const { error } = await supabase.from('timesheets').insert([{ ...form, worker_id: currentWorker.id, status: 'pending', hours: parseFloat(form.hours) }]);
-    if (error) showToast(error.message, 'error');
-    else { showToast('Timesheet submitted successfully', 'success'); setModal(false); setForm({ scenario: 'standard', client: '', site: '', date: todayISO(), hours: '', notes: '' }); load(); }
-    setSaving(false);
-  };
+  const onSaved = () => { setModal(false); load(); };
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 20 }}>
-        <button onClick={() => setModal(true)} style={btnPrimary}>+ Submit Timesheet</button>
+        <button onClick={() => setModal(true)} style={btnPrimary}>+ New Daily Timesheet</button>
       </div>
-      {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : timesheets.length === 0 ? (
+      {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : headers.length === 0 ? (
         <EmptyState message="No timesheets yet. Submit one to get started." />
       ) : (
         <>
           <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
             {['all','pending','approved','rejected'].map(s => {
-              const hrs = (s === 'all' ? timesheets : timesheets.filter(t => t.status === s)).reduce((a, t) => a + (parseFloat(t.hours) || 0), 0);
+              const hrs = (s === 'all' ? headers : headers.filter(t => t.status === s)).reduce((a, t) => a + (parseFloat(t.total_hours) || 0), 0);
               return (
                 <div key={s} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 16px', textAlign: 'center' }}>
                   <div style={{ fontSize: 18, fontWeight: 700, color: s === 'approved' ? C.success : s === 'rejected' ? C.error : s === 'pending' ? C.warning : C.text }}>{hrs.toFixed(1)}</div>
@@ -140,15 +127,16 @@ function WorkerTimesheets({ currentWorker, showToast }) {
             })}
           </div>
           <TableWrap>
-            <thead><tr><Th>Date</Th><Th>Client</Th><Th>Site</Th><Th>Hours</Th><Th>Status</Th></tr></thead>
+            <thead><tr><Th>Submitted</Th><Th>Client</Th><Th>Project</Th><Th>Role</Th><Th>Total Hrs</Th><Th>Status</Th></tr></thead>
             <tbody>
-              {timesheets.map(ts => (
-                <tr key={ts.id}>
-                  <Td>{fmtDate(ts.date)}</Td>
-                  <Td>{ts.client || '—'}</Td>
-                  <Td>{ts.site || '—'}</Td>
-                  <Td>{ts.hours}</Td>
-                  <Td>{timesheetBadge(ts.status)}</Td>
+              {headers.map(h => (
+                <tr key={h.id}>
+                  <Td>{fmtDate(h.created_at)}</Td>
+                  <Td>{h.client || '—'}</Td>
+                  <Td>{h.project || '—'}</Td>
+                  <Td>{h.role || '—'}</Td>
+                  <Td>{Number(h.total_hours || 0).toFixed(2)}</Td>
+                  <Td>{timesheetBadge(h.status)}</Td>
                 </tr>
               ))}
             </tbody>
@@ -157,21 +145,13 @@ function WorkerTimesheets({ currentWorker, showToast }) {
       )}
 
       {modal && (
-        <Modal title="Submit Timesheet" onClose={() => { setModal(false); setForm({ scenario: 'standard', client: '', site: '', date: todayISO(), hours: '', notes: '' }); }}>
-          <Field label="Shift Type">
-            <select style={inputStyle} value={form.scenario} onChange={e => setForm(f => ({ ...f, scenario: e.target.value }))}>
-              {WORKER_SCENARIOS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
-          </Field>
-          <Field label="Date *"><input style={inputStyle} type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} /></Field>
-          <Field label="Client"><input style={inputStyle} value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} /></Field>
-          <Field label="Site"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
-          <Field label="Hours *"><input style={inputStyle} type="number" step="0.5" min="0" value={form.hours} onChange={e => setForm(f => ({ ...f, hours: e.target.value }))} /></Field>
-          <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 80, resize: 'vertical' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Field>
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
-            <button onClick={() => { setModal(false); setForm({ scenario: 'standard', client: '', site: '', date: todayISO(), hours: '', notes: '' }); }} style={btnSecondary}>Cancel</button>
-            <button onClick={handleSubmit} disabled={saving} style={btnPrimary}>{saving ? 'Submitting…' : 'Submit'}</button>
-          </div>
+        <Modal title="Daily Timesheet" onClose={() => setModal(false)} width={780}>
+          <DailyTimesheetForm
+            workerId={currentWorker.id}
+            onSaved={onSaved}
+            onCancel={() => setModal(false)}
+            showToast={showToast}
+          />
         </Modal>
       )}
     </div>
