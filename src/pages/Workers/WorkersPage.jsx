@@ -5,6 +5,7 @@ import { fmtDate } from '../../utils/dates';
 import { useDraft, DraftBanner } from '../../utils/useDraft';
 import { Spinner, Badge, Modal, Field, TableWrap, Th, Td, EmptyState, certBadge } from '../../components';
 import { EmailHistoryPanel } from '../../components/inbox/EmailHistoryPanel';
+import { WorkerCertificateUploads } from '../../components/certificates/WorkerCertificateUploads';
 import { JOB_TITLES } from '../../constants/jobTitles';
 import { WORKER_TYPES } from '../../constants/scenarios';
 import { onboardLink, publicProfileLink, smsLink, whatsappLink, inviteMessage } from '../../utils/inviteLinks';
@@ -628,6 +629,15 @@ export function WorkersPage({ showToast }) {
               setCerts={setEditCerts}
               showToast={showToast}
             />
+          )}
+
+          {modal !== 'add' && (
+            <div style={{ marginTop: 18 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: '0 0 8px' }}>
+                🪪 Worker-uploaded certificates
+              </div>
+              <WorkerCertificateUploads workerId={modal.id} showToast={showToast} canEdit={false} />
+            </div>
           )}
 
           {modal !== 'add' && payroll && (

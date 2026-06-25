@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary } from '../theme';
 import { todayISO, fmtDate, fmtDateTime } from '../utils/dates';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, timesheetBadge, certBadge, DailyTimesheetForm } from '../components';
+import { WorkerCertificateUploads } from '../components/certificates/WorkerCertificateUploads';
 
 export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) {
   const [activeTab, setActiveTab] = useState('allocations');
@@ -11,6 +12,7 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
     { id: 'allocations', label: '📋 My Allocations' },
     { id: 'timesheets', label: '🕐 My Timesheets' },
     { id: 'profile', label: '👤 My Profile' },
+    { id: 'certificates', label: '🪪 Certificates / Tickets' },
     { id: 'certifications', label: '📜 My Certifications' },
     { id: 'clockin', label: '⏱ Clock In/Out' },
   ];
@@ -41,6 +43,7 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
         {activeTab === 'allocations'    && <WorkerAllocations currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'timesheets'     && <WorkerTimesheets currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'profile'        && <WorkerMyProfile currentWorker={currentWorker} showToast={showToast} />}
+        {activeTab === 'certificates'   && <WorkerCertificateUploads workerId={currentWorker.id} showToast={showToast} canEdit />}
         {activeTab === 'certifications' && <WorkerCertifications currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'clockin'        && <WorkerClockIn currentWorker={currentWorker} showToast={showToast} />}
       </div>

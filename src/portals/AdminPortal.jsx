@@ -13,6 +13,7 @@ import { ClientApprovalsPage } from '../pages/ClientApprovals/ClientApprovalsPag
 import { PayrollTrackerPage } from '../pages/Payroll/PayrollTrackerPage';
 import { PayrollConfigPage } from '../pages/Payroll/PayrollConfigPage';
 import { XeroSyncPage } from '../pages/XeroSync/XeroSyncPage';
+import { PaymentsPage } from '../pages/Payments/PaymentsPage';
 import { LicenceAgentPage } from '../pages/LicenceAgent/LicenceAgentPage';
 import { ReportsPage } from '../pages/Reports/ReportsPage';
 import { BulkMessagesPage } from '../pages/BulkMessages/BulkMessagesPage';
@@ -99,6 +100,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       items: [
         { id: 'clients', label: '🏗 Clients & Rates' },
         { id: 'payroll', label: '💰 Payroll', badge: badges.payroll || null, badgeColor: 'green' },
+        { id: 'payments', label: '💳 Payments' },
         { id: 'payroll_config', label: '⚙ Payroll Config' },
         { id: 'xero_sync', label: '🔄 Xero Data' },
       ],
@@ -217,6 +219,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'clients'          && <ClientsPage showToast={showToast} />}
           {activePage === 'client_approvals' && <ClientApprovalsPage showToast={showToast} />}
           {activePage === 'payroll'          && <PayrollTrackerPage showToast={showToast} />}
+          {activePage === 'payments'         && <PaymentsPage showToast={showToast} />}
           {activePage === 'payroll_config'   && <PayrollConfigPage showToast={showToast} />}
           {activePage === 'xero_sync'        && <XeroSyncPage showToast={showToast} />}
           {activePage === 'licence_agent'    && <LicenceAgentPage showToast={showToast} />}
