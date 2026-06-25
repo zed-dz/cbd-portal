@@ -1,0 +1,47 @@
+DEPLOY NOTES — 2026-06-25 (CBD portal)
+Features: auto meal allowance, worker certificate uploads, Stripe payments.
+
+These steps need service-role / Supabase CLI / MCP access (the app uses only the
+anon key, which cannot run DDL or write to integration_secrets).
+
+1. RUN MIGRATIONS (Supabase SQL editor or `supabase db push`):
+   - supabase/migrations/20260625_auto_meal_allowance.sql
+   - supabase/migrations/20260625_worker_certificates.sql
+   - supabase/migrations/20260625_stripe_payments.sql
+
+2. STORAGE BUCKET:
+   The worker_certificates migration creates the private `worker-certificates`
+   bucket + object policies. If your role can't insert into storage.buckets from
+   SQL, create it manually: Storage -> New bucket -> name `worker-certificates`,
+   Public = OFF. The object RLS policies are already in the migration.
+
+3. DEPLOY EDGE FUNCTIONS (`supabase functions deploy <name>`):
+   - stripe-status
+   - stripe-invoice-client
+   - stripe-pay-workers
+   They read SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_ANON_KEY, which
+   Supabase injects automatically — no extra function secrets required.
+
+4. STORE THE LIVE STRIPE KEY (service-role only; NEVER commit it). Run in the
+   SQL editor, pasting the live sk_live_... key in place of the placeholder:
+
+     insert into public.integration_secrets (key, value)
+     values ('stripe_secret_key', '<PASTE_LIVE_STRIPE_SECRET_KEY_HERE>')
+     on conflict (key) do update set value = excluded.value, updated_at = now();
+
+   Verified already: integration_secrets has RLS enabled with NO policies, so
+   anon/authenticated cannot read or write it (only edge functions via the
+   service role). Anon write returns 42501; anon read returns 0 rows.
+
+5. VERIFY (read-only): open Admin -> Payments. "Stripe connection" should show
+   the account (acct_1TDXJHGnJSGyWwaB, AUD). Use the dry-run previews on
+   "Invoice a client" and "Pay workers" — they move NO money.
+
+NOTES / WHAT'S NEEDED FOR FULL AUTO-PAYOUT:
+   - The Stripe account currently has payouts_enabled = FALSE. Real worker
+     transfers/payouts will fail until Stripe identity/business verification is
+     complete. Invoicing clients works now (charges_enabled = TRUE).
+   - Auto-transfer to a worker requires workers.stripe_account_id (Stripe Connect
+     onboarding). Workers without it are recorded as manual payouts.
+   - Client invoicing needs a charge rate: clients.rate_regular (or a
+     client_rate_cards entry) for the client. The dry run flags a missing rate.
