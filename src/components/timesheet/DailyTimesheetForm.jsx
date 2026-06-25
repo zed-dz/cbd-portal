@@ -3,7 +3,7 @@ import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnSmall, btnDanger } from '../../theme';
 import { todayISO } from '../../utils/dates';
 import {
-  dayFromDate, computeLineTotalHours, computeLineRegularHours, SHIFT_TYPES,
+  dayFromDate, computeLineTotalHours, computeLineRegularHours, autoMealAllowance, SHIFT_TYPES,
 } from '../../utils/payroll';
 import { Field } from '../ui/Field';
 import { SignaturePad } from '../ui/SignaturePad';
@@ -11,8 +11,8 @@ import { SignaturePad } from '../ui/SignaturePad';
 const emptyHoursLine = () => ({
   date: todayISO(), shift_type: 'Day', start_time: '', end_time: '',
   total_break_hours: 0, total_hours: 0, regular_hours: 0,
+  meal_allowance: 0, meal_allowance_override: false,
 });
-const emptyAllowanceLine = () => ({ date: todayISO(), meal_allowance: 0 });
 
 export const blankDaily = () => ({
   id: null,
@@ -20,7 +20,6 @@ export const blankDaily = () => ({
   wet_hire: false, comments: '', client_signature: '',
   status: 'pending',
   hours_lines: [emptyHoursLine()],
-  allowance_lines: [emptyAllowanceLine()],
 });
 
 // Map a loaded header (+ its timesheet line rows) into editable form state.
@@ -39,16 +38,17 @@ export function dailyFromHeader(header, lineRows) {
       total_break_hours: r.total_break_hours ?? 0,
       total_hours: r.total_hours ?? 0,
       regular_hours: r.regular_hours ?? 0,
+      meal_allowance: r.meal_allowance ?? 0,
+      meal_allowance_override: !!r.meal_allowance_override,
       scenario: r.scenario || 'standard',
     })).concat((lineRows || []).length ? [] : [emptyHoursLine()]),
-    allowance_lines: Array.isArray(header.allowance_lines) && header.allowance_lines.length
-      ? header.allowance_lines
-      : [emptyAllowanceLine()],
   };
 }
 
 // Build the {date, start_time, end_time, ...} ISO payload for the RPC.
-function buildLinesPayload(form) {
+// meal_allowance is AUTO-computed from hours here for an immediate echo, but the
+// DB triggers are authoritative on save (admin overrides are passed through).
+function buildLinesPayload(form, config) {
   return form.hours_lines
     .filter(l => l.date)
     .map(l => ({
@@ -60,7 +60,10 @@ function buildLinesPayload(form) {
       total_break_hours: parseFloat(l.total_break_hours) || 0,
       total_hours: parseFloat(l.total_hours) || 0,
       regular_hours: parseFloat(l.regular_hours) || 0,
-      meal_allowance: 0,
+      meal_allowance: l.meal_allowance_override
+        ? (parseFloat(l.meal_allowance) || 0)
+        : autoMealAllowance(l.total_hours, config),
+      meal_allowance_override: !!l.meal_allowance_override,
     }));
 }
 
@@ -106,14 +109,18 @@ export function DailyTimesheetForm({
     return () => { mounted = false; };
   }, []);
 
-  // Recompute Day + Total + Regular for a single hours line.
+  // Recompute Day + Total + Regular + auto Meal Allowance for a single hours line.
   const recalcLine = useCallback((line) => {
     const total = computeLineTotalHours(line.start_time, line.end_time, line.total_break_hours);
+    const meal = line.meal_allowance_override
+      ? (parseFloat(line.meal_allowance) || 0)
+      : autoMealAllowance(total, config);
     return {
       ...line,
       day: dayFromDate(line.date),
       total_hours: total,
       regular_hours: computeLineRegularHours(total, config),
+      meal_allowance: meal,
     };
   }, [config]);
 
@@ -128,20 +135,17 @@ export function DailyTimesheetForm({
     ...f, hours_lines: f.hours_lines.length > 1 ? f.hours_lines.filter((_, i) => i !== idx) : f.hours_lines,
   }));
 
-  const setAllowanceLine = (idx, updates) => setForm(f => ({
-    ...f, allowance_lines: f.allowance_lines.map((l, i) => i === idx ? { ...l, ...updates } : l),
-  }));
-  const addAllowanceLine = () => setForm(f => ({ ...f, allowance_lines: [...f.allowance_lines, emptyAllowanceLine()] }));
-  const removeAllowanceLine = (idx) => setForm(f => ({
-    ...f, allowance_lines: f.allowance_lines.filter((_, i) => i !== idx),
-  }));
-
   const totals = useMemo(() => {
     const totalHours = form.hours_lines.reduce((s, l) => s + (parseFloat(l.total_hours) || 0), 0);
     const totalReg = form.hours_lines.reduce((s, l) => s + (parseFloat(l.regular_hours) || 0), 0);
-    const totalMeal = form.allowance_lines.reduce((s, l) => s + (parseFloat(l.meal_allowance) || 0), 0);
+    const totalMeal = form.hours_lines.reduce((s, l) => {
+      const meal = l.meal_allowance_override
+        ? (parseFloat(l.meal_allowance) || 0)
+        : autoMealAllowance(l.total_hours, config);
+      return s + meal;
+    }, 0);
     return { totalHours, totalReg, totalMeal };
-  }, [form]);
+  }, [form, config]);
 
   const targetWorker = workerId || form.worker_id;
 
@@ -153,7 +157,10 @@ export function DailyTimesheetForm({
     const validLines = form.hours_lines.filter(l => l.date && l.start_time && l.end_time);
     if (!validLines.length) { showToast('Add at least one hours line with date, start and end.', 'error'); return; }
 
-    const allowancePayload = form.allowance_lines
+    const recalced = validLines.map(recalcLine);
+    // Meal allowance is auto-derived from each day's hours (DB triggers are
+    // authoritative; this payload keeps the header allowance_lines in sync).
+    const allowancePayload = recalced
       .filter(l => l.date && (parseFloat(l.meal_allowance) || 0) > 0)
       .map(l => ({ date: l.date, meal_allowance: parseFloat(l.meal_allowance) || 0 }));
 
@@ -169,7 +176,7 @@ export function DailyTimesheetForm({
       p_client_signature: form.client_signature || null,
       p_allowance_lines: allowancePayload,
       p_status: form.status || 'pending',
-      p_lines: buildLinesPayload({ ...form, hours_lines: validLines.map(recalcLine) }),
+      p_lines: buildLinesPayload({ ...form, hours_lines: recalced }, config),
     });
     setSaving(false);
     if (error) { showToast(error.message, 'error'); return; }
@@ -224,11 +231,15 @@ export function DailyTimesheetForm({
               <th style={{ padding: 4, fontWeight: 500 }}>Break (h)</th>
               <th style={{ padding: 4, fontWeight: 500 }}>Total</th>
               <th style={{ padding: 4, fontWeight: 500 }}>Regular</th>
+              <th style={{ padding: 4, fontWeight: 500 }}>Meal&nbsp;($)</th>
               <th />
             </tr>
           </thead>
           <tbody>
-            {form.hours_lines.map((l, i) => (
+            {form.hours_lines.map((l, i) => {
+              const autoMeal = autoMealAllowance(l.total_hours, config);
+              const mealVal = l.meal_allowance_override ? (parseFloat(l.meal_allowance) || 0) : autoMeal;
+              return (
               <tr key={i}>
                 <td style={{ padding: 3 }}><input type="date" style={{ ...cellInput, width: 130 }} value={l.date} onChange={e => setHoursLine(i, { date: e.target.value })} /></td>
                 <td style={{ padding: 3, color: C.textMuted, whiteSpace: 'nowrap' }}>{dayFromDate(l.date) || '—'}</td>
@@ -243,40 +254,34 @@ export function DailyTimesheetForm({
                 <td style={{ padding: 3 }}><input readOnly style={{ ...roInput, width: 64 }} value={Number(l.total_hours).toFixed(2)} /></td>
                 <td style={{ padding: 3 }}><input readOnly style={{ ...roInput, width: 64 }} value={Number(l.regular_hours).toFixed(2)} /></td>
                 <td style={{ padding: 3 }}>
+                  {l.meal_allowance_override
+                    ? <input type="number" step="0.01" min="0" style={{ ...cellInput, width: 72 }} value={l.meal_allowance}
+                        onChange={e => setHoursLine(i, { meal_allowance: e.target.value })} title="Admin override amount" />
+                    : <input readOnly style={{ ...roInput, width: 72 }} value={mealVal.toFixed(2)}
+                        title={`Auto: ${l.total_hours >= 0 ? `${Number(l.total_hours).toFixed(2)}h` : ''} → ${autoMeal > 0 ? 'meal allowance applies' : 'below threshold'}`} />}
+                  {allowAdmin && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: C.textMuted, marginTop: 2, cursor: 'pointer' }} title="Admin override of the auto meal allowance">
+                      <input type="checkbox" checked={!!l.meal_allowance_override}
+                        onChange={e => setHoursLine(i, { meal_allowance_override: e.target.checked, ...(e.target.checked ? {} : { meal_allowance: autoMeal }) })} />
+                      override
+                    </label>
+                  )}
+                </td>
+                <td style={{ padding: 3 }}>
                   <button type="button" onClick={() => removeHoursLine(i)} style={{ ...btnDanger, padding: '4px 8px' }}>×</button>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
       <button type="button" onClick={addHoursLine} style={{ ...btnSmall, marginTop: 8 }}>+ Add hours row</button>
-
-      {/* Allowances */}
-      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: '16px 0 8px' }}>Allowances</div>
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-          <thead>
-            <tr style={{ color: C.textMuted, textAlign: 'left' }}>
-              <th style={{ padding: 4, fontWeight: 500 }}>Date</th>
-              <th style={{ padding: 4, fontWeight: 500 }}>Meal Allowance ($)</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {form.allowance_lines.map((l, i) => (
-              <tr key={i}>
-                <td style={{ padding: 3 }}><input type="date" style={{ ...cellInput, width: 150 }} value={l.date} onChange={e => setAllowanceLine(i, { date: e.target.value })} /></td>
-                <td style={{ padding: 3 }}><input type="number" step="0.01" min="0" style={{ ...cellInput, width: 120 }} value={l.meal_allowance} onChange={e => setAllowanceLine(i, { meal_allowance: e.target.value })} /></td>
-                <td style={{ padding: 3 }}>
-                  <button type="button" onClick={() => removeAllowanceLine(i)} style={{ ...btnDanger, padding: '4px 8px' }}>×</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6 }}>
+        Meal allowance is calculated automatically: a day of {parseFloat(config.meal_allowance_trigger ?? 9.5)}h or more
+        earns ${parseFloat(config.meal_allowance_amount ?? 18.70).toFixed(2)}.
+        {allowAdmin ? ' Tick “override” on a row to set it manually.' : ''}
       </div>
-      <button type="button" onClick={addAllowanceLine} style={{ ...btnSmall, marginTop: 8 }}>+ Add allowance row</button>
 
       {/* Totals preview */}
       <div style={{ background: C.accentSoft, border: `1px solid ${C.accentBorder}`, borderRadius: 8, padding: '10px 16px', margin: '16px 0', display: 'flex', gap: 24, flexWrap: 'wrap' }}>

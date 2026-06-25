@@ -90,6 +90,15 @@ export function computeLineRegularHours(totalHours, config = {}) {
   return Math.min(totalHours, OT_THRESHOLD);
 }
 
+// Auto meal allowance for a single worked day/line.
+// Mirrors the authoritative DB trigger rule: if hours >= trigger, grant amount.
+// Config keys: meal_allowance_trigger (default 9.5h), meal_allowance_amount ($18.70).
+export function autoMealAllowance(totalHours, config = {}) {
+  const trigger = parseFloat(config.meal_allowance_trigger ?? 9.5);
+  const amount  = parseFloat(config.meal_allowance_amount  ?? 18.70);
+  return (parseFloat(totalHours) || 0) >= trigger ? amount : 0;
+}
+
 export const SHIFT_TYPES = ['Day', 'Night', 'Weekend', 'Public Holiday'];
 
 export function computePayrollRow(ts, worker, clientRecord, config = {}) {
