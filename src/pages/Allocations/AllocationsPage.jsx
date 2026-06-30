@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
 import { fmtDate, fmtDateTime } from '../../utils/dates';
+import { normaliseAUMobile, sendWorkerSms, addAdminNotification, allocationSmsBody } from '../../utils/notify';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge } from '../../components';
 
 // Find allocations for a given worker that overlap a [start, end] date range
@@ -42,7 +43,7 @@ export function AllocationsPage({ showToast }) {
     setLoading(true);
     const [a, w, c] = await Promise.all([
       supabase.from('allocations').select('*, workers(name, job_title)').order('created_at', { ascending: false }),
-      supabase.from('workers').select('id, name').is('archived_at', null).order('name'),
+      supabase.from('workers').select('id, name, mobile').is('archived_at', null).order('name'),
       supabase.from('clients').select('id, name').order('name'),
     ]);
     if (a.error) showToast(a.error.message, 'error');
@@ -117,15 +118,50 @@ export function AllocationsPage({ showToast }) {
       notes: form.notes || null,
     };
     if (modal === 'add') {
-      const { error } = await supabase.from('allocations').insert([payload]);
+      const { data: inserted, error } = await supabase.from('allocations').insert([payload]).select().single();
       if (error) showToast(error.message, 'error');
-      else { showToast('Allocation created successfully', 'success'); closeModal(); load(); }
+      else {
+        showToast('Allocation created successfully', 'success');
+        notifyOnCreate(inserted);   // fire-and-forget SMS + admin notification
+        closeModal();
+        load();
+      }
     } else {
       const { error } = await supabase.from('allocations').update(payload).eq('id', modal.id);
       if (error) showToast(error.message, 'error');
       else { showToast('Allocation updated successfully', 'success'); closeModal(); load(); }
     }
     setSaving(false);
+  };
+
+  // After an allocation is created: text the worker + drop an admin notification.
+  // Fire-and-forget — never blocks the UI. `inserted` is the new allocation row.
+  const notifyOnCreate = (inserted) => {
+    const worker = workers.find(w => w.id === form.worker_id);
+    const name = worker?.name || 'Worker';
+    const client = inserted?.client || form.client || '';
+    const site = inserted?.site || form.site || '';
+    const startDate = inserted?.start_date || form.start_date || null;
+
+    // (a) SMS the worker.
+    const to = normaliseAUMobile(worker?.mobile);
+    if (!to) {
+      showToast(`${name} has no mobile on file — SMS skipped.`, 'info');
+    } else {
+      sendWorkerSms(to, allocationSmsBody({ name, client, site, start_date: startDate })).then(r => {
+        if (r.ok) showToast(`SMS sent to ${name} (${r.status || 'queued'}).`, 'success');
+        else showToast(`SMS to ${name} failed: ${r.error || 'unknown error'}`, 'error');
+      });
+    }
+
+    // (b) Admin in-app notification.
+    addAdminNotification({
+      type: 'allocation_sent',
+      title: `Allocation sent to ${name}`,
+      body: `${client || site || 'New job'}${startDate ? ` — starts ${startDate}` : ''}`,
+      allocation_id: inserted?.id || null,
+      worker_id: form.worker_id || null,
+    }).then(() => window.dispatchEvent(new CustomEvent('cbd:notify')));
   };
 
   const handleDelete = async (a) => {

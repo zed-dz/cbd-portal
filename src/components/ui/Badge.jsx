@@ -35,7 +35,7 @@ export function Badge({ label, color, size = 'md' }) {
 // stays consistent and there's only one place to add new statuses.
 
 export function allocationBadge(status) {
-  const map = { pending: 'yellow', confirmed: 'blue', completed: 'green', cancelled: 'red' };
+  const map = { pending: 'yellow', confirmed: 'blue', completed: 'green', cancelled: 'red', declined: 'red' };
   return <Badge label={status} color={map[status] || 'gray'} />;
 }
 

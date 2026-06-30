@@ -4,6 +4,7 @@ import { C, inputStyle, btnPrimary, btnSecondary } from '../theme';
 import { todayISO, fmtDate, fmtDateTime } from '../utils/dates';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, timesheetBadge, certBadge, DailyTimesheetForm } from '../components';
 import { WorkerCertificateUploads } from '../components/certificates/WorkerCertificateUploads';
+import { addAdminNotification } from '../utils/notify';
 
 export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) {
   const [activeTab, setActiveTab] = useState('allocations');
@@ -54,18 +55,42 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
 function WorkerAllocations({ currentWorker, showToast }) {
   const [allocations, setAllocations] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [acting, setActing] = useState(null);   // allocation id currently being accepted/declined
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const { data, error } = await supabase.from('allocations').select('*').eq('worker_id', currentWorker.id).order('created_at', { ascending: false });
-      if (!mounted) return;
-      if (error) showToast(error.message, 'error');
-      else setAllocations(data || []);
-      setLoading(false);
-    })();
-    return () => { mounted = false; };
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.from('allocations').select('*').eq('worker_id', currentWorker.id).order('created_at', { ascending: false });
+    if (error) showToast(error.message, 'error');
+    else setAllocations(data || []);
+    setLoading(false);
   }, [currentWorker.id, showToast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Worker responds to a pending allocation. accept → confirmed, decline → declined.
+  // Updates the row, then drops an admin notification so the bell lights up.
+  const respond = async (a, decision) => {
+    const newStatus = decision === 'accept' ? 'confirmed' : 'declined';
+    setActing(a.id);
+    const { error } = await supabase.from('allocations').update({ status: newStatus }).eq('id', a.id);
+    if (error) {
+      showToast(error.message, 'error');
+      setActing(null);
+      return;
+    }
+    // Optimistic local update.
+    setAllocations(prev => prev.map(x => (x.id === a.id ? { ...x, status: newStatus } : x)));
+    const verb = decision === 'accept' ? 'ACCEPTED' : 'DECLINED';
+    const where = a.client || a.site || 'a job';
+    addAdminNotification({
+      type: decision === 'accept' ? 'allocation_accepted' : 'allocation_declined',
+      title: `${currentWorker?.name || 'Worker'} ${verb} ${where}`,
+      body: `${a.client || a.site || ''}${a.start_date ? ` — ${a.start_date}` : ''}`.trim() || null,
+      allocation_id: a.id,
+      worker_id: currentWorker.id,
+    });
+    showToast(decision === 'accept' ? 'Allocation accepted — thanks!' : 'Allocation declined.', decision === 'accept' ? 'success' : 'info');
+    setActing(null);
+  };
 
   if (loading) return <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>;
   if (!allocations.length) return <EmptyState message="No allocations found." />;
@@ -85,6 +110,31 @@ function WorkerAllocations({ currentWorker, showToast }) {
           {a.start_date && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Date: {a.start_date}</div>}
           <div style={{ color: C.textMuted, fontSize: 13 }}>Start: {fmtDateTime(a.start_time)}</div>
           {a.notes && <div style={{ color: C.textMuted, fontSize: 12, marginTop: 10, fontStyle: 'italic' }}>{a.notes}</div>}
+
+          {a.status === 'pending' && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+              <button
+                onClick={() => respond(a, 'accept')}
+                disabled={acting === a.id}
+                style={{ ...btnPrimary, flex: 1, background: C.success, opacity: acting === a.id ? 0.6 : 1 }}
+              >
+                {acting === a.id ? '…' : '✓ Accept'}
+              </button>
+              <button
+                onClick={() => respond(a, 'decline')}
+                disabled={acting === a.id}
+                style={{ ...btnSecondary, flex: 1, color: '#fca5a5', borderColor: 'rgba(239,68,68,0.32)', opacity: acting === a.id ? 0.6 : 1 }}
+              >
+                ✕ Decline
+              </button>
+            </div>
+          )}
+          {a.status === 'confirmed' && (
+            <div style={{ marginTop: 12, fontSize: 12, color: C.success, fontWeight: 600 }}>✓ You accepted this allocation</div>
+          )}
+          {a.status === 'declined' && (
+            <div style={{ marginTop: 12, fontSize: 12, color: '#fca5a5', fontWeight: 600 }}>✕ You declined this allocation</div>
+          )}
         </div>
       ))}
     </div>

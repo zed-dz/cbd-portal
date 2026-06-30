@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient';
 import { C, R, MONO, btnPrimary, btnSecondary } from '../theme';
 import { SendBlastModal } from '../components/blast/SendBlastModal';
 import { ScanModal } from '../components/scan/ScanModal';
+import { NotificationBell } from '../components/notifications/NotificationBell';
 import { DashboardPage } from '../pages/Dashboard/DashboardPage';
 import { WorkersPage } from '../pages/Workers/WorkersPage';
 import { AllocationsPage } from '../pages/Allocations/AllocationsPage';
@@ -202,7 +203,8 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
             )}
             <span style={{ fontSize: 10, color: C.textDim, fontFamily: MONO, letterSpacing: 1, fontWeight: 600 }}>CBD PLANT & LABOUR · ABN 75 663 693 070</span>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <NotificationBell />
             <button onClick={() => setPreviewMode(true)} style={{ ...btnSecondary, padding: '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>👁 Worker View</button>
             <button onClick={() => setScanOpen(true)} style={{ ...btnSecondary, padding: '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📷 Scan</button>
             <button onClick={() => setBlastOpen(true)} style={{ ...btnPrimary, padding: '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📢 Send Blast</button>
