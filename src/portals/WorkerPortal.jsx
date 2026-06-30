@@ -4,7 +4,7 @@ import { C, inputStyle, btnPrimary, btnSecondary } from '../theme';
 import { todayISO, fmtDate, fmtDateTime } from '../utils/dates';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, timesheetBadge, certBadge, DailyTimesheetForm } from '../components';
 import { WorkerCertificateUploads } from '../components/certificates/WorkerCertificateUploads';
-import { addAdminNotification } from '../utils/notify';
+import { addAdminNotification, broadcastAdminSms, adminAcceptSmsBody, adminDeclineSmsBody, sendAdminEmail } from '../utils/notify';
 
 export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) {
   const [activeTab, setActiveTab] = useState('allocations');
@@ -88,6 +88,19 @@ function WorkerAllocations({ currentWorker, showToast }) {
       allocation_id: a.id,
       worker_id: currentWorker.id,
     });
+
+    // Broadcast the response to every admin by SMS + email. Fire-and-forget.
+    const workerName = currentWorker?.name || 'Worker';
+    const clientLabel = a.client || a.site || '';
+    const smsBody = decision === 'accept'
+      ? adminAcceptSmsBody({ worker: workerName, client: clientLabel, start_date: a.start_date })
+      : adminDeclineSmsBody({ worker: workerName, client: clientLabel, start_date: a.start_date });
+    broadcastAdminSms(smsBody);
+    sendAdminEmail(
+      `${workerName} ${verb} — ${clientLabel || 'allocation'}`,
+      `${workerName} has ${decision === 'accept' ? 'ACCEPTED' : 'DECLINED'} the allocation for ${clientLabel || 'a job'}${a.start_date ? ` (${a.start_date})` : ''}.`
+    );
+
     showToast(decision === 'accept' ? 'Allocation accepted — thanks!' : 'Allocation declined.', decision === 'accept' ? 'success' : 'info');
     setActing(null);
   };

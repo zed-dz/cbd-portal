@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
 import { fmtDate, fmtDateTime } from '../../utils/dates';
-import { normaliseAUMobile, sendWorkerSms, addAdminNotification, allocationSmsBody } from '../../utils/notify';
+import { normaliseAUMobile, sendWorkerSms, addAdminNotification, allocationSmsBody, broadcastAdminSms, adminCreateSmsBody, sendAdminEmail } from '../../utils/notify';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge } from '../../components';
 
 // Find allocations for a given worker that overlap a [start, end] date range
@@ -162,6 +162,15 @@ export function AllocationsPage({ showToast }) {
       allocation_id: inserted?.id || null,
       worker_id: form.worker_id || null,
     }).then(() => window.dispatchEvent(new CustomEvent('cbd:notify')));
+
+    // (c) Broadcast the same event to every admin by SMS + email.
+    //     Fire-and-forget — the worker SMS above is the only worker-facing text.
+    const where = client || site || '';
+    broadcastAdminSms(adminCreateSmsBody({ worker: name, client: where, start_date: startDate }));
+    sendAdminEmail(
+      `New allocation: ${name} → ${where || 'client'}`,
+      `${name} has been allocated to ${where || 'a new job'}${startDate ? ` starting ${startDate}` : ''}. It's been sent to the worker for acceptance.`
+    );
   };
 
   const handleDelete = async (a) => {

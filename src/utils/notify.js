@@ -13,6 +13,9 @@ import { supabase } from '../supabaseClient';
 // Public portal URL workers open to accept an allocation.
 export const PORTAL_URL = 'https://cbd-portal-gray.vercel.app';
 
+// Single address that mirrors every admin allocation notification by email.
+export const ADMIN_EMAIL = 'admin@cbdplantlabour.com.au';
+
 // Normalise an Australian mobile to E.164 ("+61…").
 // Accepts "0447 532 346", "0447  532 346", "+61 447 532 346",
 // "0447532346", "61447532346", "447532346". Already-"+"-prefixed values pass
@@ -71,6 +74,73 @@ export function allocationSmsBody({ name, client, site, start_date }) {
   const at = client && site ? `${client} — ${site}` : where;
   const when = start_date ? ` starting ${fmtNiceDate(start_date)}` : '';
   return `${who} you've been allocated to ${at}${when}. Open the portal to accept: ${PORTAL_URL}`;
+}
+
+// ── Admin broadcast (SMS + email) ──────────────────────────────────────────
+// Every allocation event (create / accept / decline) drops an in-app bell
+// notification AND now also texts every admin + emails ADMIN_EMAIL. All paths
+// are fire-and-forget: they never throw and never block the UI.
+
+// Short admin SMS bodies. `worker`/`client` already resolved by the caller.
+export function adminCreateSmsBody({ worker, client, start_date }) {
+  return `New allocation: ${worker || 'Worker'} → ${client || 'client'} (${start_date || 'TBC'}). Sent for acceptance.`;
+}
+export function adminAcceptSmsBody({ worker, client, start_date }) {
+  return `${worker || 'Worker'} ACCEPTED ${client || 'client'} (${start_date || 'TBC'}).`;
+}
+export function adminDeclineSmsBody({ worker, client, start_date }) {
+  return `${worker || 'Worker'} DECLINED ${client || 'client'} (${start_date || 'TBC'}).`;
+}
+
+// Text every admin (workers.access_level='admin' with a non-empty mobile).
+// Numbers are E.164-normalised and de-duped. Returns a per-number result array
+// but callers typically ignore it (fire-and-forget). Never throws.
+export async function broadcastAdminSms(body) {
+  try {
+    const { data, error } = await supabase
+      .from('workers')
+      .select('name, mobile, access_level')
+      .eq('access_level', 'admin');
+    if (error || !data?.length) return { ok: false, sent: 0, error: error?.message };
+
+    // Normalise + de-dupe numbers (keep first name seen for logging).
+    const seen = new Set();
+    const targets = [];
+    for (const w of data) {
+      const to = normaliseAUMobile(w.mobile);
+      if (!to || seen.has(to)) continue;
+      seen.add(to);
+      targets.push({ to, name: w.name });
+    }
+    if (!targets.length) return { ok: false, sent: 0, error: 'no admin mobiles' };
+
+    const results = await Promise.all(
+      targets.map(t => sendWorkerSms(t.to, body).then(r => ({ ...r, to: t.to, name: t.name })))
+    );
+    return { ok: results.some(r => r.ok), sent: results.filter(r => r.ok).length, results };
+  } catch (e) {
+    return { ok: false, sent: 0, error: e?.message || String(e) };
+  }
+}
+
+// Email ADMIN_EMAIL via the existing send-bulk-email path (Gmail when
+// connected, else Resend). Fire-and-forget. Never throws.
+export async function sendAdminEmail(subject, text) {
+  try {
+    const { data, error } = await supabase.functions.invoke('send-bulk-email', {
+      body: {
+        recipients: [{ name: 'Admin', email: ADMIN_EMAIL }],
+        subject,
+        body: text,
+        audience: 'mixed',
+      },
+    });
+    if (error) return { ok: false, error: error.message };
+    if (data?.error) return { ok: false, error: data.error };
+    return { ok: !!data?.ok, via: data?.via, sent: data?.sent };
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
 }
 
 function fmtNiceDate(iso) {
