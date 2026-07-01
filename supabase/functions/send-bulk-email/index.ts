@@ -92,8 +92,13 @@ serve(async (req) => {
     body?: string;
     audience?: string;
     sent_by?: string;
+    gmail_only?: boolean;   // notification sends set this — Google only, never Resend
   };
   try { body = await req.json(); } catch { return json({ error: 'invalid_json' }, 400); }
+
+  // Allocation-notification emails pass gmail_only:true so they are sent via
+  // Google (Gmail) ONLY and never silently fall back to Resend.
+  const gmailOnly = body.gmail_only === true;
 
   const recipients = (body.recipients || []).filter(r => r && r.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email));
   if (!recipients.length) return json({ error: 'no_valid_recipients' }, 400);
@@ -144,6 +149,15 @@ serve(async (req) => {
       }
     }
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, recipients.length) }, () => worker()));
+  } else if (gmailOnly) {
+    // Google-only notification path: Gmail isn't connected (or no caller JWT) —
+    // refuse to route via Resend so notifications stay 100% Gmail.
+    return json({
+      ok: false,
+      via: 'gmail',
+      error: 'gmail_required',
+      message: 'Gmail is not connected (or no auth was forwarded). Notification emails are Google-only and will not fall back to Resend. Connect Gmail in the Inbox page.',
+    }, 412);
   } else if (RESEND_API_KEY) {
     // ── 2) Resend fallback (batch endpoint) ────────────────────────────────
     const emails = recipients.map(r => ({

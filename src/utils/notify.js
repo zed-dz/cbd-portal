@@ -154,11 +154,12 @@ export async function broadcastAdminSms(body) {
   }
 }
 
-// Email the admins about an allocation event via send-bulk-email (Gmail when
-// connected, else Resend). The shared ops mailbox (ADMIN_EMAIL) always gets the
-// event as the team record; additionally each per-event admin with the Email
-// channel on gets a personal copy. Daily-digest admins are skipped here and get
-// the once-a-day summary instead. Fire-and-forget. Never throws.
+// Email the admins about an allocation event via send-bulk-email. Notification
+// emails are GOOGLE (Gmail) ONLY — `gmail_only:true` tells send-bulk-email to
+// never fall back to Resend for these. The shared ops mailbox (ADMIN_EMAIL)
+// always gets the event as the team record; additionally each per-event admin
+// with the Email channel on gets a personal copy. Daily-digest admins are
+// skipped here and get the once-a-day summary instead. Fire-and-forget. Never throws.
 export async function sendAdminEmail(subject, text) {
   try {
     const recipients = [{ name: 'Admin', email: ADMIN_EMAIL }];
@@ -181,7 +182,7 @@ export async function sendAdminEmail(subject, text) {
     } catch { /* fall back to the shared ops mailbox only */ }
 
     const { data, error } = await supabase.functions.invoke('send-bulk-email', {
-      body: { recipients, subject, body: text, audience: 'mixed' },
+      body: { recipients, subject, body: text, audience: 'mixed', gmail_only: true },
     });
     if (error) return { ok: false, error: error.message };
     if (data?.error) return { ok: false, error: data.error };
