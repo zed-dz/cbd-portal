@@ -16,6 +16,17 @@ export const PORTAL_URL = 'https://cbd-portal-gray.vercel.app';
 // Single address that mirrors every admin allocation notification by email.
 export const ADMIN_EMAIL = 'admin@cbdplantlabour.com.au';
 
+// ── Zeff-only SMS gate (TEMP) ───────────────────────────────────────────────
+// The team asked to STOP buzzing everyone: route ALL outbound admin SMS to ONLY
+// Zeff for now. The in-app bell + email still go to every admin — only the TEXT
+// is gated here. When set (a non-empty array), admin SMS is sent to exactly
+// these numbers, which guarantees Zeff is reached and no one else is.
+//
+//   TO REVERT TO TEXTING ALL ADMINS: set `SMS_ALLOWLIST = null;` (or `[]`).
+//   With a null/empty allowlist, every eligible admin (per-event mode + SMS on)
+//   is texted as before.
+const SMS_ALLOWLIST = ['+61459789590']; // only Zeff — see note above to revert
+
 // Normalise an Australian mobile to E.164 ("+61…").
 // Accepts "0447 532 346", "0447  532 346", "+61 447 532 346",
 // "0447532346", "61447532346", "447532346". Already-"+"-prefixed values pass
@@ -68,12 +79,13 @@ export async function addAdminNotification({ type, title, body, allocation_id, w
 }
 
 // Build the worker SMS body for a new allocation.
-export function allocationSmsBody({ name, client, site, start_date }) {
+export function allocationSmsBody({ name, client, site, start_date, role }) {
   const who = name ? `Hi ${name},` : 'Hi,';
   const where = client || site || 'a new job';
   const at = client && site ? `${client} — ${site}` : where;
+  const as = role ? ` as ${role}` : '';
   const when = start_date ? ` starting ${fmtNiceDate(start_date)}` : '';
-  return `${who} you've been allocated to ${at}${when}. Open the portal to accept: ${PORTAL_URL}`;
+  return `${who} you've been allocated to ${at}${as}${when}. Open the portal to accept: ${PORTAL_URL}`;
 }
 
 // ── Admin broadcast (SMS + email) ──────────────────────────────────────────
@@ -82,37 +94,56 @@ export function allocationSmsBody({ name, client, site, start_date }) {
 // are fire-and-forget: they never throw and never block the UI.
 
 // Short admin SMS bodies. `worker`/`client` already resolved by the caller.
-export function adminCreateSmsBody({ worker, client, start_date }) {
-  return `New allocation: ${worker || 'Worker'} → ${client || 'client'} (${start_date || 'TBC'}). Sent for acceptance.`;
+export function adminCreateSmsBody({ worker, client, start_date, role }) {
+  const as = role ? ` as ${role}` : '';
+  return `New allocation: ${worker || 'Worker'} → ${client || 'client'}${as} (${start_date || 'TBC'}). Sent for acceptance.`;
 }
-export function adminAcceptSmsBody({ worker, client, start_date }) {
-  return `${worker || 'Worker'} ACCEPTED ${client || 'client'} (${start_date || 'TBC'}).`;
+export function adminAcceptSmsBody({ worker, client, start_date, role }) {
+  const as = role ? ` as ${role}` : '';
+  return `${worker || 'Worker'} ACCEPTED ${client || 'client'}${as} (${start_date || 'TBC'}).`;
 }
-export function adminDeclineSmsBody({ worker, client, start_date }) {
-  return `${worker || 'Worker'} DECLINED ${client || 'client'} (${start_date || 'TBC'}).`;
+export function adminDeclineSmsBody({ worker, client, start_date, role }) {
+  const as = role ? ` as ${role}` : '';
+  return `${worker || 'Worker'} DECLINED ${client || 'client'}${as} (${start_date || 'TBC'}).`;
 }
 
-// Text every admin (workers.access_level='admin' with a non-empty mobile).
-// Numbers are E.164-normalised and de-duped. Returns a per-number result array
-// but callers typically ignore it (fire-and-forget). Never throws.
+// Text the admins who should get an immediate SMS. Honors per-admin prefs
+// (per-event mode + SMS channel on) and the Zeff-only SMS_ALLOWLIST gate above.
+// Numbers are E.164-normalised and de-duped. Fire-and-forget; never throws.
 export async function broadcastAdminSms(body) {
   try {
     const { data, error } = await supabase
       .from('workers')
-      .select('name, mobile, access_level')
+      .select('name, mobile, access_level, notify_mode, notify_sms')
       .eq('access_level', 'admin');
-    if (error || !data?.length) return { ok: false, sent: 0, error: error?.message };
+    if (error) return { ok: false, sent: 0, error: error.message };
 
-    // Normalise + de-dupe numbers (keep first name seen for logging).
+    // Only per-event admins with the SMS channel enabled (digest admins get the
+    // once-a-day summary instead). Defaults treat missing prefs as opted-in.
+    const eligible = (data || []).filter(w =>
+      (w.notify_mode || 'per_event') === 'per_event' && w.notify_sms !== false
+    );
+
     const seen = new Set();
-    const targets = [];
-    for (const w of data) {
+    let targets = [];
+    for (const w of eligible) {
       const to = normaliseAUMobile(w.mobile);
       if (!to || seen.has(to)) continue;
       seen.add(to);
       targets.push({ to, name: w.name });
     }
-    if (!targets.length) return { ok: false, sent: 0, error: 'no admin mobiles' };
+
+    // Zeff-only gate: when the allowlist is set, override the roster and text
+    // exactly those numbers so we never buzz the whole team by accident.
+    if (Array.isArray(SMS_ALLOWLIST) && SMS_ALLOWLIST.length) {
+      const gate = new Set();
+      targets = SMS_ALLOWLIST
+        .map(n => normaliseAUMobile(n))
+        .filter(n => n && !gate.has(n) && gate.add(n))
+        .map(to => ({ to, name: 'Zeff' }));
+    }
+
+    if (!targets.length) return { ok: false, sent: 0, error: 'no admin SMS recipients' };
 
     const results = await Promise.all(
       targets.map(t => sendWorkerSms(t.to, body).then(r => ({ ...r, to: t.to, name: t.name })))
@@ -123,17 +154,34 @@ export async function broadcastAdminSms(body) {
   }
 }
 
-// Email ADMIN_EMAIL via the existing send-bulk-email path (Gmail when
-// connected, else Resend). Fire-and-forget. Never throws.
+// Email the admins about an allocation event via send-bulk-email (Gmail when
+// connected, else Resend). The shared ops mailbox (ADMIN_EMAIL) always gets the
+// event as the team record; additionally each per-event admin with the Email
+// channel on gets a personal copy. Daily-digest admins are skipped here and get
+// the once-a-day summary instead. Fire-and-forget. Never throws.
 export async function sendAdminEmail(subject, text) {
   try {
+    const recipients = [{ name: 'Admin', email: ADMIN_EMAIL }];
+    const seen = new Set([ADMIN_EMAIL.toLowerCase()]);
+    try {
+      const { data } = await supabase
+        .from('workers')
+        .select('name, email, access_level, notify_mode, notify_email')
+        .eq('access_level', 'admin');
+      for (const w of (data || [])) {
+        const email = (w.email || '').trim();
+        if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) continue;
+        if ((w.notify_mode || 'per_event') !== 'per_event') continue;
+        if (w.notify_email === false) continue;
+        const key = email.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        recipients.push({ name: w.name || 'Admin', email });
+      }
+    } catch { /* fall back to the shared ops mailbox only */ }
+
     const { data, error } = await supabase.functions.invoke('send-bulk-email', {
-      body: {
-        recipients: [{ name: 'Admin', email: ADMIN_EMAIL }],
-        subject,
-        body: text,
-        audience: 'mixed',
-      },
+      body: { recipients, subject, body: text, audience: 'mixed' },
     });
     if (error) return { ok: false, error: error.message };
     if (data?.error) return { ok: false, error: data.error };

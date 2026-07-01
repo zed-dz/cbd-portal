@@ -20,8 +20,9 @@ const ICONS = {
   allocation: '📋',
 };
 
-// Admin notification bell + dropdown. Polls every 30s and on open, so it stays
-// fresh when a worker accepts/declines in another session.
+// Admin notification bell + dropdown. Uses a Supabase Realtime subscription on
+// the `notifications` table so new rows appear instantly (a slow 3-min poll
+// stays as a safety net if the socket drops).
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState([]);
@@ -39,11 +40,21 @@ export function NotificationBell() {
     setLoading(false);
   }, []);
 
-  // Initial load + 30s poll.
+  // Initial load + Realtime subscription on INSERT. A slow poll (3 min) is kept
+  // only as a safety net in case the websocket drops.
   useEffect(() => {
     load();
-    const t = setInterval(load, 30000);
-    return () => clearInterval(t);
+    const channel = supabase
+      .channel('notifications-bell')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
+        const row = payload.new;
+        if (!row) { load(); return; }
+        // Prepend the new row (de-dupe if a poll already grabbed it), cap at 50.
+        setItems(prev => (prev.some(i => i.id === row.id) ? prev : [row, ...prev].slice(0, 50)));
+      })
+      .subscribe();
+    const t = setInterval(load, 180000);
+    return () => { clearInterval(t); supabase.removeChannel(channel); };
   }, [load]);
 
   // Refresh when the admin opens an allocation-create elsewhere — listen for a

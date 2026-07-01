@@ -7,6 +7,7 @@ import {
 } from '../../utils/payroll';
 import { Field } from '../ui/Field';
 import { SignaturePad } from '../ui/SignaturePad';
+import { ROLE_GROUPS, ALL_ROLE_NAMES, roleChipStyle } from '../../constants/roles';
 
 const emptyHoursLine = () => ({
   date: todayISO(), shift_type: 'Day', start_time: '', end_time: '',
@@ -149,6 +150,16 @@ export function DailyTimesheetForm({
 
   const targetWorker = workerId || form.worker_id;
 
+  // Master role list is the primary source; keep any library roles (job_roles)
+  // or a pre-existing legacy value so nothing already saved gets dropped.
+  const extraRoles = useMemo(() => {
+    const known = new Set(ALL_ROLE_NAMES);
+    const extra = new Set();
+    roles.forEach(r => { if (r && !known.has(r)) extra.add(r); });
+    if (form.role && !known.has(form.role)) extra.add(form.role);
+    return [...extra];
+  }, [roles, form.role]);
+
   const handleSave = async () => {
     if (!targetWorker) { showToast('No worker selected for this timesheet.', 'error'); return; }
     if (!form.client) { showToast('Client is required.', 'error'); return; }
@@ -209,11 +220,23 @@ export function DailyTimesheetForm({
             onChange={e => setField('project', e.target.value)} placeholder="Select or type…" />
           <datalist id="dts-projects">{projects.map(p => <option key={p} value={p} />)}</datalist>
         </Field>
-        <Field label="Role *">
+        <Field label="Role performed *">
           <select style={inputStyle} value={form.role} onChange={e => setField('role', e.target.value)}>
             <option value="">Select…</option>
-            {roles.map(r => <option key={r} value={r}>{r}</option>)}
+            {ROLE_GROUPS.map(g => (
+              <optgroup key={g.category} label={g.category}>
+                {g.roles.map(r => <option key={r.name} value={r.name}>{r.name}{r.code ? ` (${r.code})` : ''}</option>)}
+              </optgroup>
+            ))}
+            {extraRoles.length > 0 && (
+              <optgroup label="Other (library)">
+                {extraRoles.map(r => <option key={r} value={r}>{r}</option>)}
+              </optgroup>
+            )}
           </select>
+          {form.role
+            ? <div style={{ marginTop: 6 }}><span style={roleChipStyle(form.role)}>{form.role}</span></div>
+            : <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Pick the role you actually performed — change it if it differed from your allocation.</div>}
         </Field>
       </div>
 

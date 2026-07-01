@@ -4,6 +4,7 @@ import { C, R, MONO, btnPrimary, btnSecondary } from '../theme';
 import { SendBlastModal } from '../components/blast/SendBlastModal';
 import { ScanModal } from '../components/scan/ScanModal';
 import { NotificationBell } from '../components/notifications/NotificationBell';
+import { NotificationSettings } from '../components/notifications/NotificationSettings';
 import { DashboardPage } from '../pages/Dashboard/DashboardPage';
 import { WorkersPage } from '../pages/Workers/WorkersPage';
 import { AllocationsPage } from '../pages/Allocations/AllocationsPage';
@@ -38,6 +39,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
   const [previewMode, setPreviewMode] = useState(false);
   const [blastOpen, setBlastOpen] = useState(false);
   const [scanOpen, setScanOpen]   = useState(false);
+  const [notifSettingsOpen, setNotifSettingsOpen] = useState(false);
   const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, client_approvals: 0, licence_agent: 0, pending_workers: 0, payroll: 0, applications: 0 });
 
   const refreshBadge = useCallback(async () => {
@@ -205,6 +207,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <NotificationBell />
+            <button onClick={() => setNotifSettingsOpen(true)} title="Notification settings" style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.text, borderRadius: R.md, padding: '6px 10px', cursor: 'pointer', fontSize: 15, lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}>⚙</button>
             <button onClick={() => setPreviewMode(true)} style={{ ...btnSecondary, padding: '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>👁 Worker View</button>
             <button onClick={() => setScanOpen(true)} style={{ ...btnSecondary, padding: '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📷 Scan</button>
             <button onClick={() => setBlastOpen(true)} style={{ ...btnPrimary, padding: '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📢 Send Blast</button>
@@ -235,6 +238,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
 
       {blastOpen && <SendBlastModal onClose={() => setBlastOpen(false)} showToast={showToast} />}
       {scanOpen  && <ScanModal      onClose={() => setScanOpen(false)}  showToast={showToast} />}
+      {notifSettingsOpen && <NotificationSettings currentWorker={currentWorker} showToast={showToast} onClose={() => setNotifSettingsOpen(false)} />}
 
       {/* ── Preview Worker View overlay ──────────────────────────────────── */}
       {previewMode && (

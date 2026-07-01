@@ -5,6 +5,7 @@ import { todayISO, fmtDate, fmtDateTime } from '../utils/dates';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, timesheetBadge, certBadge, DailyTimesheetForm } from '../components';
 import { WorkerCertificateUploads } from '../components/certificates/WorkerCertificateUploads';
 import { addAdminNotification, broadcastAdminSms, adminAcceptSmsBody, adminDeclineSmsBody, sendAdminEmail } from '../utils/notify';
+import { roleChipStyle } from '../constants/roles';
 
 export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) {
   const [activeTab, setActiveTab] = useState('allocations');
@@ -93,12 +94,12 @@ function WorkerAllocations({ currentWorker, showToast }) {
     const workerName = currentWorker?.name || 'Worker';
     const clientLabel = a.client || a.site || '';
     const smsBody = decision === 'accept'
-      ? adminAcceptSmsBody({ worker: workerName, client: clientLabel, start_date: a.start_date })
-      : adminDeclineSmsBody({ worker: workerName, client: clientLabel, start_date: a.start_date });
+      ? adminAcceptSmsBody({ worker: workerName, client: clientLabel, start_date: a.start_date, role: a.role })
+      : adminDeclineSmsBody({ worker: workerName, client: clientLabel, start_date: a.start_date, role: a.role });
     broadcastAdminSms(smsBody);
     sendAdminEmail(
       `${workerName} ${verb} — ${clientLabel || 'allocation'}`,
-      `${workerName} has ${decision === 'accept' ? 'ACCEPTED' : 'DECLINED'} the allocation for ${clientLabel || 'a job'}${a.start_date ? ` (${a.start_date})` : ''}.`
+      `${workerName} has ${decision === 'accept' ? 'ACCEPTED' : 'DECLINED'} the allocation for ${clientLabel || 'a job'}${a.role ? ` as ${a.role}` : ''}${a.start_date ? ` (${a.start_date})` : ''}.`
     );
 
     showToast(decision === 'accept' ? 'Allocation accepted — thanks!' : 'Allocation declined.', decision === 'accept' ? 'success' : 'info');
@@ -116,6 +117,7 @@ function WorkerAllocations({ currentWorker, showToast }) {
             <div style={{ fontWeight: 700, color: C.text, fontSize: 15 }}>{a.site || 'No site'}</div>
             {allocationBadge(a.status)}
           </div>
+          {a.role && <div style={{ marginBottom: 8 }}><span style={roleChipStyle(a.role)}>{a.role}</span></div>}
           <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Client: {a.client || '—'}</div>
           {a.project && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Project: {a.project}</div>}
           {a.address && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Address: {a.address}</div>}

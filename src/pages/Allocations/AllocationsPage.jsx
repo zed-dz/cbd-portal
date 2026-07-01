@@ -4,6 +4,7 @@ import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '..
 import { fmtDate, fmtDateTime } from '../../utils/dates';
 import { normaliseAUMobile, sendWorkerSms, addAdminNotification, allocationSmsBody, broadcastAdminSms, adminCreateSmsBody, sendAdminEmail } from '../../utils/notify';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge } from '../../components';
+import { ROLE_GROUPS, roleChipStyle } from '../../constants/roles';
 
 // Find allocations for a given worker that overlap a [start, end] date range
 // AND are still live (pending/confirmed). Used to warn the admin before
@@ -24,7 +25,7 @@ function findConflicts(allAllocations, workerId, startISO, endISO, currentId) {
 }
 
 const allocDefaults = {
-  worker_id: '', site: '', client: '', project: '', address: '', site_supervisor: '',
+  worker_id: '', role: '', site: '', client: '', project: '', address: '', site_supervisor: '',
   manager_phone: '', status: 'pending', start_date: '', end_date: '',
   arrival_time: '', end_time: '', notes: '',
 };
@@ -58,7 +59,7 @@ export function AllocationsPage({ showToast }) {
   const openAdd = () => { setForm(allocDefaults); setModal('add'); };
   const openEdit = (a) => {
     setForm({
-      worker_id: a.worker_id || '', site: a.site || '', client: a.client || '',
+      worker_id: a.worker_id || '', role: a.role || '', site: a.site || '', client: a.client || '',
       project: a.project || '', address: a.address || '',
       site_supervisor: a.site_manager || a.site_supervisor || '',
       manager_phone: a.manager_phone || '', status: a.status, start_date: a.start_date || '',
@@ -103,6 +104,7 @@ export function AllocationsPage({ showToast }) {
     setSaving(true);
     const payload = {
       worker_id: form.worker_id,
+      role: form.role || null,
       site: form.site, client: form.client, project: form.project,
       address: form.address,
       site_manager: form.site_supervisor,   // DB column stays site_manager
@@ -142,13 +144,14 @@ export function AllocationsPage({ showToast }) {
     const client = inserted?.client || form.client || '';
     const site = inserted?.site || form.site || '';
     const startDate = inserted?.start_date || form.start_date || null;
+    const role = inserted?.role || form.role || '';
 
     // (a) SMS the worker.
     const to = normaliseAUMobile(worker?.mobile);
     if (!to) {
       showToast(`${name} has no mobile on file — SMS skipped.`, 'info');
     } else {
-      sendWorkerSms(to, allocationSmsBody({ name, client, site, start_date: startDate })).then(r => {
+      sendWorkerSms(to, allocationSmsBody({ name, client, site, start_date: startDate, role })).then(r => {
         if (r.ok) showToast(`SMS sent to ${name} (${r.status || 'queued'}).`, 'success');
         else showToast(`SMS to ${name} failed: ${r.error || 'unknown error'}`, 'error');
       });
@@ -158,7 +161,7 @@ export function AllocationsPage({ showToast }) {
     addAdminNotification({
       type: 'allocation_sent',
       title: `Allocation sent to ${name}`,
-      body: `${client || site || 'New job'}${startDate ? ` — starts ${startDate}` : ''}`,
+      body: `${client || site || 'New job'}${role ? ` · ${role}` : ''}${startDate ? ` — starts ${startDate}` : ''}`,
       allocation_id: inserted?.id || null,
       worker_id: form.worker_id || null,
     }).then(() => window.dispatchEvent(new CustomEvent('cbd:notify')));
@@ -166,10 +169,10 @@ export function AllocationsPage({ showToast }) {
     // (c) Broadcast the same event to every admin by SMS + email.
     //     Fire-and-forget — the worker SMS above is the only worker-facing text.
     const where = client || site || '';
-    broadcastAdminSms(adminCreateSmsBody({ worker: name, client: where, start_date: startDate }));
+    broadcastAdminSms(adminCreateSmsBody({ worker: name, client: where, start_date: startDate, role }));
     sendAdminEmail(
       `New allocation: ${name} → ${where || 'client'}`,
-      `${name} has been allocated to ${where || 'a new job'}${startDate ? ` starting ${startDate}` : ''}. It's been sent to the worker for acceptance.`
+      `${name} has been allocated to ${where || 'a new job'}${role ? ` as ${role}` : ''}${startDate ? ` starting ${startDate}` : ''}. It's been sent to the worker for acceptance.`
     );
   };
 
@@ -205,7 +208,9 @@ export function AllocationsPage({ showToast }) {
               <tr key={a.id}>
                 <Td>{a.workers?.name || '—'}</Td>
                 <Td>
-                  {a.workers?.job_title
+                  {a.role
+                    ? <span style={roleChipStyle(a.role)}>{a.role}</span>
+                    : a.workers?.job_title
                     ? <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600, background: 'rgba(249,115,22,0.12)', color: '#f97316', fontFamily: '"DM Mono", monospace' }}>{a.workers.job_title}</span>
                     : <span style={{ color: C.textMuted }}>—</span>}
                 </Td>
@@ -273,6 +278,19 @@ export function AllocationsPage({ showToast }) {
                   <option value="">Select a worker…</option>
                   {workers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                 </select>
+              </Field>
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <Field label="Role to be performed">
+                <select style={inputStyle} value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
+                  <option value="">Select a role…</option>
+                  {ROLE_GROUPS.map(g => (
+                    <optgroup key={g.category} label={g.category}>
+                      {g.roles.map(r => <option key={r.name} value={r.name}>{r.name}{r.code ? ` (${r.code})` : ''}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
+                {form.role && <div style={{ marginTop: 6 }}><span style={roleChipStyle(form.role)}>{form.role}</span></div>}
               </Field>
             </div>
             <Field label="Client">
