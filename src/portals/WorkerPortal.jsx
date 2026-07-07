@@ -13,9 +13,11 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
   const tabs = [
     { id: 'allocations', label: '📋 My Allocations' },
     { id: 'timesheets', label: '🕐 My Timesheets' },
+    { id: 'take5', label: '✋ Take 5' },
     { id: 'profile', label: '👤 My Profile' },
     { id: 'certificates', label: '🪪 Certificates / Tickets' },
     { id: 'certifications', label: '📜 My Certifications' },
+    { id: 'history', label: '🗂 History' },
     { id: 'clockin', label: '⏱ Clock In/Out' },
   ];
 
@@ -43,10 +45,12 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
 
       <div style={{ padding: isMobile ? 12 : 24, maxWidth: 900, margin: '0 auto' }}>
         {activeTab === 'allocations'    && <WorkerAllocations currentWorker={currentWorker} showToast={showToast} />}
-        {activeTab === 'timesheets'     && <WorkerTimesheets currentWorker={currentWorker} showToast={showToast} />}
+        {activeTab === 'timesheets'     && <WorkerTimesheets currentWorker={currentWorker} showToast={showToast} onGoToTake5={() => setActiveTab('take5')} />}
+        {activeTab === 'take5'          && <WorkerTake5 currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'profile'        && <WorkerMyProfile currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'certificates'   && <WorkerCertificateUploads workerId={currentWorker.id} showToast={showToast} canEdit />}
         {activeTab === 'certifications' && <WorkerCertifications currentWorker={currentWorker} showToast={showToast} />}
+        {activeTab === 'history'        && <WorkerHistory currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'clockin'        && <WorkerClockIn currentWorker={currentWorker} showToast={showToast} />}
       </div>
     </div>
@@ -156,7 +160,7 @@ function WorkerAllocations({ currentWorker, showToast }) {
   );
 }
 
-function WorkerTimesheets({ currentWorker, showToast }) {
+function WorkerTimesheets({ currentWorker, showToast, onGoToTake5 }) {
   const [headers, setHeaders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
@@ -219,6 +223,7 @@ function WorkerTimesheets({ currentWorker, showToast }) {
             onSaved={onSaved}
             onCancel={() => setModal(false)}
             showToast={showToast}
+            onGoToTake5={() => { setModal(false); onGoToTake5?.(); }}
           />
         </Modal>
       )}
@@ -422,6 +427,159 @@ function WorkerClockIn({ currentWorker, showToast }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+const PPE_ITEMS = ['Hard hat', 'Hi-vis clothing', 'Steel-cap boots', 'Safety glasses', 'Gloves', 'Hearing protection', 'Dust mask / respirator', 'Sunscreen'];
+
+// Pre-start Take 5 safety check. Required on Tue/Thu before a timesheet can be
+// submitted (the gate lives in DailyTimesheetForm; this writes the take5 row).
+function WorkerTake5({ currentWorker, showToast }) {
+  const [f, setF] = useState({ work_date: todayISO(), site: '', hazards: '', controls: '', ppe: [], acknowledged: false });
+  const [saving, setSaving] = useState(false);
+  const [recent, setRecent] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from('take5').select('*')
+      .eq('worker_id', currentWorker.id).order('created_at', { ascending: false }).limit(15);
+    setRecent(data || []);
+    setLoading(false);
+  }, [currentWorker.id]);
+  useEffect(() => { load(); }, [load]);
+
+  const set = (k) => (e) => setF(s => ({ ...s, [k]: e.target.value }));
+  const togglePpe = (item) => setF(s => ({ ...s, ppe: s.ppe.includes(item) ? s.ppe.filter(x => x !== item) : [...s.ppe, item] }));
+
+  const submit = async () => {
+    if (!String(f.hazards).trim()) { showToast('List the hazards (or write "none identified").', 'error'); return; }
+    if (!f.acknowledged) { showToast('Please tick the acknowledgement to submit your Take 5.', 'error'); return; }
+    setSaving(true);
+    const { error } = await supabase.from('take5').insert([{
+      worker_id: currentWorker.id,
+      work_date: f.work_date,
+      site: f.site || null,
+      hazards: f.hazards,
+      controls: f.controls || null,
+      ppe: f.ppe,
+      acknowledged: f.acknowledged,
+    }]);
+    setSaving(false);
+    if (error) { showToast(error.message, 'error'); return; }
+    showToast('Take 5 submitted — you can now submit your timesheet for this day.', 'success');
+    setF({ work_date: todayISO(), site: '', hazards: '', controls: '', ppe: [], acknowledged: false });
+    load();
+  };
+
+  const steps = [
+    ['1 · Stop & Think', 'Pause before you start. Are you fit, focused and clear on the task?'],
+    ['2 · Look', 'Identify the hazards around you — people, plant, energy, environment.'],
+    ['3 · Assess', 'Assess each hazard: what could go wrong, and how badly?'],
+    ['4 · Control', 'Put controls in place to remove or reduce each risk.'],
+    ['5 · Proceed safely', 'Only start once controls are in place. Re-do a Take 5 if the job changes.'],
+  ];
+
+  return (
+    <div style={{ display: 'grid', gap: 16, maxWidth: 640, margin: '0 auto' }}>
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20 }}>
+        <div style={{ fontWeight: 700, color: C.text, fontSize: 16, marginBottom: 4 }}>✋ Take 5 — pre-start safety check</div>
+        <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 14 }}>Required on Tuesdays &amp; Thursdays before you can submit a timesheet. Takes about a minute.</div>
+        <div style={{ display: 'grid', gap: 8, marginBottom: 16 }}>
+          {steps.map(([t, d]) => (
+            <div key={t} style={{ display: 'flex', gap: 10 }}>
+              <div style={{ color: C.accent, fontWeight: 700, fontSize: 13, minWidth: 120 }}>{t}</div>
+              <div style={{ color: C.textMuted, fontSize: 13 }}>{d}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
+          <Field label="Date"><input type="date" style={inputStyle} value={f.work_date} onChange={set('work_date')} /></Field>
+          <Field label="Client / site"><input style={inputStyle} value={f.site} onChange={set('site')} placeholder="Where are you working?" /></Field>
+        </div>
+        <Field label="Hazards identified *"><textarea style={{ ...inputStyle, minHeight: 64, resize: 'vertical' }} value={f.hazards} onChange={set('hazards')} placeholder="e.g. moving plant, working at heights, live traffic…" /></Field>
+        <Field label="Controls in place"><textarea style={{ ...inputStyle, minHeight: 64, resize: 'vertical' }} value={f.controls} onChange={set('controls')} placeholder="e.g. spotter, exclusion zone, harness, hi-vis…" /></Field>
+        <Field label="PPE for this task">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            {PPE_ITEMS.map(item => (
+              <label key={item} style={{ display: 'flex', alignItems: 'center', gap: 6, color: C.text, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={f.ppe.includes(item)} onChange={() => togglePpe(item)} /> {item}
+              </label>
+            ))}
+          </div>
+        </Field>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.text, fontSize: 14, cursor: 'pointer', margin: '12px 0' }}>
+          <input type="checkbox" checked={f.acknowledged} onChange={e => setF(s => ({ ...s, acknowledged: e.target.checked }))} />
+          I've completed this Take 5 and it's safe to proceed.
+        </label>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button onClick={submit} disabled={saving} style={btnPrimary}>{saving ? 'Submitting…' : 'Submit Take 5'}</button>
+        </div>
+      </div>
+
+      <div>
+        <h4 style={{ color: C.textMuted, fontSize: 13, marginBottom: 10, textTransform: 'uppercase' }}>Recent Take 5s</h4>
+        {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 20 }}><Spinner /></div> : recent.length === 0 ? <EmptyState message="No Take 5s submitted yet." /> : (
+          <TableWrap>
+            <thead><tr><Th>Date</Th><Th>Site</Th><Th>Hazards</Th><Th>Submitted</Th></tr></thead>
+            <tbody>
+              {recent.map(t => (
+                <tr key={t.id}>
+                  <Td>{fmtDate(t.work_date)}</Td>
+                  <Td>{t.site || '—'}</Td>
+                  <Td>{t.hazards ? (t.hazards.length > 44 ? t.hazards.slice(0, 44) + '…' : t.hazards) : '—'}</Td>
+                  <Td>{fmtDateTime(t.created_at)}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableWrap>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Read-only history of every timesheet the worker has submitted, incl. the
+// Tasks Completed text they logged. Newest first.
+function WorkerHistory({ currentWorker, showToast }) {
+  const [headers, setHeaders] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const { data, error } = await supabase.from('timesheet_headers').select('*')
+        .eq('worker_id', currentWorker.id).order('created_at', { ascending: false });
+      if (!mounted) return;
+      if (error) showToast(error.message, 'error');
+      else setHeaders(data || []);
+      setLoading(false);
+    })();
+    return () => { mounted = false; };
+  }, [currentWorker.id, showToast]);
+
+  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>;
+  if (!headers.length) return <EmptyState message="No timesheets submitted yet." />;
+
+  return (
+    <div>
+      <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 14 }}>A read-only record of every timesheet you've submitted, newest first.</div>
+      <TableWrap>
+        <thead><tr><Th>Submitted</Th><Th>Client</Th><Th>Project</Th><Th>Role</Th><Th>Total Hrs</Th><Th>Status</Th><Th>Tasks Completed</Th></tr></thead>
+        <tbody>
+          {headers.map(h => (
+            <tr key={h.id}>
+              <Td>{fmtDate(h.created_at)}</Td>
+              <Td>{h.client || '—'}</Td>
+              <Td>{h.project || '—'}</Td>
+              <Td>{h.role || '—'}</Td>
+              <Td>{Number(h.total_hours || 0).toFixed(2)}</Td>
+              <Td>{timesheetBadge(h.status)}</Td>
+              <Td>{h.comments ? h.comments : '—'}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </TableWrap>
     </div>
   );
 }

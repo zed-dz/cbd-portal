@@ -154,18 +154,6 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
     else { showToast('Timesheet deleted', 'success'); load(); refreshBadge?.(); }
   };
 
-  const handleApprove = async (ts) => {
-    const { error } = await supabase.from('timesheets').update({ status: 'approved' }).eq('id', ts.id);
-    if (error) showToast(error.message, 'error');
-    else { showToast('Timesheet approved', 'success'); load(); refreshBadge?.(); }
-  };
-
-  const handleReject = async (ts) => {
-    const { error } = await supabase.from('timesheets').update({ status: 'rejected' }).eq('id', ts.id);
-    if (error) showToast(error.message, 'error');
-    else { showToast('Timesheet rejected', 'info'); load(); refreshBadge?.(); }
-  };
-
   const handleApproveAll = async () => {
     const pending = timesheets.filter(ts => ts.status === 'pending');
     if (!pending.length) { showToast('No pending timesheets to approve.', 'info'); return; }
@@ -259,11 +247,7 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
                 <Td>{timesheetBadge(ts.status)}</Td>
                 <Td>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {ts.status === 'pending' && <>
-                      <button onClick={() => handleApprove(ts)} style={{ ...btnSmall, color: '#4ade80' }}>✓ Approve</button>
-                      <button onClick={() => handleReject(ts)} style={{ ...btnSmall, color: '#fca5a5' }}>✗ Reject</button>
-                    </>}
-                    <button onClick={() => openEdit(ts)} style={btnSmall}>Edit</button>
+                    <button onClick={() => openEdit(ts)} style={{ ...btnSmall, color: '#4ade80', borderColor: '#16653a' }}>Edit / Approve</button>
                     <button onClick={() => handleDelete(ts)} style={btnDanger}>Delete</button>
                   </div>
                 </Td>
@@ -446,15 +430,6 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
   const closeModal = () => { setModal(null); setEditInitial(null); setEditWorkerId(''); };
   const onSaved = () => { closeModal(); load(); refreshBadge?.(); };
 
-  const setStatus = async (header, status) => {
-    const { error } = await supabase.from('timesheet_headers').update({ status }).eq('id', header.id);
-    if (error) { showToast(error.message, 'error'); return; }
-    // keep line rows in sync so payroll/Xero sees the same status
-    await supabase.from('timesheets').update({ status }).eq('header_id', header.id);
-    showToast(`Timesheet ${status}`, status === 'rejected' ? 'info' : 'success');
-    load(); refreshBadge?.();
-  };
-
   const handleDelete = async (header) => {
     if (!window.confirm('Delete this daily timesheet and all its line rows?')) return;
     // line rows cascade via FK on delete
@@ -506,11 +481,7 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
                 <Td>{timesheetBadge(h.status)}</Td>
                 <Td>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {h.status === 'pending' && <>
-                      <button onClick={() => setStatus(h, 'approved')} style={{ ...btnSmall, color: '#4ade80' }}>✓ Approve</button>
-                      <button onClick={() => setStatus(h, 'rejected')} style={{ ...btnSmall, color: '#fca5a5' }}>✗ Reject</button>
-                    </>}
-                    <button onClick={() => openEdit(h)} style={btnSmall}>Edit</button>
+                    <button onClick={() => openEdit(h)} style={{ ...btnSmall, color: '#4ade80', borderColor: '#16653a' }}>Edit / Approve</button>
                     <button onClick={() => handleDelete(h)} style={btnDanger}>Delete</button>
                   </div>
                 </Td>
@@ -530,6 +501,7 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
               workerId={editWorkerId}
               workers={workers}
               allowAdmin
+              allowReview={modal !== 'add'}
               onWorkerChange={setEditWorkerId}
               onSaved={onSaved}
               onCancel={closeModal}
