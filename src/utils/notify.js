@@ -17,14 +17,14 @@ export const PORTAL_URL = 'https://cbd-portal-gray.vercel.app';
 // This is the real, monitored team inbox (also the connected Gmail sender).
 export const ADMIN_EMAIL = 'theteamcbd@gmail.com';
 
-// ── Admin SMS allowlist (now OFF — texts every eligible admin) ──────────────
-// Was temporarily set to only Zeff while the worker-triggered roster lookup was
-// broken by the workers RLS lockdown. That is fixed (the roster now comes from
-// the get_admin_notification_recipients SECURITY DEFINER RPC, which works for
-// worker- and admin-triggered events alike), so the gate is disabled and every
-// eligible admin (per-event mode + SMS on) is texted. Set to an array of E.164
-// numbers only if you ever need to temporarily restrict outbound admin SMS.
-const SMS_ALLOWLIST = null;
+// ── Admin SMS allowlist (ON — Zeff only, per owner) ─────────────────────────
+// Outbound admin SMS is intentionally gated to Zeff's number for now so the
+// whole team isn't buzzed on every allocation event. The roster still comes from
+// the get_admin_notification_recipients SECURITY DEFINER RPC (works for worker-
+// and admin-triggered events), and this allowlist then restricts who is actually
+// texted. Set to null / [] to text every eligible admin (per-event mode + SMS
+// on). The in-app bell + email still reach all admins regardless of this gate.
+const SMS_ALLOWLIST = ['+61459789590']; // Zeff
 
 // Normalise an Australian mobile to E.164 ("+61…").
 // Accepts "0447 532 346", "0447  532 346", "+61 447 532 346",
