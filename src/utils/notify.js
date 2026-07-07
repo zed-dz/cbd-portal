@@ -17,16 +17,14 @@ export const PORTAL_URL = 'https://cbd-portal-gray.vercel.app';
 // This is the real, monitored team inbox (also the connected Gmail sender).
 export const ADMIN_EMAIL = 'theteamcbd@gmail.com';
 
-// ── Zeff-only SMS gate (TEMP) ───────────────────────────────────────────────
-// The team asked to STOP buzzing everyone: route ALL outbound admin SMS to ONLY
-// Zeff for now. The in-app bell + email still go to every admin — only the TEXT
-// is gated here. When set (a non-empty array), admin SMS is sent to exactly
-// these numbers, which guarantees Zeff is reached and no one else is.
-//
-//   TO REVERT TO TEXTING ALL ADMINS: set `SMS_ALLOWLIST = null;` (or `[]`).
-//   With a null/empty allowlist, every eligible admin (per-event mode + SMS on)
-//   is texted as before.
-const SMS_ALLOWLIST = ['+61459789590']; // only Zeff — see note above to revert
+// ── Admin SMS allowlist (now OFF — texts every eligible admin) ──────────────
+// Was temporarily set to only Zeff while the worker-triggered roster lookup was
+// broken by the workers RLS lockdown. That is fixed (the roster now comes from
+// the get_admin_notification_recipients SECURITY DEFINER RPC, which works for
+// worker- and admin-triggered events alike), so the gate is disabled and every
+// eligible admin (per-event mode + SMS on) is texted. Set to an array of E.164
+// numbers only if you ever need to temporarily restrict outbound admin SMS.
+const SMS_ALLOWLIST = null;
 
 // Normalise an Australian mobile to E.164 ("+61…").
 // Accepts "0447 532 346", "0447  532 346", "+61 447 532 346",
@@ -113,10 +111,9 @@ export function adminDeclineSmsBody({ worker, client, start_date, role }) {
 // Numbers are E.164-normalised and de-duped. Fire-and-forget; never throws.
 export async function broadcastAdminSms(body) {
   try {
-    const { data, error } = await supabase
-      .from('workers')
-      .select('name, mobile, access_level, notify_mode, notify_sms')
-      .eq('access_level', 'admin');
+    // Roster via SECURITY DEFINER RPC so the worker accept/decline path (which
+    // cannot read other workers under the RLS lockdown) still gets the admin list.
+    const { data, error } = await supabase.rpc('get_admin_notification_recipients');
     if (error) return { ok: false, sent: 0, error: error.message };
 
     // Only per-event admins with the SMS channel enabled (digest admins get the
@@ -166,10 +163,7 @@ export async function sendAdminEmail(subject, text) {
     const recipients = [{ name: 'Admin', email: ADMIN_EMAIL }];
     const seen = new Set([ADMIN_EMAIL.toLowerCase()]);
     try {
-      const { data } = await supabase
-        .from('workers')
-        .select('name, email, access_level, notify_mode, notify_email')
-        .eq('access_level', 'admin');
+      const { data } = await supabase.rpc('get_admin_notification_recipients');
       for (const w of (data || [])) {
         const email = (w.email || '').trim();
         if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) continue;
