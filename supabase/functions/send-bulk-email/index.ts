@@ -1,12 +1,14 @@
 // Sends a bulk email blast to a list of recipients.
 //
-// Sender selection (in order):
-//   1. Connected Gmail account (calls `gmail-send` once per recipient) — used
-//      whenever a `gmail_tokens` row exists. Slower than Resend's batch
-//      endpoint but the only path that reaches arbitrary recipients
-//      pre-domain-verification.
-//   2. Resend batch endpoint — used if Gmail isn't connected and a
-//      RESEND_API_KEY is set. Up to 100 messages per HTTP call.
+// GOOGLE (Gmail) ONLY — no third-party email provider. Fully self-contained
+// like send-daily-digest: reads the connected team account from `gmail_tokens`
+// (id=1), refreshes the OAuth access token at oauth2.googleapis.com/token when
+// needed, and sends each message as RAW MIME via gmail.googleapis.com
+// messages.send. It does NOT depend on a forwarded user JWT to reach Gmail, and
+// there is no fallback provider — even without the (now legacy, ignored)
+// `gmail_only` flag.
+//
+// If Gmail isn't connected it returns { gmail_not_connected } gracefully.
 //
 // Request body:
 //   {
@@ -16,16 +18,17 @@
 //     audience?:  'workers' | 'clients' | 'mixed',
 //     sent_by?:   UUID,
 //   }
+//   or { test: true, to: "addr" } for a single probe send.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
-const INVITE_FROM    = Deno.env.get('INVITE_FROM') || 'CBD Plant & Labour <onboarding@resend.dev>';
 const PORTAL_URL     = Deno.env.get('PORTAL_URL')  || 'https://cbd-portal-gray.vercel.app';
 const SUPABASE_URL   = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const MAX_PER_BATCH  = 100;
+const GMAIL_CLIENT_ID      = Deno.env.get('GMAIL_CLIENT_ID')  || '';
+const GMAIL_CLIENT_SECRET  = Deno.env.get('GMAIL_CLIENT_SECRET') || '';
+const SENDER_DISPLAY_NAME  = Deno.env.get('GMAIL_SENDER_NAME') || 'CBD Plant & Labour';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -72,19 +75,93 @@ function renderText(name: string, subject: string, body: string) {
   return `Hi ${name || 'there'},\n\n${body}\n\n—\nCBD Plant & Labour\nABN 75 663 693 070\n${PORTAL_URL}`;
 }
 
-async function gmailIsConnected(sb: ReturnType<typeof createClient>) {
-  const { data } = await sb.from('gmail_tokens').select('id').eq('id', 1).maybeSingle();
-  return !!data?.id;
+// base64url encoding required by the Gmail API.
+function b64url(s: string) {
+  const bytes = new TextEncoder().encode(s);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function encodeHeader(value: string) {
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x00-\x7F]*$/.test(value)) return value;
+  const bytes = new TextEncoder().encode(value);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return `=?UTF-8?B?${btoa(bin)}?=`;
+}
+
+function formatFromHeader(name: string, email: string) {
+  const safeName = name.replace(/"/g, '\\"');
+  const encoded  = encodeHeader(safeName);
+  return /^[\x00-\x7F]*$/.test(safeName) ? `"${safeName}" <${email}>` : `${encoded} <${email}>`;
+}
+
+async function getValidAccessToken(supa: ReturnType<typeof createClient>) {
+  const { data: row, error } = await supa.from('gmail_tokens').select('*').eq('id', 1).maybeSingle();
+  if (error || !row) throw new Error('gmail_not_connected');
+
+  const expired = new Date(row.expires_at).getTime() < Date.now() + 30_000;
+  if (!expired) return { accessToken: row.access_token, emailAddress: row.email_address };
+
+  if (!GMAIL_CLIENT_ID || !GMAIL_CLIENT_SECRET) throw new Error('gmail_not_configured');
+
+  const refreshRes = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id:     GMAIL_CLIENT_ID,
+      client_secret: GMAIL_CLIENT_SECRET,
+      refresh_token: row.refresh_token,
+      grant_type:    'refresh_token',
+    }),
+  });
+  if (!refreshRes.ok) {
+    const detail = await refreshRes.text();
+    console.error('token refresh failed:', detail);
+    throw new Error('gmail_refresh_failed');
+  }
+  const t = await refreshRes.json();
+  const newExpires = new Date(Date.now() + (t.expires_in || 3600) * 1000).toISOString();
+  await supa.from('gmail_tokens').update({
+    access_token: t.access_token,
+    expires_at:   newExpires,
+    updated_at:   new Date().toISOString(),
+  }).eq('id', 1);
+  return { accessToken: t.access_token, emailAddress: row.email_address };
+}
+
+function buildMime(opts: { from: string; to: string; subject: string; text: string; html: string }) {
+  const boundary = `cbd_${crypto.randomUUID().replace(/-/g, '')}`;
+  const headers = [
+    `From: ${opts.from}`,
+    `To: ${opts.to}`,
+    `Subject: ${encodeHeader(opts.subject)}`,
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+  ];
+  const b64 = (s: string) => {
+    const bytes = new TextEncoder().encode(s);
+    let bin = '';
+    for (const b of bytes) bin += String.fromCharCode(b);
+    return btoa(bin).replace(/(.{76})/g, '$1\r\n');
+  };
+  const body = [
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64', '', b64(opts.text), '',
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64', '', b64(opts.html), '',
+    `--${boundary}--`,
+  ].join('\r\n');
+  return `${headers.join('\r\n')}\r\n\r\n${body}`;
 }
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST')    return json({ error: 'Method not allowed' }, 405);
-
-  // Forward the caller's Authorization header to gmail-send — Supabase's
-  // gateway rejects service-role JWTs as Bearer tokens for inter-function
-  // calls when verify_jwt=true.
-  const callerAuth = req.headers.get('Authorization') || '';
 
   let body: {
     recipients?: Array<{ id?: string; name?: string; email: string }>;
@@ -92,114 +169,76 @@ serve(async (req) => {
     body?: string;
     audience?: string;
     sent_by?: string;
-    gmail_only?: boolean;   // notification sends set this — Google only, never Resend
+    gmail_only?: boolean;   // legacy flag — Gmail is always the only sender now
+    test?: boolean;
+    to?: string;
   };
   try { body = await req.json(); } catch { return json({ error: 'invalid_json' }, 400); }
 
-  // Allocation-notification emails pass gmail_only:true so they are sent via
-  // Google (Gmail) ONLY and never silently fall back to Resend.
-  const gmailOnly = body.gmail_only === true;
+  // Probe mode: a single test recipient.
+  let recipients = (body.recipients || []).filter(r => r && r.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email));
+  let subject = (body.subject || '').trim();
+  let text    = (body.body || '').trim();
+  if (body.test) {
+    const to = (body.to || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return json({ error: 'test mode needs a valid `to`' }, 400);
+    recipients = [{ email: to, name: 'Test' }];
+    subject = subject || 'CBD bulk email — test send (via Gmail)';
+    text    = text || 'This is a test of the bulk email path. It was sent via Gmail (Google) — the only email sender.';
+  }
 
-  const recipients = (body.recipients || []).filter(r => r && r.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email));
   if (!recipients.length) return json({ error: 'no_valid_recipients' }, 400);
-  if (!body.subject?.trim()) return json({ error: 'missing_subject' }, 400);
-  if (!body.body?.trim())    return json({ error: 'missing_body' }, 400);
+  if (!subject) return json({ error: 'missing_subject' }, 400);
+  if (!text)    return json({ error: 'missing_body' }, 400);
 
-  const subject = body.subject.trim();
-  const text    = body.body.trim();
   const supa = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+  // ── Gmail (Google) only — no fallback provider ───────────────────────────
+  let accessToken: string;
+  let fromEmail: string | null;
+  try {
+    const t = await getValidAccessToken(supa);
+    accessToken = t.accessToken;
+    fromEmail   = t.emailAddress;
+  } catch (e) {
+    const msg = (e as Error).message;
+    return json({ ok: false, via: 'gmail', error: msg, recipients: recipients.length }, msg === 'gmail_not_connected' ? 412 : 500);
+  }
+  if (!fromEmail) return json({ ok: false, via: 'gmail', error: 'no_from_address' }, 500);
+  const fromHeader = formatFromHeader(SENDER_DISPLAY_NAME, fromEmail);
 
   const results: Array<{ email: string; ok: boolean; error?: string }> = [];
 
-  // ── 1) Prefer Gmail when connected ────────────────────────────────────────
-  const useGmail = await gmailIsConnected(supa) && !!callerAuth;
-  let provider: 'gmail' | 'resend' = useGmail ? 'gmail' : 'resend';
-
-  if (useGmail) {
-    // Send one at a time via gmail-send. Slower than Resend batch but reaches
-    // any recipient, not just verified addresses. Concurrency kept low to
-    // avoid hitting Gmail's per-user send quotas.
-    const CONCURRENCY = 4;
-    let cursor = 0;
-    async function worker() {
-      while (cursor < recipients.length) {
-        const idx = cursor++;
-        const r = recipients[idx];
-        try {
-          const res = await fetch(`${SUPABASE_URL}/functions/v1/gmail-send`, {
-            method: 'POST',
-            headers: {
-              'Authorization': callerAuth,
-              'Content-Type':  'application/json',
-            },
-            body: JSON.stringify({ to: r.email, subject, body: text }),
-          });
-          const out = await res.json().catch(() => ({}));
-          if (res.ok && out.ok) {
-            results[idx] = { email: r.email, ok: true };
-          } else {
-            results[idx] = {
-              email: r.email, ok: false,
-              error: out.detail || out.error || `gmail-send ${res.status}`,
-            };
-          }
-        } catch (e) {
-          results[idx] = { email: r.email, ok: false, error: (e as Error).message };
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, recipients.length) }, () => worker()));
-  } else if (gmailOnly) {
-    // Google-only notification path: Gmail isn't connected (or no caller JWT) —
-    // refuse to route via Resend so notifications stay 100% Gmail.
-    return json({
-      ok: false,
-      via: 'gmail',
-      error: 'gmail_required',
-      message: 'Gmail is not connected (or no auth was forwarded). Notification emails are Google-only and will not fall back to Resend. Connect Gmail in the Inbox page.',
-    }, 412);
-  } else if (RESEND_API_KEY) {
-    // ── 2) Resend fallback (batch endpoint) ────────────────────────────────
-    const emails = recipients.map(r => ({
-      from: INVITE_FROM,
-      to: [r.email],
-      subject,
-      html: renderHtml(r.name || '', subject, text),
-      text: renderText(r.name || '', subject, text),
-    }));
-    for (let i = 0; i < emails.length; i += MAX_PER_BATCH) {
-      const slice = emails.slice(i, i + MAX_PER_BATCH);
-      const batchRes = await fetch('https://api.resend.com/emails/batch', {
-        method:  'POST',
-        headers: {
-          'Authorization': `Bearer ${RESEND_API_KEY}`,
-          'Content-Type':  'application/json',
-        },
-        body: JSON.stringify(slice),
-      });
-      if (!batchRes.ok) {
-        const detail = await batchRes.text();
-        console.error('Resend batch error', batchRes.status, detail);
-        slice.forEach((_, idx) => {
-          results[i + idx] = { email: recipients[i + idx].email, ok: false, error: `Resend ${batchRes.status}: ${detail.slice(0, 160)}` };
+  // Send with low concurrency to stay under Gmail's per-user send quota.
+  const CONCURRENCY = 4;
+  let cursor = 0;
+  async function sendWorker() {
+    while (cursor < recipients.length) {
+      const idx = cursor++;
+      const r = recipients[idx];
+      try {
+        const mime = buildMime({
+          from: fromHeader, to: r.email, subject,
+          text: renderText(r.name || '', subject, text),
+          html: renderHtml(r.name || '', subject, text),
         });
-        if (batchRes.status === 403) break;
-        continue;
+        const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ raw: b64url(mime) }),
+        });
+        if (res.ok) {
+          results[idx] = { email: r.email, ok: true };
+        } else {
+          results[idx] = { email: r.email, ok: false, error: (await res.text()).slice(0, 200) };
+        }
+      } catch (e) {
+        results[idx] = { email: r.email, ok: false, error: (e as Error).message };
       }
-      const out = await batchRes.json();
-      const okIds: any[] = out?.data || [];
-      slice.forEach((_, idx) => {
-        results[i + idx] = { email: recipients[i + idx].email, ok: !!okIds[idx]?.id };
-      });
     }
-  } else {
-    return json({
-      error: 'email_not_configured',
-      message: 'No email provider configured. Connect Gmail in the Inbox page, or set RESEND_API_KEY.',
-    }, 503);
   }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, recipients.length) }, () => sendWorker()));
 
-  // Fill any unset slots with a generic failure (shouldn't happen).
   for (let i = 0; i < recipients.length; i++) {
     if (!results[i]) results[i] = { email: recipients[i].email, ok: false, error: 'no_result' };
   }
@@ -213,7 +252,7 @@ serve(async (req) => {
     const batchId = crypto.randomUUID();
     const rows = results.map((r, idx) => ({
       batch_id:        batchId,
-      channel:         provider === 'gmail' ? 'gmail' : 'email',
+      channel:         'gmail',
       audience:        body.audience || null,
       recipient_id:    recipients[idx].id || null,
       recipient_name:  recipients[idx].name || null,
@@ -232,7 +271,7 @@ serve(async (req) => {
 
   return json({
     ok: sent > 0,
-    via: provider,
+    via: 'gmail',
     sent,
     failed: failed.length,
     total:  results.length,

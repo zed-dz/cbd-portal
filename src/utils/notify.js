@@ -14,7 +14,8 @@ import { supabase } from '../supabaseClient';
 export const PORTAL_URL = 'https://cbd-portal-gray.vercel.app';
 
 // Single address that mirrors every admin allocation notification by email.
-export const ADMIN_EMAIL = 'admin@cbdplantlabour.com.au';
+// This is the real, monitored team inbox (also the connected Gmail sender).
+export const ADMIN_EMAIL = 'theteamcbd@gmail.com';
 
 // ── Zeff-only SMS gate (TEMP) ───────────────────────────────────────────────
 // The team asked to STOP buzzing everyone: route ALL outbound admin SMS to ONLY

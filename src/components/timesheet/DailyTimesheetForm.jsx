@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnSmall, btnDanger } from '../../theme';
-import { todayISO } from '../../utils/dates';
+import { todayISO, isTakeFiveDay } from '../../utils/dates';
 import {
   dayFromDate, computeLineTotalHours, computeLineRegularHours, autoMealAllowance, SHIFT_TYPES,
 } from '../../utils/payroll';
@@ -70,8 +70,12 @@ function buildLinesPayload(form, config) {
 
 // Shared Daily Timesheet form. `workerId` is the subject worker.
 // `allowAdmin` shows the status selector + worker picker for admin editing.
+// `allowReview` (manager Edit/Approve) adds Approve / Reject actions in the
+// footer so approval only happens after opening + reviewing the timesheet.
+// `onGoToTake5` lets the worker jump to the Take 5 tab when one is required.
 export function DailyTimesheetForm({
   initial, workerId, onSaved, onCancel, showToast, allowAdmin = false,
+  allowReview = false, onGoToTake5,
   workers = [], onWorkerChange,
 }) {
   const [form, setForm] = useState(initial || blankDaily());
@@ -80,6 +84,8 @@ export function DailyTimesheetForm({
   const [projects, setProjects] = useState([]);
   const [config, setConfig] = useState({});
   const [saving, setSaving] = useState(false);
+  const [taskError, setTaskError] = useState('');
+  const [take5Block, setTake5Block] = useState(null);   // { dates:[…] } when a Tue/Thu Take 5 is missing
 
   useEffect(() => { setForm(initial || blankDaily()); }, [initial]);
 
@@ -160,7 +166,10 @@ export function DailyTimesheetForm({
     return [...extra];
   }, [roles, form.role]);
 
-  const handleSave = async () => {
+  // statusOverride (from the manager Approve/Reject buttons) forces the saved
+  // status; otherwise the form's own status is used.
+  const handleSave = async (statusOverride) => {
+    const overriding = statusOverride === 'approved' || statusOverride === 'rejected';
     if (!targetWorker) { showToast('No worker selected for this timesheet.', 'error'); return; }
     if (!form.client) { showToast('Client is required.', 'error'); return; }
     if (!form.project) { showToast('Project is required.', 'error'); return; }
@@ -168,6 +177,33 @@ export function DailyTimesheetForm({
     const validLines = form.hours_lines.filter(l => l.date && l.start_time && l.end_time);
     if (!validLines.length) { showToast('Add at least one hours line with date, start and end.', 'error'); return; }
 
+    // "Tasks Completed" is mandatory for a worker submitting their own sheet.
+    // Managers editing/approving legacy sheets aren't hard-blocked on it.
+    if (!allowAdmin && !String(form.comments || '').trim()) {
+      setTaskError('Please describe the tasks you completed today.');
+      showToast('Tasks Completed is required.', 'error');
+      return;
+    }
+
+    // Take 5 gate: on Tue/Thu (AEST) a worker must have a Take 5 for that same
+    // work date before their timesheet can be submitted. Managers are exempt.
+    if (!allowAdmin) {
+      const t5Dates = [...new Set(validLines.map(l => l.date))].filter(isTakeFiveDay);
+      if (t5Dates.length) {
+        const { data: t5rows } = await supabase.from('take5')
+          .select('work_date').eq('worker_id', targetWorker).in('work_date', t5Dates);
+        const have = new Set((t5rows || []).map(r => r.work_date));
+        const missing = t5Dates.filter(d => !have.has(d));
+        if (missing.length) {
+          setTake5Block({ dates: missing });
+          showToast('A Take 5 is required on Tue/Thu before submitting your timesheet.', 'error');
+          return;
+        }
+      }
+      setTake5Block(null);
+    }
+
+    const statusToUse = overriding ? statusOverride : (form.status || 'pending');
     const recalced = validLines.map(recalcLine);
     // Meal allowance is auto-derived from each day's hours (DB triggers are
     // authoritative; this payload keeps the header allowance_lines in sync).
@@ -186,12 +222,22 @@ export function DailyTimesheetForm({
       p_comments: form.comments || null,
       p_client_signature: form.client_signature || null,
       p_allowance_lines: allowancePayload,
-      p_status: form.status || 'pending',
+      p_status: statusToUse,
       p_lines: buildLinesPayload({ ...form, hours_lines: recalced }, config),
     });
+    if (error) { setSaving(false); showToast(error.message, 'error'); return; }
+
+    // Manager Approve/Reject: keep the header + line rows in lock-step so
+    // payroll/Xero read the same status (mirrors the old row-level action).
+    if (overriding && form.id) {
+      await supabase.from('timesheet_headers').update({ status: statusToUse }).eq('id', form.id);
+      await supabase.from('timesheets').update({ status: statusToUse }).eq('header_id', form.id);
+    }
     setSaving(false);
-    if (error) { showToast(error.message, 'error'); return; }
-    showToast(form.id ? 'Daily timesheet updated' : 'Daily timesheet submitted', 'success');
+    const msg = overriding
+      ? (statusToUse === 'approved' ? 'Timesheet approved' : 'Timesheet rejected')
+      : (form.id ? 'Daily timesheet updated' : 'Daily timesheet submitted');
+    showToast(msg, statusToUse === 'rejected' ? 'info' : 'success');
     onSaved?.(data);
   };
 
@@ -324,8 +370,13 @@ export function DailyTimesheetForm({
           </label>
         </div>
       </Field>
-      <Field label="Comments">
-        <textarea style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }} value={form.comments} onChange={e => setField('comments', e.target.value)} />
+      <Field label="Tasks Completed *" hint="Briefly describe the tasks you completed today." error={taskError}>
+        <textarea
+          style={{ ...inputStyle, minHeight: 70, resize: 'vertical', ...(taskError ? { borderColor: 'rgba(239,68,68,0.5)' } : {}) }}
+          value={form.comments}
+          placeholder="Briefly describe the tasks you completed today"
+          onChange={e => { setField('comments', e.target.value); if (taskError) setTaskError(''); }}
+        />
       </Field>
 
       {allowAdmin && (
@@ -342,11 +393,39 @@ export function DailyTimesheetForm({
         <SignaturePad value={form.client_signature} onChange={(v) => setField('client_signature', v)} />
       </Field>
 
-      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+      {take5Block && (
+        <div style={{ background: C.warningSoft, border: `1px solid ${C.warning}`, borderRadius: 8, padding: '12px 16px', margin: '4px 0 12px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ color: C.text, fontSize: 13, flex: 1, minWidth: 220 }}>
+            <strong>⚠ A Take 5 is required on Tue/Thu before submitting your timesheet.</strong>
+            <div style={{ color: C.textMuted, fontSize: 12, marginTop: 3 }}>
+              Missing for: {take5Block.dates.join(', ')}. Complete a Take 5 for that date, then submit again.
+            </div>
+          </div>
+          {onGoToTake5 && (
+            <button type="button" onClick={() => onGoToTake5()} style={{ ...btnPrimary, background: C.warning, color: '#1a1a1a' }}>
+              Go to Take 5 →
+            </button>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8, flexWrap: 'wrap' }}>
         <button type="button" onClick={onCancel} style={btnSecondary}>Cancel</button>
-        <button type="button" onClick={handleSave} disabled={saving} style={btnPrimary}>
+        <button type="button" onClick={() => handleSave()} disabled={saving} style={allowReview ? btnSecondary : btnPrimary}>
           {saving ? 'Saving…' : form.id ? 'Save changes' : 'Submit'}
         </button>
+        {allowReview && (
+          <>
+            <button type="button" onClick={() => handleSave('rejected')} disabled={saving}
+              style={{ ...btnSecondary, color: '#fca5a5', borderColor: 'rgba(239,68,68,0.32)' }}>
+              ✗ Reject
+            </button>
+            <button type="button" onClick={() => handleSave('approved')} disabled={saving}
+              style={{ ...btnPrimary, background: C.success }}>
+              ✓ Approve
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
