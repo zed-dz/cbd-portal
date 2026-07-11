@@ -56,10 +56,11 @@ construction labour-hire — road / rail / water). It runs the entire workflow:
   to your Resend account email (`fsociety.2017@protonmail.com`) until a
   domain is verified.
 - **SMS:** wired via **Twilio** (`send-sms` edge function; creds in `integration_secrets`).
-  Admin event SMS goes to every worker with `access_level='admin'`, per-event mode and
-  SMS channel on (roster via the `get_admin_notification_recipients` RPC). The temporary
-  single-number `SMS_ALLOWLIST` gate in `utils/notify.js` was **removed 2026-07-11** —
-  set it to an array of E.164 numbers only to temporarily restrict sends.
+  The roster is every worker with `access_level='admin'` + per-event + SMS on (via the
+  `get_admin_notification_recipients` RPC), but **`SMS_ALLOWLIST` in `utils/notify.js`
+  gates actual texts to Zeff only — the owner's standing decision (re-confirmed
+  2026-07-11 after a brief same-day trial of all-admins)**. Bell + email still reach
+  all admins. Don't remove the gate without an explicit owner ask.
 - **Deploy:** Vercel auto-deploys `main` branch. `vercel.json` rewrites all routes
   to `index.html` (SPA fallback).
 
@@ -238,6 +239,21 @@ C: drive has historically been **full** on the user's Windows machine (causing
 pandoc/npm cache failures). Use `Z:\tmp` as a scratch area if needed.
 
 ---
+
+## Recent additions (2026-07-12 — supervisor approval chain)
+
+- **Client/supervisor approval chain** (owner request): admin approves a daily
+  timesheet → `sendTimesheetForClientApproval` (utils/clientApproval.js) emails
+  and texts the **site supervisor** (project `site_contact_*`, fallback client
+  contact) a tokenised link `/approve-ts/<uuid>` → `ClientApprovePage` (public,
+  anon RPCs `get_timesheet_for_client_approval` / `approve_timesheet_via_token`)
+  → on accept, header + line rows get `client_approved=true` and an admin bell
+  notification fires. **Payroll only shows billable rows:** status approved AND
+  (`client_approved` OR legacy `header_id is null`). Admin fallbacks in the
+  Timesheets View modal: Resend to supervisor / Mark accepted (verbal).
+  Pre-existing approved rows were grandfathered `client_approved=true`.
+  Migration `20260712_client_approval_chain.sql`. Extracted to Reusable Assets
+  as **timesheet-suite** together with the whole daily-timesheet stack.
 
 ## Recent additions (July 2026 — team feedback round, 2026-07-11)
 

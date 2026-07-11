@@ -8,12 +8,14 @@ import { WorkerPortal } from './portals/WorkerPortal';
 import { PublicProfilePage } from './pages/PublicProfile/PublicProfilePage';
 import { OnboardProfilePage } from './pages/OnboardProfile/OnboardProfilePage';
 import { ApplyPage } from './pages/Apply/ApplyPage';
+import { ClientApprovePage } from './pages/ClientApprove/ClientApprovePage';
 import { OmniHelpBubble } from './components/help/OmniHelpBubble';
 
 const PUBLIC_ROUTE_PATTERNS = [
   { kind: 'profile',  re: /^\/p\/([0-9a-f-]{36})\/?$/i },
   { kind: 'onboard',  re: /^\/onboard\/([0-9a-f-]{36})\/?$/i },
   { kind: 'apply',    re: /^\/apply\/?$/i },
+  { kind: 'approvets', re: /^\/approve-ts\/([0-9a-f-]{36})\/?$/i },
 ];
 
 function matchPublicRoute(pathname) {
@@ -113,6 +115,7 @@ export default function App() {
         {publicRoute.kind === 'profile' ? <PublicProfilePage token={publicRoute.token} />
          : publicRoute.kind === 'onboard' ? <OnboardProfilePage token={publicRoute.token} />
          : publicRoute.kind === 'apply'   ? <ApplyPage />
+         : publicRoute.kind === 'approvets' ? <ClientApprovePage token={publicRoute.token} />
          : null}
       </>
     );

@@ -6,6 +6,7 @@ import { downloadCSV } from '../../utils/csv';
 import { computeTimesheetHours, buildXeroCSV } from '../../utils/payroll';
 import { SCENARIOS } from '../../constants/scenarios';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, timesheetBadge, DailyTimesheetForm, dailyFromHeader, blankDaily, TimesheetDetailView } from '../../components';
+import { sendTimesheetForClientApproval, markClientApprovedManually } from '../../utils/clientApproval';
 
 const fmtTime = (iso) => iso
   ? new Date(iso).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
@@ -504,7 +505,15 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
                 <Td>{single ? fmtTime(first.end_time) : '—'}</Td>
                 <Td><span style={{ fontWeight: 700 }}>{info.reg.toFixed(2)}</span></Td>
                 <Td>{info.ot > 0 ? <span style={{ color: C.warning, fontWeight: 700 }}>{info.ot.toFixed(2)}</span> : '—'}</Td>
-                <Td>{timesheetBadge(h.status)}</Td>
+                <Td>
+                  {timesheetBadge(h.status)}
+                  {h.status === 'approved' && (
+                    <div style={{ fontSize: 10, marginTop: 3, color: h.client_approved ? C.success : C.warning }}
+                      title={h.client_approved ? `Accepted by the client${h.client_approved_by ? ` (${h.client_approved_by})` : ''}` : (h.client_approval_sent_at ? `Awaiting supervisor — sent to ${h.client_approval_sent_to || 'site contact'}` : 'Not yet sent to the site supervisor')}>
+                      {h.client_approved ? '✓ client accepted' : h.client_approval_sent_at ? '⏳ with supervisor' : '⚠ not sent to client'}
+                    </div>
+                  )}
+                </Td>
                 <Td>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <button onClick={() => setViewing(h)} style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }}>View</button>
@@ -528,6 +537,37 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
             onClose={() => setViewing(null)}
             onEdit={() => { const h = viewing; setViewing(null); openEdit(h); }}
           />
+          {viewing.status === 'approved' && (
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 16px', marginTop: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Client acceptance</div>
+              <div style={{ fontSize: 13, color: viewing.client_approved ? C.success : C.text, marginBottom: 10 }}>
+                {viewing.client_approved
+                  ? `✓ Accepted${viewing.client_approved_by ? ` by ${viewing.client_approved_by}` : ''}${viewing.client_approved_at ? ` on ${fmtDate(viewing.client_approved_at)}` : ''} — billable in Payroll.`
+                  : viewing.client_approval_sent_at
+                    ? `⏳ Awaiting the site supervisor — sent to ${viewing.client_approval_sent_to || 'site contact'} on ${fmtDate(viewing.client_approval_sent_at)}. Not billable until accepted.`
+                    : '⚠ Not yet sent to the site supervisor — not billable until they accept.'}
+              </div>
+              {!viewing.client_approved && (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }} onClick={async () => {
+                    const r = await sendTimesheetForClientApproval(viewing.id, { force: true });
+                    if (r.ok) { showToast(`Sent to site supervisor — ${r.sentTo}`, 'success'); load(); setViewing(null); }
+                    else showToast(r.error, 'error');
+                  }}>
+                    {viewing.client_approval_sent_at ? '↻ Resend to supervisor' : '→ Send to supervisor'}
+                  </button>
+                  <button style={{ ...btnSmall, color: '#4ade80', borderColor: '#16653a' }} onClick={async () => {
+                    if (!window.confirm('Mark this timesheet as accepted by the client (e.g. approved verbally/by phone)? It becomes billable immediately.')) return;
+                    const r = await markClientApprovedManually(viewing.id, 'Marked by admin (verbal/phone approval)');
+                    if (r.ok) { showToast('Marked client-accepted — now billable', 'success'); load(); setViewing(null); }
+                    else showToast(r.error, 'error');
+                  }}>
+                    ✓ Mark accepted (verbal)
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </Modal>
       )}
 

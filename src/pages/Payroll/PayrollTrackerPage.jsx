@@ -50,7 +50,12 @@ export function PayrollTrackerPage({ showToast }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    let q = supabase.from('timesheets').select('*, workers(name)').eq('status', 'approved').order('date', { ascending: false });
+    // Billable = admin-approved AND client-accepted. Legacy rows without a
+    // daily-timesheet header predate the supervisor chain and stay billable.
+    let q = supabase.from('timesheets').select('*, workers(name)')
+      .eq('status', 'approved')
+      .or('client_approved.eq.true,header_id.is.null')
+      .order('date', { ascending: false });
     if (dateFrom) q = q.gte('date', dateFrom);
     if (dateTo) q = q.lte('date', dateTo);
     const [t, w, cl, cfg] = await Promise.all([
@@ -181,7 +186,7 @@ export function PayrollTrackerPage({ showToast }) {
       {/* ── Workflow guide ────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 16, background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', flexWrap: 'wrap' }}>
         {[
-          { n: '1', label: 'Approve timesheets', hint: 'Go to Timesheets → Approve All Pending', done: true },
+          { n: '1', label: 'Approve timesheets', hint: 'Approve in Timesheets → the site supervisor accepts → billable here', done: true },
           { n: '2', label: 'Set pay period', hint: 'Pick From / To dates below', done: !!(dateFrom && dateTo) },
           { n: '3', label: 'Select staff', hint: `Click "Select Unexported" or tick rows`, done: selectedIds.size > 0 },
           { n: '4', label: 'Push to Xero', hint: xeroConnected ? 'Click the blue Push button' : 'Connect Xero first ↑', done: false },

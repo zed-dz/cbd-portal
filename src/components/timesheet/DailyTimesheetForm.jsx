@@ -7,6 +7,7 @@ import {
 } from '../../utils/payroll';
 import { Field } from '../ui/Field';
 import { SignaturePad } from '../ui/SignaturePad';
+import { sendTimesheetForClientApproval } from '../../utils/clientApproval';
 import { ROLE_GROUPS, ALL_ROLE_NAMES, roleChipStyle } from '../../constants/roles';
 
 const emptyHoursLine = () => ({
@@ -243,6 +244,18 @@ export function DailyTimesheetForm({
       ? (statusToUse === 'approved' ? 'Timesheet approved' : 'Timesheet rejected')
       : (form.id ? 'Daily timesheet updated' : 'Daily timesheet submitted');
     showToast(msg, statusToUse === 'rejected' ? 'info' : 'success');
+
+    // Approved → hand off to the site supervisor for client acceptance. Only
+    // client-accepted timesheets are billable in Payroll. Fire-and-forget.
+    if (allowAdmin && statusToUse === 'approved') {
+      const headerId = form.id || data;
+      if (headerId) {
+        sendTimesheetForClientApproval(headerId).then(r => {
+          if (r.ok) showToast(`Sent to site supervisor for acceptance — ${r.sentTo}`, 'success');
+          else if (!r.alreadySent) showToast(`Supervisor approval link NOT sent: ${r.error}`, 'error');
+        });
+      }
+    }
     onSaved?.(data);
   };
 
