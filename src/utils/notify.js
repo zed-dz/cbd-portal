@@ -17,14 +17,13 @@ export const PORTAL_URL = 'https://cbd-portal-gray.vercel.app';
 // This is the real, monitored team inbox (also the connected Gmail sender).
 export const ADMIN_EMAIL = 'theteamcbd@gmail.com';
 
-// ── Admin SMS allowlist (ON — Zeff only, per owner) ─────────────────────────
-// Outbound admin SMS is intentionally gated to Zeff's number for now so the
-// whole team isn't buzzed on every allocation event. The roster still comes from
-// the get_admin_notification_recipients SECURITY DEFINER RPC (works for worker-
-// and admin-triggered events), and this allowlist then restricts who is actually
-// texted. Set to null / [] to text every eligible admin (per-event mode + SMS
-// on). The in-app bell + email still reach all admins regardless of this gate.
-const SMS_ALLOWLIST = ['+61459789590']; // Zeff
+// ── Admin SMS allowlist (now OFF — texts every eligible admin) ───────────────
+// Was temporarily gated to a single number during the SMS rollout so the whole
+// team wasn't buzzed while testing. Per team feedback 2026-07-11 the gate is
+// disabled: every admin on the get_admin_notification_recipients roster with
+// per-event mode + SMS on now gets the text. Set to an array of E.164 numbers
+// only if you ever need to temporarily restrict outbound admin SMS again.
+const SMS_ALLOWLIST = null;
 
 // Normalise an Australian mobile to E.164 ("+61…").
 // Accepts "0447 532 346", "0447  532 346", "+61 447 532 346",
@@ -107,7 +106,7 @@ export function adminDeclineSmsBody({ worker, client, start_date, role }) {
 }
 
 // Text the admins who should get an immediate SMS. Honors per-admin prefs
-// (per-event mode + SMS channel on) and the Zeff-only SMS_ALLOWLIST gate above.
+// (per-event mode + SMS channel on) and the SMS_ALLOWLIST gate above when set.
 // Numbers are E.164-normalised and de-duped. Fire-and-forget; never throws.
 export async function broadcastAdminSms(body) {
   try {
@@ -131,14 +130,14 @@ export async function broadcastAdminSms(body) {
       targets.push({ to, name: w.name });
     }
 
-    // Zeff-only gate: when the allowlist is set, override the roster and text
+    // Emergency gate: when the allowlist is set, override the roster and text
     // exactly those numbers so we never buzz the whole team by accident.
     if (Array.isArray(SMS_ALLOWLIST) && SMS_ALLOWLIST.length) {
       const gate = new Set();
       targets = SMS_ALLOWLIST
         .map(n => normaliseAUMobile(n))
         .filter(n => n && !gate.has(n) && gate.add(n))
-        .map(to => ({ to, name: 'Zeff' }));
+        .map(to => ({ to, name: 'Allowlisted' }));
     }
 
     if (!targets.length) return { ok: false, sent: 0, error: 'no admin SMS recipients' };

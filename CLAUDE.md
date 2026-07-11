@@ -55,8 +55,11 @@ construction labour-hire — road / rail / water). It runs the entire workflow:
   when Gmail is disconnected; on the Resend free tier emails are restricted
   to your Resend account email (`fsociety.2017@protonmail.com`) until a
   domain is verified.
-- **SMS:** intentionally **not wired** — no genuinely free AU SMS provider exists.
-  UI shows a disabled "SOON" button.
+- **SMS:** wired via **Twilio** (`send-sms` edge function; creds in `integration_secrets`).
+  Admin event SMS goes to every worker with `access_level='admin'`, per-event mode and
+  SMS channel on (roster via the `get_admin_notification_recipients` RPC). The temporary
+  single-number `SMS_ALLOWLIST` gate in `utils/notify.js` was **removed 2026-07-11** —
+  set it to an array of E.164 numbers only to temporarily restrict sends.
 - **Deploy:** Vercel auto-deploys `main` branch. `vercel.json` rewrites all routes
   to `index.html` (SPA fallback).
 
@@ -235,6 +238,41 @@ C: drive has historically been **full** on the user's Windows machine (causing
 pandoc/npm cache failures). Use `Z:\tmp` as a scratch area if needed.
 
 ---
+
+## Recent additions (July 2026 — team feedback round, 2026-07-11)
+
+- **OT payroll bug FIXED** — `save_daily_timesheet` was writing
+  `pay_hours = regular_hours` (7.6-capped) and never setting `overtime_hours`,
+  so daily-flow submissions silently dropped OT from pay while charging the
+  client full hours. Now `pay_hours = total_hours` and
+  `overtime_hours = total − regular`. Existing non-exported rows were repaired
+  in the DB. See migration `20260711_ot_fix_adjustments_take5_task.sql`.
+- **Adjustment audit trail** — `timesheets` carries
+  `original_start_time/original_end_time/original_break_minutes` +
+  `adjusted_by/adjusted_at`. The RPC snapshots originals across its
+  delete+reinsert edit model; an admin changing times stamps the adjustment, a
+  worker resubmitting their own pending sheet does not. Adjustments are shown
+  in the edit form, the detail view, and the printed timesheet.
+- **Full timesheet view + Print/Save-PDF** —
+  `components/timesheet/TimesheetDetailView.jsx` (also exported `printTimesheet`).
+  Admin: Timesheets → Daily → View. Worker: My Timesheets → View. Hours only —
+  no pay/charge rates — so it's safe to hand to a client.
+- **Timesheets tables** — Daily tab now shows Date / Start / Finish / Normal /
+  OT per row (header query embeds `timesheets(*)` line rows); Line tab gained
+  Start/Finish columns.
+- **Full-time minimum day** — `applyFullTimeMinDay` in `utils/payroll.js`
+  (used by Payroll page): full-timer on a short standard weekday is topped up
+  to 8h pay per DAY (client still charged actual). Config override:
+  `payroll_config.min_day_hours_fulltime`. Weekend/PH/non-standard scenarios
+  and sub-0.5h days excluded.
+- **Take 5 v2** — worker states the task, then 2–3 task-specific hazards each
+  with a control measure (`take5.task` + `take5.task_hazards` jsonb; legacy
+  `hazards`/`controls` text still written for compat).
+- **Client Approvals page removed** (nav + route + page) per team feedback —
+  the `client_approved` column remains in the DB, unused.
+- **PWA / app-shell** — portal is installable (manifest + branded icons +
+  `public/sw.js`; registered in `src/index.js`, production only). Static
+  assets cache-first, navigations network-first, Supabase never cached.
 
 ## Recent additions (June 2026)
 

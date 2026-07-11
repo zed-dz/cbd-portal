@@ -5,7 +5,11 @@ import { todayISO, fmtDate } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
 import { computeTimesheetHours, buildXeroCSV } from '../../utils/payroll';
 import { SCENARIOS } from '../../constants/scenarios';
-import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, timesheetBadge, DailyTimesheetForm, dailyFromHeader, blankDaily } from '../../components';
+import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, timesheetBadge, DailyTimesheetForm, dailyFromHeader, blankDaily, TimesheetDetailView } from '../../components';
+
+const fmtTime = (iso) => iso
+  ? new Date(iso).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
+  : '—';
 
 const tsDefaults = {
   worker_id: '', client: '', site: '', date: '', scenario: 'standard',
@@ -222,12 +226,14 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
         <EmptyState message="No timesheets found." />
       ) : (
         <TableWrap>
-          <thead><tr><Th>Worker</Th><Th>Date</Th><Th>Scenario</Th><Th>Pay Hrs</Th><Th>Charge Hrs</Th><Th>OT / Allowances</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
+          <thead><tr><Th>Worker</Th><Th>Date</Th><Th>Start</Th><Th>Finish</Th><Th>Scenario</Th><Th>Pay Hrs</Th><Th>Charge Hrs</Th><Th>OT / Allowances</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
           <tbody>
             {filtered.map(ts => (
               <tr key={ts.id}>
                 <Td>{ts.workers?.name || '—'}</Td>
                 <Td>{fmtDate(ts.date)}</Td>
+                <Td>{fmtTime(ts.start_time)}</Td>
+                <Td>{fmtTime(ts.end_time)}</Td>
                 <Td>
                   <span style={{ fontSize: 11, color: C.textMuted, fontFamily: '"DM Mono", monospace' }}>
                     {ts.scenario || 'standard'}
@@ -256,7 +262,7 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
           </tbody>
           <tfoot>
             <tr>
-              <td colSpan={3} style={{ padding: '10px 16px', color: C.textMuted, fontSize: 13, borderTop: `2px solid ${C.border}` }}>
+              <td colSpan={5} style={{ padding: '10px 16px', color: C.textMuted, fontSize: 13, borderTop: `2px solid ${C.border}` }}>
                 {filtered.length} record{filtered.length !== 1 ? 's' : ''}
               </td>
               <td style={{ padding: '10px 16px', fontWeight: 700, color: C.text, fontSize: 14, borderTop: `2px solid ${C.border}` }}>
@@ -391,6 +397,7 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
   const [filterStatus, setFilterStatus] = useState('');
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);      // 'add' | header object | null
+  const [viewing, setViewing] = useState(null);  // header (with embedded lines) shown in the full view
   const [editInitial, setEditInitial] = useState(null);
   const [editWorkerId, setEditWorkerId] = useState('');
   const [loadingForm, setLoadingForm] = useState(false);
@@ -398,7 +405,7 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
   const load = useCallback(async () => {
     setLoading(true);
     const [h, w] = await Promise.all([
-      supabase.from('timesheet_headers').select('*, workers(name)').order('created_at', { ascending: false }),
+      supabase.from('timesheet_headers').select('*, workers(name), timesheets(*)').order('created_at', { ascending: false }),
       supabase.from('workers').select('id, name').is('archived_at', null).order('name'),
     ]);
     if (h.error) showToast(h.error.message, 'error');
@@ -406,6 +413,14 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
     if (w.data) setWorkers(w.data);
     setLoading(false);
   }, [showToast]);
+
+  // Per-header line summary for the table: dates, start/finish, normal + OT split.
+  const lineInfo = (h) => {
+    const lines = [...(h.timesheets || [])].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const total = lines.reduce((s, l) => s + (parseFloat(l.total_hours) || 0), 0);
+    const reg   = lines.reduce((s, l) => s + (parseFloat(l.regular_hours ?? l.total_hours) || 0), 0);
+    return { lines, total, reg, ot: Math.max(0, +(total - reg).toFixed(2)), adjusted: lines.some(l => l.adjusted_at) };
+  };
 
   useEffect(() => { load(); }, [load]);
 
@@ -466,29 +481,54 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
         <EmptyState message="No daily timesheets found." />
       ) : (
         <TableWrap>
-          <thead><tr><Th>Worker</Th><Th>Submitted</Th><Th>Client</Th><Th>Project</Th><Th>Role</Th><Th>Total / Reg</Th><Th>Wet Hire</Th><Th>Sig</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
+          <thead><tr><Th>Worker</Th><Th>Date</Th><Th>Client</Th><Th>Project</Th><Th>Role</Th><Th>Start</Th><Th>Finish</Th><Th>Normal</Th><Th>OT</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
           <tbody>
-            {filtered.map(h => (
+            {filtered.map(h => {
+              const info = lineInfo(h);
+              const first = info.lines[0];
+              const last = info.lines[info.lines.length - 1];
+              const single = info.lines.length === 1;
+              return (
               <tr key={h.id}>
                 <Td>{h.workers?.name || '—'}</Td>
-                <Td>{fmtDate(h.created_at)}</Td>
+                <Td>
+                  {info.lines.length === 0 ? fmtDate(h.created_at)
+                    : single ? fmtDate(first.date)
+                    : `${fmtDate(first.date)} – ${fmtDate(last.date)}`}
+                  {info.adjusted && <span title="Hours were adjusted after submission — open View for the original times" style={{ color: C.warning, marginLeft: 4 }}>✎</span>}
+                </Td>
                 <Td>{h.client || '—'}</Td>
                 <Td>{h.project || '—'}</Td>
                 <Td>{h.role || '—'}</Td>
-                <Td><span style={{ fontWeight: 700 }}>{Number(h.total_hours || 0).toFixed(2)}</span> / {Number(h.total_regular_hours || 0).toFixed(2)}</Td>
-                <Td>{h.wet_hire ? 'Yes' : 'No'}</Td>
-                <Td>{h.client_signature ? '✓' : '—'}</Td>
+                <Td>{single ? fmtTime(first.start_time) : info.lines.length ? `${info.lines.length} shifts` : '—'}</Td>
+                <Td>{single ? fmtTime(first.end_time) : '—'}</Td>
+                <Td><span style={{ fontWeight: 700 }}>{info.reg.toFixed(2)}</span></Td>
+                <Td>{info.ot > 0 ? <span style={{ color: C.warning, fontWeight: 700 }}>{info.ot.toFixed(2)}</span> : '—'}</Td>
                 <Td>{timesheetBadge(h.status)}</Td>
                 <Td>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <button onClick={() => setViewing(h)} style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }}>View</button>
                     <button onClick={() => openEdit(h)} style={{ ...btnSmall, color: '#4ade80', borderColor: '#16653a' }}>Edit / Approve</button>
                     <button onClick={() => handleDelete(h)} style={btnDanger}>Delete</button>
                   </div>
                 </Td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </TableWrap>
+      )}
+
+      {viewing && (
+        <Modal title="Timesheet" onClose={() => setViewing(null)} width={880}>
+          <TimesheetDetailView
+            header={viewing}
+            lines={[...(viewing.timesheets || [])].sort((a, b) => (a.date || '').localeCompare(b.date || ''))}
+            workerName={viewing.workers?.name}
+            onClose={() => setViewing(null)}
+            onEdit={() => { const h = viewing; setViewing(null); openEdit(h); }}
+          />
+        </Modal>
       )}
 
       {modal && (

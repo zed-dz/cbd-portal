@@ -90,6 +90,46 @@ export function computeLineRegularHours(totalHours, config = {}) {
   return Math.min(totalHours, OT_THRESHOLD);
 }
 
+// Overtime for a single line: everything above the regular-hours cap.
+export function computeLineOvertimeHours(totalHours, config = {}) {
+  const t = parseFloat(totalHours) || 0;
+  return Math.max(0, +(t - computeLineRegularHours(t, config)).toFixed(2));
+}
+
+// Full-time minimum day: a full-timer sent home early on a standard weekday is
+// still paid a full day, while the client is only charged the hours worked.
+// The minimum applies to the DAY as a whole (two 4h shifts on one day already
+// make the 8), never to weekends/PH penalty shifts or non-standard scenarios.
+// Days under 0.5h are ignored so a stray clock-in test can't become 8h of pay.
+// Returns a copy of the rows with pay_hours topped up and min_day_topup set.
+export function applyFullTimeMinDay(timesheets, workersById, config = {}) {
+  const MIN = parseFloat(config.min_day_hours_fulltime ?? 8);
+  const byDay = new Map();
+  for (const ts of timesheets) {
+    const w = workersById[ts.worker_id];
+    if (!w || w.worker_type !== 'full-time') continue;
+    if ((ts.scenario || 'standard') !== 'standard') continue;
+    if (!ts.date) continue;
+    const dow = new Date(ts.date + 'T12:00:00').getDay();
+    if (dow === 0 || dow === 6 || PUBLIC_HOLIDAYS.has(ts.date)) continue;
+    const key = `${ts.worker_id}|${ts.date}`;
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(ts);
+  }
+  const topUps = new Map();
+  for (const rows of byDay.values()) {
+    const dayTotal = rows.reduce((s, r) => s + (parseFloat(r.pay_hours) || 0), 0);
+    if (dayTotal >= 0.5 && dayTotal < MIN) {
+      const last = rows[rows.length - 1];
+      topUps.set(last.id, +(MIN - dayTotal).toFixed(2));
+    }
+  }
+  if (!topUps.size) return timesheets;
+  return timesheets.map(ts => topUps.has(ts.id)
+    ? { ...ts, pay_hours: +((parseFloat(ts.pay_hours) || 0) + topUps.get(ts.id)).toFixed(2), min_day_topup: topUps.get(ts.id) }
+    : ts);
+}
+
 // Auto meal allowance for a single worked day/line.
 // Mirrors the authoritative DB trigger rule: if hours >= trigger, grant amount.
 // Config keys: meal_allowance_trigger (default 9.5h), meal_allowance_amount ($18.70).
@@ -160,6 +200,7 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}) {
     worker_name: worker.name, worker_type: worker.worker_type,
     date: ts.date, scenario: ts.scenario, site: ts.site, client: ts.client,
     pay_hours: ts.pay_hours, charge_hours: ts.charge_hours, overtime_hours: ts.overtime_hours,
+    min_day_topup: ts.min_day_topup || 0,
     is_weekend: ts.is_weekend, geo_loading: ts.geo_loading,
     travel_allowance: ts.travel_allowance, meal_allowance: ts.meal_allowance,
     base_pay:      basePay.toFixed(2),

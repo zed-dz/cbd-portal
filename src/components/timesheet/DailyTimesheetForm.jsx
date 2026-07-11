@@ -42,6 +42,11 @@ export function dailyFromHeader(header, lineRows) {
       meal_allowance: r.meal_allowance ?? 0,
       meal_allowance_override: !!r.meal_allowance_override,
       scenario: r.scenario || 'standard',
+      original_start_time: r.original_start_time || null,
+      original_end_time: r.original_end_time || null,
+      original_break_minutes: r.original_break_minutes ?? null,
+      adjusted_by: r.adjusted_by || null,
+      adjusted_at: r.adjusted_at || null,
     })).concat((lineRows || []).length ? [] : [emptyHoursLine()]),
   };
 }
@@ -299,7 +304,8 @@ export function DailyTimesheetForm({
               <th style={{ padding: 4, fontWeight: 500 }}>End *</th>
               <th style={{ padding: 4, fontWeight: 500 }}>Break (h)</th>
               <th style={{ padding: 4, fontWeight: 500 }}>Total</th>
-              <th style={{ padding: 4, fontWeight: 500 }}>Regular</th>
+              <th style={{ padding: 4, fontWeight: 500 }}>Normal</th>
+              <th style={{ padding: 4, fontWeight: 500 }}>OT</th>
               <th style={{ padding: 4, fontWeight: 500 }}>Meal&nbsp;($)</th>
               <th />
             </tr>
@@ -322,6 +328,7 @@ export function DailyTimesheetForm({
                 <td style={{ padding: 3 }}><input type="number" step="0.25" min="0" style={{ ...cellInput, width: 70 }} value={l.total_break_hours} onChange={e => setHoursLine(i, { total_break_hours: e.target.value })} /></td>
                 <td style={{ padding: 3 }}><input readOnly style={{ ...roInput, width: 64 }} value={Number(l.total_hours).toFixed(2)} /></td>
                 <td style={{ padding: 3 }}><input readOnly style={{ ...roInput, width: 64 }} value={Number(l.regular_hours).toFixed(2)} /></td>
+                <td style={{ padding: 3 }}><input readOnly style={{ ...roInput, width: 56, color: (l.total_hours - l.regular_hours) > 0 ? C.warning : C.textMuted }} value={Math.max(0, (parseFloat(l.total_hours) || 0) - (parseFloat(l.regular_hours) || 0)).toFixed(2)} title="Overtime — hours above the daily threshold" /></td>
                 <td style={{ padding: 3 }}>
                   {l.meal_allowance_override
                     ? <input type="number" step="0.01" min="0" style={{ ...cellInput, width: 72 }} value={l.meal_allowance}
@@ -355,9 +362,22 @@ export function DailyTimesheetForm({
       {/* Totals preview */}
       <div style={{ background: C.accentSoft, border: `1px solid ${C.accentBorder}`, borderRadius: 8, padding: '10px 16px', margin: '16px 0', display: 'flex', gap: 24, flexWrap: 'wrap' }}>
         <div><div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>Total Hours</div><div style={{ fontSize: 20, fontWeight: 800, color: C.accent }}>{totals.totalHours.toFixed(2)}</div></div>
-        <div><div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>Regular Hours</div><div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{totals.totalReg.toFixed(2)}</div></div>
+        <div><div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>Normal Hours</div><div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{totals.totalReg.toFixed(2)}</div></div>
+        <div><div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>Overtime</div><div style={{ fontSize: 20, fontWeight: 800, color: Math.max(0, totals.totalHours - totals.totalReg) > 0 ? C.warning : C.textMuted }}>{Math.max(0, totals.totalHours - totals.totalReg).toFixed(2)}</div></div>
         <div><div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>Meal Allowance</div><div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>${totals.totalMeal.toFixed(2)}</div></div>
       </div>
+
+      {/* Adjustment audit trail — original submitted times always stay on record */}
+      {form.hours_lines.some(l => l.adjusted_at) && (
+        <div style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.warning, marginBottom: 4 }}>✎ Hours were adjusted after submission</div>
+          {form.hours_lines.filter(l => l.adjusted_at).map((l, i) => (
+            <div key={i} style={{ fontSize: 12, color: C.textMuted }}>
+              {l.date}: originally submitted {l.original_start_time ? new Date(l.original_start_time).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }) : '—'} – {l.original_end_time ? new Date(l.original_end_time).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }) : '—'} · adjusted by {l.adjusted_by || 'admin'}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Wet hire + comments */}
       <Field label="Was there any Wet Hire?">

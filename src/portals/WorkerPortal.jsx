@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary } from '../theme';
 import { todayISO, fmtDate, fmtDateTime } from '../utils/dates';
-import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, timesheetBadge, certBadge, DailyTimesheetForm } from '../components';
+import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, timesheetBadge, certBadge, DailyTimesheetForm, TimesheetDetailView } from '../components';
 import { WorkerCertificateUploads } from '../components/certificates/WorkerCertificateUploads';
 import { addAdminNotification, broadcastAdminSms, adminAcceptSmsBody, adminDeclineSmsBody, sendAdminEmail } from '../utils/notify';
 import { roleChipStyle } from '../constants/roles';
@@ -164,6 +164,19 @@ function WorkerTimesheets({ currentWorker, showToast, onGoToTake5 }) {
   const [headers, setHeaders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
+  const [viewing, setViewing] = useState(null);      // { header, lines } for the full view
+  const [viewLoading, setViewLoading] = useState(false);
+
+  // Full view of one submitted timesheet — shareable with a client via Print/PDF.
+  const openView = async (h) => {
+    setViewLoading(true);
+    setViewing({ header: h, lines: [] });
+    const { data, error } = await supabase.from('timesheets').select('*')
+      .eq('header_id', h.id).order('date');
+    if (error) showToast(error.message, 'error');
+    setViewing({ header: h, lines: data || [] });
+    setViewLoading(false);
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -199,7 +212,7 @@ function WorkerTimesheets({ currentWorker, showToast, onGoToTake5 }) {
             })}
           </div>
           <TableWrap>
-            <thead><tr><Th>Submitted</Th><Th>Client</Th><Th>Project</Th><Th>Role</Th><Th>Total Hrs</Th><Th>Status</Th></tr></thead>
+            <thead><tr><Th>Submitted</Th><Th>Client</Th><Th>Project</Th><Th>Role</Th><Th>Total Hrs</Th><Th>Status</Th><Th /></tr></thead>
             <tbody>
               {headers.map(h => (
                 <tr key={h.id}>
@@ -209,6 +222,7 @@ function WorkerTimesheets({ currentWorker, showToast, onGoToTake5 }) {
                   <Td>{h.role || '—'}</Td>
                   <Td>{Number(h.total_hours || 0).toFixed(2)}</Td>
                   <Td>{timesheetBadge(h.status)}</Td>
+                  <Td><button onClick={() => openView(h)} style={{ ...btnSecondary, padding: '5px 12px', fontSize: 12 }}>View</button></Td>
                 </tr>
               ))}
             </tbody>
@@ -225,6 +239,19 @@ function WorkerTimesheets({ currentWorker, showToast, onGoToTake5 }) {
             showToast={showToast}
             onGoToTake5={() => { setModal(false); onGoToTake5?.(); }}
           />
+        </Modal>
+      )}
+
+      {viewing && (
+        <Modal title="My Timesheet" onClose={() => setViewing(null)} width={880}>
+          {viewLoading
+            ? <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner /></div>
+            : <TimesheetDetailView
+                header={viewing.header}
+                lines={viewing.lines}
+                workerName={currentWorker?.name}
+                onClose={() => setViewing(null)}
+              />}
         </Modal>
       )}
     </div>
@@ -433,10 +460,26 @@ function WorkerClockIn({ currentWorker, showToast }) {
 
 const PPE_ITEMS = ['Hard hat', 'Hi-vis clothing', 'Steel-cap boots', 'Safety glasses', 'Gloves', 'Hearing protection', 'Dust mask / respirator', 'Sunscreen'];
 
+const HAZARD_SUGGESTIONS = [
+  'Moving plant / machinery', 'Live traffic', 'Working at heights', 'Manual handling',
+  'Overhead powerlines', 'Underground services', 'Noise', 'Dust / silica',
+  'Sun / UV exposure', 'Slips, trips and falls', 'Crush / pinch points', 'Fatigue',
+  'Hot works', 'Confined space', 'Weather (wind / rain / lightning)', 'Public / pedestrians',
+];
+
+const emptyTaskHazard = () => ({ hazard: '', control: '' });
+const blankTake5 = () => ({
+  work_date: todayISO(), site: '', task: '',
+  task_hazards: [emptyTaskHazard(), emptyTaskHazard()],
+  ppe: [], acknowledged: false,
+});
+
 // Pre-start Take 5 safety check. Required on Tue/Thu before a timesheet can be
 // submitted (the gate lives in DailyTimesheetForm; this writes the take5 row).
+// The worker states the TASK they're doing, then picks 2–3 hazards specific to
+// that task, each with its control measure.
 function WorkerTake5({ currentWorker, showToast }) {
-  const [f, setF] = useState({ work_date: todayISO(), site: '', hazards: '', controls: '', ppe: [], acknowledged: false });
+  const [f, setF] = useState(blankTake5());
   const [saving, setSaving] = useState(false);
   const [recent, setRecent] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -451,24 +494,37 @@ function WorkerTake5({ currentWorker, showToast }) {
 
   const set = (k) => (e) => setF(s => ({ ...s, [k]: e.target.value }));
   const togglePpe = (item) => setF(s => ({ ...s, ppe: s.ppe.includes(item) ? s.ppe.filter(x => x !== item) : [...s.ppe, item] }));
+  const setHazard = (idx, key, value) => setF(s => ({
+    ...s, task_hazards: s.task_hazards.map((h, i) => i === idx ? { ...h, [key]: value } : h),
+  }));
+  const addHazard = () => setF(s => s.task_hazards.length >= 3 ? s : ({ ...s, task_hazards: [...s.task_hazards, emptyTaskHazard()] }));
+  const removeHazard = (idx) => setF(s => ({
+    ...s, task_hazards: s.task_hazards.length > 1 ? s.task_hazards.filter((_, i) => i !== idx) : s.task_hazards,
+  }));
 
   const submit = async () => {
-    if (!String(f.hazards).trim()) { showToast('List the hazards (or write "none identified").', 'error'); return; }
+    if (!String(f.task).trim()) { showToast('Describe the task you are about to do.', 'error'); return; }
+    const filled = f.task_hazards.filter(h => String(h.hazard).trim());
+    if (filled.length < 2) { showToast('Pick at least 2 hazards for this task (add a third if it applies).', 'error'); return; }
+    if (filled.some(h => !String(h.control).trim())) { showToast('Add a control measure for each hazard.', 'error'); return; }
     if (!f.acknowledged) { showToast('Please tick the acknowledgement to submit your Take 5.', 'error'); return; }
     setSaving(true);
     const { error } = await supabase.from('take5').insert([{
       worker_id: currentWorker.id,
       work_date: f.work_date,
       site: f.site || null,
-      hazards: f.hazards,
-      controls: f.controls || null,
+      task: f.task,
+      task_hazards: filled,
+      // legacy text columns stay populated so older views/reports keep working
+      hazards: filled.map(h => h.hazard).join('; '),
+      controls: filled.map(h => h.control).join('; '),
       ppe: f.ppe,
       acknowledged: f.acknowledged,
     }]);
     setSaving(false);
     if (error) { showToast(error.message, 'error'); return; }
     showToast('Take 5 submitted — you can now submit your timesheet for this day.', 'success');
-    setF({ work_date: todayISO(), site: '', hazards: '', controls: '', ppe: [], acknowledged: false });
+    setF(blankTake5());
     load();
   };
 
@@ -497,8 +553,35 @@ function WorkerTake5({ currentWorker, showToast }) {
           <Field label="Date"><input type="date" style={inputStyle} value={f.work_date} onChange={set('work_date')} /></Field>
           <Field label="Client / site"><input style={inputStyle} value={f.site} onChange={set('site')} placeholder="Where are you working?" /></Field>
         </div>
-        <Field label="Hazards identified *"><textarea style={{ ...inputStyle, minHeight: 64, resize: 'vertical' }} value={f.hazards} onChange={set('hazards')} placeholder="e.g. moving plant, working at heights, live traffic…" /></Field>
-        <Field label="Controls in place"><textarea style={{ ...inputStyle, minHeight: 64, resize: 'vertical' }} value={f.controls} onChange={set('controls')} placeholder="e.g. spotter, exclusion zone, harness, hi-vis…" /></Field>
+        <Field label="What task are you doing? *" hint="The specific job you're about to start — e.g. operating the roller on the access road.">
+          <input style={inputStyle} value={f.task} onChange={set('task')} placeholder="e.g. Operating dozer for bulk earthworks" />
+        </Field>
+        <Field label="Hazards for this task * (pick 2–3, with your control for each)">
+          <div style={{ display: 'grid', gap: 8 }}>
+            {f.task_hazards.map((h, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                <div style={{ flex: '1 1 180px', minWidth: 160 }}>
+                  <input style={inputStyle} list="take5-hazards" value={h.hazard}
+                    onChange={e => setHazard(i, 'hazard', e.target.value)}
+                    placeholder={`Hazard ${i + 1} — pick or type`} />
+                </div>
+                <div style={{ flex: '1 1 220px', minWidth: 180 }}>
+                  <input style={inputStyle} value={h.control}
+                    onChange={e => setHazard(i, 'control', e.target.value)}
+                    placeholder="Control measure — how you'll manage it" />
+                </div>
+                {f.task_hazards.length > 1 && (
+                  <button type="button" onClick={() => removeHazard(i)}
+                    style={{ ...btnSecondary, padding: '9px 12px', color: '#fca5a5', borderColor: 'rgba(239,68,68,0.32)' }}>×</button>
+                )}
+              </div>
+            ))}
+            <datalist id="take5-hazards">{HAZARD_SUGGESTIONS.map(h => <option key={h} value={h} />)}</datalist>
+            {f.task_hazards.length < 3 && (
+              <button type="button" onClick={addHazard} style={{ ...btnSecondary, padding: '7px 14px', fontSize: 12, justifySelf: 'start', width: 'fit-content' }}>+ Add another hazard</button>
+            )}
+          </div>
+        </Field>
         <Field label="PPE for this task">
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
             {PPE_ITEMS.map(item => (
@@ -521,12 +604,13 @@ function WorkerTake5({ currentWorker, showToast }) {
         <h4 style={{ color: C.textMuted, fontSize: 13, marginBottom: 10, textTransform: 'uppercase' }}>Recent Take 5s</h4>
         {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 20 }}><Spinner /></div> : recent.length === 0 ? <EmptyState message="No Take 5s submitted yet." /> : (
           <TableWrap>
-            <thead><tr><Th>Date</Th><Th>Site</Th><Th>Hazards</Th><Th>Submitted</Th></tr></thead>
+            <thead><tr><Th>Date</Th><Th>Site</Th><Th>Task</Th><Th>Hazards</Th><Th>Submitted</Th></tr></thead>
             <tbody>
               {recent.map(t => (
                 <tr key={t.id}>
                   <Td>{fmtDate(t.work_date)}</Td>
                   <Td>{t.site || '—'}</Td>
+                  <Td>{t.task ? (t.task.length > 36 ? t.task.slice(0, 36) + '…' : t.task) : '—'}</Td>
                   <Td>{t.hazards ? (t.hazards.length > 44 ? t.hazards.slice(0, 44) + '…' : t.hazards) : '—'}</Td>
                   <Td>{fmtDateTime(t.created_at)}</Td>
                 </tr>

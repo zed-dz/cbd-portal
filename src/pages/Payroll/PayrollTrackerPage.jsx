@@ -3,7 +3,7 @@ import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnSecondary, btnSmall } from '../../theme';
 import { fmtDate } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
-import { computePayrollRow, buildXeroCSV } from '../../utils/payroll';
+import { computePayrollRow, buildXeroCSV, applyFullTimeMinDay } from '../../utils/payroll';
 import { Spinner, TableWrap, Th, Td, EmptyState } from '../../components';
 
 const XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize';
@@ -73,7 +73,10 @@ export function PayrollTrackerPage({ showToast }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const payrollRows = timesheets.map(ts => {
+  // Full-timers on a short standard weekday are topped up to a full day's pay
+  // (client still charged actual hours) before the per-row pay computation.
+  const workersById = Object.fromEntries(workers.map(w => [w.id, w]));
+  const payrollRows = applyFullTimeMinDay(timesheets, workersById, configMap).map(ts => {
     const worker = workers.find(w => w.id === ts.worker_id) || {};
     const client = clients.find(c => c.name === ts.client) || null;
     return { ...computePayrollRow(ts, { ...worker, name: ts.workers?.name || worker.name }, client, configMap), _id: ts.id, _xero_exported: ts.xero_exported };
@@ -366,9 +369,10 @@ export function PayrollTrackerPage({ showToast }) {
                   <div style={{ fontSize: 11, color: C.textMuted }}>
                     {r.travel_allowance > 0 && <span>T: ${r.travel_allowance} </span>}
                     {r.meal_allowance > 0 && <span>M: ${r.meal_allowance}</span>}
+                    {r.min_day_topup > 0 && <span style={{ color: C.success }} title="Full-time minimum day: paid up to a full day, client charged actual hours"> +{r.min_day_topup}h min-day</span>}
                     {r.geo_loading && <span style={{ color: C.accent }}> GEO</span>}
                     {r.is_weekend && <span style={{ color: C.accent }}> WKD</span>}
-                    {!r.travel_allowance && !r.meal_allowance && !r.geo_loading && !r.is_weekend && '—'}
+                    {!r.travel_allowance && !r.meal_allowance && !r.min_day_topup && !r.geo_loading && !r.is_weekend && '—'}
                   </div>
                 </Td>
                 <Td><span style={{ fontWeight: 700, color: C.success }}>${r.total_pay}</span></Td>

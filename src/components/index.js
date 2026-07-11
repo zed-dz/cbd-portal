@@ -12,3 +12,4 @@ export { EmptyState }     from './ui/EmptyState';
 export { TableWrap, Th, Td } from './ui/Table';
 export { SignaturePad } from './ui/SignaturePad';
 export { DailyTimesheetForm, blankDaily, dailyFromHeader } from './timesheet/DailyTimesheetForm';
+export { TimesheetDetailView, printTimesheet } from './timesheet/TimesheetDetailView';
