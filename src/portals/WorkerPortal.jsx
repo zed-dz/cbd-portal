@@ -315,6 +315,43 @@ function WorkerMyProfile({ currentWorker, showToast }) {
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button onClick={save} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save profile'}</button>
       </div>
+      <ChangePassword showToast={showToast} />
+    </div>
+  );
+}
+
+// Lets a worker set/replace their own password — the missing piece that left
+// magic-link users stuck on "Invalid login credentials" forever (they could
+// get in via the emailed link but never establish a password they knew).
+function ChangePassword({ showToast }) {
+  const [pw1, setPw1] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (pw1.length < 8) { showToast('Password must be at least 8 characters.', 'error'); return; }
+    if (pw1 !== pw2) { showToast('Passwords do not match.', 'error'); return; }
+    setBusy(true);
+    const { error } = await supabase.auth.updateUser({ password: pw1 });
+    setBusy(false);
+    if (error) { showToast(error.message, 'error'); return; }
+    setPw1(''); setPw2('');
+    showToast('Password updated — use it next time you sign in.', 'success');
+  };
+
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: '16px 18px', marginTop: 8 }}>
+      <div style={{ fontWeight: 700, color: C.text, fontSize: 14, marginBottom: 4 }}>🔑 Change password</div>
+      <div style={{ color: C.textMuted, fontSize: 12, marginBottom: 12 }}>
+        Signed in with an emailed link? Set a password here so you can sign in normally next time.
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
+        <Field label="New password"><input style={inputStyle} type="password" value={pw1} onChange={e => setPw1(e.target.value)} placeholder="••••••••" autoComplete="new-password" /></Field>
+        <Field label="Confirm new password"><input style={inputStyle} type="password" value={pw2} onChange={e => setPw2(e.target.value)} placeholder="••••••••" autoComplete="new-password" /></Field>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button onClick={save} disabled={busy} style={btnPrimary}>{busy ? 'Saving…' : 'Update password'}</button>
+      </div>
     </div>
   );
 }

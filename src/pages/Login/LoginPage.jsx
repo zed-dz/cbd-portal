@@ -29,7 +29,7 @@ export function LoginPage({ email, setEmail, password, setPassword, error, loadi
       options: { emailRedirectTo: portalBaseUrl(), shouldCreateUser: false },
     });
     setMagicBusy(false);
-    setMagicMsg(err ? err.message : 'Check your email — we sent you a one-tap sign-in link.');
+    setMagicMsg(err ? err.message : 'Check your email — we sent you a one-tap sign-in link. Once you\'re in, set a new password under My Profile so you can sign in normally next time.');
   }
 
   async function handleSignUp(e) {
