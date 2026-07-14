@@ -537,15 +537,15 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
             onClose={() => setViewing(null)}
             onEdit={() => { const h = viewing; setViewing(null); openEdit(h); }}
           />
-          {viewing.status === 'approved' && (
+          {viewing.status !== 'rejected' && (
             <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 16px', marginTop: 14 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Client acceptance</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Supervisor sign-off</div>
               <div style={{ fontSize: 13, color: viewing.client_approved ? C.success : C.text, marginBottom: 10 }}>
                 {viewing.client_approved
-                  ? `✓ Accepted${viewing.client_approved_by ? ` by ${viewing.client_approved_by}` : ''}${viewing.client_approved_at ? ` on ${fmtDate(viewing.client_approved_at)}` : ''} — billable in Payroll.`
+                  ? `✓ Signed off${viewing.client_approved_by ? ` by ${viewing.client_approved_by}` : ''}${viewing.client_approved_at ? ` on ${fmtDate(viewing.client_approved_at)}` : ''} — approved and billable in Payroll.`
                   : viewing.client_approval_sent_at
-                    ? `⏳ Awaiting the site supervisor — sent to ${viewing.client_approval_sent_to || 'site contact'} on ${fmtDate(viewing.client_approval_sent_at)}. Not billable until accepted.`
-                    : '⚠ Not yet sent to the site supervisor — not billable until they accept.'}
+                    ? `⏳ Awaiting the site supervisor — sent to ${viewing.client_approval_sent_to || 'site contact'} on ${fmtDate(viewing.client_approval_sent_at)}. Their acceptance approves it and makes it billable.`
+                    : '⚠ Not yet sent to the site supervisor — check the project has a site contact, then Send below.'}
               </div>
               {!viewing.client_approved && (
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

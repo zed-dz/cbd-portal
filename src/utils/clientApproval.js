@@ -3,7 +3,7 @@
 // contact) to review and accept it. Only client-accepted timesheets count as
 // billable in Payroll. All sends are fire-and-forget — they never block the UI.
 import { supabase } from '../supabaseClient';
-import { PORTAL_URL, normaliseAUMobile, sendWorkerSms } from './notify';
+import { PORTAL_URL, normaliseAUMobile, sendWorkerSms, addAdminNotification } from './notify';
 
 // Resolve the best supervisor contact for a header: the project's site contact
 // first (client_jobs matched by client + project name), then the client's
@@ -54,12 +54,19 @@ export async function sendTimesheetForClientApproval(headerId, { force = false }
       .eq('id', headerId).single();
     if (error || !h) return { ok: false, error: error?.message || 'timesheet not found' };
     if (h.client_approved) return { ok: false, error: 'already accepted by the client' };
-    if (h.status !== 'approved') return { ok: false, error: 'timesheet is not approved yet' };
+    if (h.status === 'rejected') return { ok: false, error: 'timesheet was rejected' };
     if (h.client_approval_sent_at && !force) return { ok: false, error: 'already sent', alreadySent: true };
 
     const contact = await resolveSupervisorContact(h);
     if (!contact || (!contact.email && !contact.phone)) {
-      return { ok: false, error: `no site-supervisor contact on file for ${h.client || 'this client'}${h.project ? ` / ${h.project}` : ''} — add one on the client's project` };
+      const err = `no site-supervisor contact on file for ${h.client || 'this client'}${h.project ? ` / ${h.project}` : ''} — add one on the client's project`;
+      // Autonomous flow: the worker can't fix this, so light up the admin bell.
+      addAdminNotification({
+        type: 'timesheet_signoff_blocked',
+        title: `Supervisor sign-off NOT sent — ${h.workers?.name || 'worker'} / ${h.client || 'client'}`,
+        body: err,
+      });
+      return { ok: false, error: err };
     }
 
     const workerName = h.workers?.name || 'our worker';
@@ -88,7 +95,14 @@ export async function sendTimesheetForClientApproval(headerId, { force = false }
       }
     }
 
-    if (!sentVia.length) return { ok: false, error: 'send failed on every channel (check Gmail/Twilio setup)' };
+    if (!sentVia.length) {
+      addAdminNotification({
+        type: 'timesheet_signoff_blocked',
+        title: `Supervisor sign-off NOT sent — ${h.workers?.name || 'worker'} / ${h.client || 'client'}`,
+        body: 'Send failed on every channel (check Gmail/Twilio setup). Resend from Timesheets → View.',
+      });
+      return { ok: false, error: 'send failed on every channel (check Gmail/Twilio setup)' };
+    }
 
     await supabase.from('timesheet_headers').update({
       client_approval_sent_at: new Date().toISOString(),
@@ -101,16 +115,17 @@ export async function sendTimesheetForClientApproval(headerId, { force = false }
   }
 }
 
-// Admin fallback for verbal/phone approvals: marks the header + its line rows
-// client-approved without the supervisor link.
+// Admin fallback for verbal/phone approvals: same effect as the supervisor
+// clicking the link — signs off AND approves, so it lands in Payroll.
 export async function markClientApprovedManually(headerId, approverNote) {
   const { error } = await supabase.from('timesheet_headers').update({
     client_approved: true,
     client_approved_at: new Date().toISOString(),
     client_approved_by: approverNote || 'Marked manually by admin',
+    status: 'approved',
   }).eq('id', headerId);
   if (error) return { ok: false, error: error.message };
   const { error: e2 } = await supabase.from('timesheets')
-    .update({ client_approved: true }).eq('header_id', headerId);
+    .update({ client_approved: true, status: 'approved' }).eq('header_id', headerId);
   return { ok: !e2, error: e2?.message };
 }

@@ -6,7 +6,6 @@ import {
   dayFromDate, computeLineTotalHours, computeLineRegularHours, autoMealAllowance, SHIFT_TYPES,
 } from '../../utils/payroll';
 import { Field } from '../ui/Field';
-import { SignaturePad } from '../ui/SignaturePad';
 import { sendTimesheetForClientApproval } from '../../utils/clientApproval';
 import { ROLE_GROUPS, ALL_ROLE_NAMES, roleChipStyle } from '../../constants/roles';
 
@@ -245,14 +244,17 @@ export function DailyTimesheetForm({
       : (form.id ? 'Daily timesheet updated' : 'Daily timesheet submitted');
     showToast(msg, statusToUse === 'rejected' ? 'info' : 'success');
 
-    // Approved → hand off to the site supervisor for client acceptance. Only
-    // client-accepted timesheets are billable in Payroll. Fire-and-forget.
-    if (allowAdmin && statusToUse === 'approved') {
+    // Autonomous sign-off: every submission (worker or admin) goes straight to
+    // the site supervisor. Their acceptance auto-approves the timesheet and
+    // makes it billable in Payroll — no admin step required. Fire-and-forget;
+    // duplicate sends are blocked by the already-sent guard in the util, and
+    // contact/channel failures light up the admin bell so the office can act.
+    if (statusToUse !== 'rejected') {
       const headerId = form.id || data;
       if (headerId) {
         sendTimesheetForClientApproval(headerId).then(r => {
-          if (r.ok) showToast(`Sent to site supervisor for acceptance — ${r.sentTo}`, 'success');
-          else if (!r.alreadySent) showToast(`Supervisor approval link NOT sent: ${r.error}`, 'error');
+          if (r.ok) showToast(`Sent to the site supervisor for sign-off — ${r.sentTo}`, 'success');
+          else if (!r.alreadySent && allowAdmin) showToast(`Supervisor sign-off link NOT sent: ${r.error}`, 'error');
         });
       }
     }
@@ -421,10 +423,6 @@ export function DailyTimesheetForm({
           </select>
         </Field>
       )}
-
-      <Field label="Client Manual Signature">
-        <SignaturePad value={form.client_signature} onChange={(v) => setField('client_signature', v)} />
-      </Field>
 
       {take5Block && (
         <div style={{ background: C.warningSoft, border: `1px solid ${C.warning}`, borderRadius: 8, padding: '12px 16px', margin: '4px 0 12px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>

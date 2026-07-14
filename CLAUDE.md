@@ -240,19 +240,25 @@ pandoc/npm cache failures). Use `Z:\tmp` as a scratch area if needed.
 
 ---
 
-## Recent additions (2026-07-12 — supervisor approval chain)
+## Recent additions (2026-07-12 — AUTONOMOUS supervisor sign-off chain)
 
-- **Client/supervisor approval chain** (owner request): admin approves a daily
-  timesheet → `sendTimesheetForClientApproval` (utils/clientApproval.js) emails
-  and texts the **site supervisor** (project `site_contact_*`, fallback client
-  contact) a tokenised link `/approve-ts/<uuid>` → `ClientApprovePage` (public,
-  anon RPCs `get_timesheet_for_client_approval` / `approve_timesheet_via_token`)
-  → on accept, header + line rows get `client_approved=true` and an admin bell
-  notification fires. **Payroll only shows billable rows:** status approved AND
-  (`client_approved` OR legacy `header_id is null`). Admin fallbacks in the
-  Timesheets View modal: Resend to supervisor / Mark accepted (verbal).
-  Pre-existing approved rows were grandfathered `client_approved=true`.
-  Migration `20260712_client_approval_chain.sql`. Extracted to Reusable Assets
+- **Fully autonomous timesheet chain** (owner request, two iterations same day):
+  worker SUBMITS a daily timesheet → `sendTimesheetForClientApproval`
+  (utils/clientApproval.js) immediately emails and texts the **site supervisor**
+  (project `site_contact_*`, fallback client contact) a tokenised link
+  `/approve-ts/<uuid>` → `ClientApprovePage` (public, anon RPCs
+  `get_timesheet_for_client_approval` / `approve_timesheet_via_token`) → the
+  supervisor's acceptance **auto-approves the timesheet AND makes it billable**
+  — no admin step. Admins can still adjust/reject anytime; failures to send
+  (no site contact / channel down) light up the admin bell
+  (`timesheet_signoff_blocked`). **Payroll billable = status approved AND
+  (`client_approved` OR legacy `header_id is null`).** Admin fallbacks in the
+  Timesheets View modal: Send/Resend to supervisor / Mark accepted (verbal —
+  also auto-approves). Pre-existing approved rows were grandfathered.
+  **The in-form "Client Manual Signature" pad was REMOVED** (the tokenised
+  sign-off replaces it; old signatures still render on old sheets).
+  Migrations `20260712_client_approval_chain.sql` +
+  `20260712_autonomous_supervisor_signoff.sql`. Extracted to Reusable Assets
   as **timesheet-suite** together with the whole daily-timesheet stack.
 
 ## Recent additions (July 2026 — team feedback round, 2026-07-11)
