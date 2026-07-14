@@ -257,8 +257,15 @@ pandoc/npm cache failures). Use `Z:\tmp` as a scratch area if needed.
   also auto-approves). Pre-existing approved rows were grandfathered.
   **The in-form "Client Manual Signature" pad was REMOVED** (the tokenised
   sign-off replaces it; old signatures still render on old sheets).
+  **7-day auto-approval:** if the supervisor doesn't respond (and the office
+  doesn't reject) within 7 days of the link being sent — or of submission when
+  no link could be sent — `auto_approve_stale_timesheets()` approves it
+  automatically (hourly pg_cron `auto-approve-stale-timesheets`, bell
+  notification `timesheet_auto_approved`; the View panel shows the exact
+  auto-approve date, and the email/SMS/supervisor page state the 7-day rule).
   Migrations `20260712_client_approval_chain.sql` +
-  `20260712_autonomous_supervisor_signoff.sql`. Extracted to Reusable Assets
+  `20260712_autonomous_supervisor_signoff.sql` +
+  `20260712_auto_approve_after_7_days.sql`. Extracted to Reusable Assets
   as **timesheet-suite** together with the whole daily-timesheet stack.
 
 ## Recent additions (July 2026 — team feedback round, 2026-07-11)

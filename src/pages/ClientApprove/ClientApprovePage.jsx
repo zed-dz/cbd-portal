@@ -79,7 +79,7 @@ export function ClientApprovePage({ token }) {
             Do you accept this timesheet?
           </div>
           <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 10 }}>
-            Accepting confirms the hours above are correct — they'll be finalised for invoicing. If something's wrong, contact the office instead of accepting.
+            Accepting confirms the hours above are correct — they'll be finalised for invoicing. If something's wrong, contact the office instead of accepting. If we don't hear back within 7 days, the timesheet is finalised automatically.
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <input

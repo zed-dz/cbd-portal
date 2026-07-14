@@ -544,8 +544,8 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
                 {viewing.client_approved
                   ? `✓ Signed off${viewing.client_approved_by ? ` by ${viewing.client_approved_by}` : ''}${viewing.client_approved_at ? ` on ${fmtDate(viewing.client_approved_at)}` : ''} — approved and billable in Payroll.`
                   : viewing.client_approval_sent_at
-                    ? `⏳ Awaiting the site supervisor — sent to ${viewing.client_approval_sent_to || 'site contact'} on ${fmtDate(viewing.client_approval_sent_at)}. Their acceptance approves it and makes it billable.`
-                    : '⚠ Not yet sent to the site supervisor — check the project has a site contact, then Send below.'}
+                    ? `⏳ Awaiting the site supervisor — sent to ${viewing.client_approval_sent_to || 'site contact'} on ${fmtDate(viewing.client_approval_sent_at)}. Auto-approves on ${fmtDate(new Date(new Date(viewing.client_approval_sent_at).getTime() + 7 * 86400000))} if there's no response.`
+                    : `⚠ Not yet sent to the site supervisor — check the project has a site contact, then Send below. Auto-approves on ${fmtDate(new Date(new Date(viewing.created_at).getTime() + 7 * 86400000))} regardless.`}
               </div>
               {!viewing.client_approved && (
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

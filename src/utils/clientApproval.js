@@ -79,7 +79,7 @@ export async function sendTimesheetForClientApproval(headerId, { force = false }
         body: {
           recipients: [{ name: contact.name, email: contact.email }],
           subject: `Timesheet approval requested — ${label}`,
-          body: `Hi ${contact.name},\n\nPlease review and accept the timesheet for ${label}.\n\nOpen it here (no login needed):\n${link}\n\nOnce you accept, the hours are finalised for invoicing.\n\nThanks!`,
+          body: `Hi ${contact.name},\n\nPlease review and accept the timesheet for ${label}.\n\nOpen it here (no login needed):\n${link}\n\nOnce you accept, the hours are finalised for invoicing. If we don't hear back within 7 days, the hours are finalised automatically.\n\nThanks!`,
           audience: 'mixed',
           gmail_only: true,
         },
@@ -90,7 +90,7 @@ export async function sendTimesheetForClientApproval(headerId, { force = false }
     if (contact.phone) {
       const to = normaliseAUMobile(contact.phone);
       if (to) {
-        const r = await sendWorkerSms(to, `Timesheet approval: ${label}. Review & accept: ${link}`);
+        const r = await sendWorkerSms(to, `Timesheet approval: ${label}. Review & accept: ${link} (auto-finalises in 7 days)`);
         if (r.ok) sentVia.push(`SMS ${to}`);
       }
     }
