@@ -4,10 +4,13 @@ import { C, inputStyle, btnPrimary, btnSecondary, btnSmall, btnDanger } from '..
 import { todayISO, isTakeFiveDay } from '../../utils/dates';
 import {
   dayFromDate, computeLineTotalHours, computeLineRegularHours, autoMealAllowance, SHIFT_TYPES,
+  splitDailyHours,
 } from '../../utils/payroll';
 import { Field } from '../ui/Field';
 import { sendTimesheetForClientApproval } from '../../utils/clientApproval';
 import { ROLE_GROUPS, ALL_ROLE_NAMES, roleChipStyle } from '../../constants/roles';
+
+const BREAK_OPTIONS = [0, 0.5, 0.75, 1];
 
 const emptyHoursLine = () => ({
   date: todayISO(), shift_type: 'Day', start_time: '', end_time: '',
@@ -91,6 +94,7 @@ export function DailyTimesheetForm({
   const [saving, setSaving] = useState(false);
   const [taskError, setTaskError] = useState('');
   const [take5Block, setTake5Block] = useState(null);   // { dates:[…] } when a Tue/Thu Take 5 is missing
+  const [workerType, setWorkerType] = useState(null);   // drives the ordinary/RDO/OT split display
 
   useEffect(() => { setForm(initial || blankDaily()); }, [initial]);
 
@@ -150,16 +154,29 @@ export function DailyTimesheetForm({
   const totals = useMemo(() => {
     const totalHours = form.hours_lines.reduce((s, l) => s + (parseFloat(l.total_hours) || 0), 0);
     const totalReg = form.hours_lines.reduce((s, l) => s + (parseFloat(l.regular_hours) || 0), 0);
+    let totalRdo = 0, totalOt = 0;
+    form.hours_lines.forEach(l => {
+      const sp = splitDailyHours(l.total_hours, workerType, l.date, config);
+      totalRdo += sp.rdo; totalOt += sp.overtime;
+    });
     const totalMeal = form.hours_lines.reduce((s, l) => {
       const meal = l.meal_allowance_override
         ? (parseFloat(l.meal_allowance) || 0)
         : autoMealAllowance(l.total_hours, config);
       return s + meal;
     }, 0);
-    return { totalHours, totalReg, totalMeal };
-  }, [form, config]);
+    return { totalHours, totalReg, totalRdo, totalOt, totalMeal };
+  }, [form, config, workerType]);
 
   const targetWorker = workerId || form.worker_id;
+
+  useEffect(() => {
+    let mounted = true;
+    if (!targetWorker) { setWorkerType(null); return undefined; }
+    supabase.from('workers').select('worker_type').eq('id', targetWorker).maybeSingle()
+      .then(({ data }) => { if (mounted) setWorkerType(data?.worker_type || null); });
+    return () => { mounted = false; };
+  }, [targetWorker]);
 
   // Master role list is the primary source; keep any library roles (job_roles)
   // or a pre-existing legacy value so nothing already saved gets dropped.
@@ -181,6 +198,14 @@ export function DailyTimesheetForm({
     if (!form.role) { showToast('Role is required.', 'error'); return; }
     const validLines = form.hours_lines.filter(l => l.date && l.start_time && l.end_time);
     if (!validLines.length) { showToast('Add at least one hours line with date, start and end.', 'error'); return; }
+
+    // AM/PM mix-up guard: a "22-hour shift" is almost always 7:00pm typed
+    // instead of 7:00am. Block submission until the times are corrected.
+    const suspicious = validLines.map(recalcLine).filter(l => (parseFloat(l.total_hours) || 0) > 16);
+    if (suspicious.length) {
+      showToast(`Check the start/finish times on ${suspicious.map(l => `${l.date} (${Number(l.total_hours).toFixed(2)}h)`).join(', ')} — more than 16 hours in one shift usually means an AM/PM mix-up. Fix the times, then submit.`, 'error');
+      return;
+    }
 
     // "Tasks Completed" is mandatory for a worker submitting their own sheet.
     // Managers editing/approving legacy sheets aren't hard-blocked on it.
@@ -320,6 +345,7 @@ export function DailyTimesheetForm({
               <th style={{ padding: 4, fontWeight: 500 }}>Break (h)</th>
               <th style={{ padding: 4, fontWeight: 500 }}>Total</th>
               <th style={{ padding: 4, fontWeight: 500 }}>Normal</th>
+              <th style={{ padding: 4, fontWeight: 500 }} title="Banked to your RDO accrual (full-time, weekdays)">RDO</th>
               <th style={{ padding: 4, fontWeight: 500 }}>OT</th>
               <th style={{ padding: 4, fontWeight: 500 }}>Meal&nbsp;($)</th>
               <th />
@@ -329,6 +355,10 @@ export function DailyTimesheetForm({
             {form.hours_lines.map((l, i) => {
               const autoMeal = autoMealAllowance(l.total_hours, config);
               const mealVal = l.meal_allowance_override ? (parseFloat(l.meal_allowance) || 0) : autoMeal;
+              const split = splitDailyHours(l.total_hours, workerType, l.date, config);
+              const breakOpts = BREAK_OPTIONS.includes(parseFloat(l.total_break_hours) || 0)
+                ? BREAK_OPTIONS
+                : [...BREAK_OPTIONS, parseFloat(l.total_break_hours) || 0].sort((a, b) => a - b);
               return (
               <tr key={i}>
                 <td style={{ padding: 3 }}><input type="date" style={{ ...cellInput, width: 130 }} value={l.date} onChange={e => setHoursLine(i, { date: e.target.value })} /></td>
@@ -340,10 +370,16 @@ export function DailyTimesheetForm({
                 </td>
                 <td style={{ padding: 3 }}><input type="time" style={{ ...cellInput, width: 100 }} value={l.start_time} onChange={e => setHoursLine(i, { start_time: e.target.value })} /></td>
                 <td style={{ padding: 3 }}><input type="time" style={{ ...cellInput, width: 100 }} value={l.end_time} onChange={e => setHoursLine(i, { end_time: e.target.value })} /></td>
-                <td style={{ padding: 3 }}><input type="number" step="0.25" min="0" style={{ ...cellInput, width: 70 }} value={l.total_break_hours} onChange={e => setHoursLine(i, { total_break_hours: e.target.value })} /></td>
+                <td style={{ padding: 3 }}>
+                  <select style={{ ...cellInput, width: 78 }} value={String(parseFloat(l.total_break_hours) || 0)}
+                    onChange={e => setHoursLine(i, { total_break_hours: parseFloat(e.target.value) })}>
+                    {breakOpts.map(b => <option key={b} value={String(b)}>{b === 0 ? 'No break' : `${b} hr`}</option>)}
+                  </select>
+                </td>
                 <td style={{ padding: 3 }}><input readOnly style={{ ...roInput, width: 64 }} value={Number(l.total_hours).toFixed(2)} /></td>
                 <td style={{ padding: 3 }}><input readOnly style={{ ...roInput, width: 64 }} value={Number(l.regular_hours).toFixed(2)} /></td>
-                <td style={{ padding: 3 }}><input readOnly style={{ ...roInput, width: 56, color: (l.total_hours - l.regular_hours) > 0 ? C.warning : C.textMuted }} value={Math.max(0, (parseFloat(l.total_hours) || 0) - (parseFloat(l.regular_hours) || 0)).toFixed(2)} title="Overtime — hours above the daily threshold" /></td>
+                <td style={{ padding: 3 }}><input readOnly style={{ ...roInput, width: 52, color: split.rdo > 0 ? C.success : C.textMuted }} value={split.rdo.toFixed(2)} title="Banked to the RDO accrual (full-time weekday shifts)" /></td>
+                <td style={{ padding: 3 }}><input readOnly style={{ ...roInput, width: 56, color: split.overtime > 0 ? C.warning : C.textMuted }} value={split.overtime.toFixed(2)} title="Overtime — hours beyond the 8-hour normal-time block" /></td>
                 <td style={{ padding: 3 }}>
                   {l.meal_allowance_override
                     ? <input type="number" step="0.01" min="0" style={{ ...cellInput, width: 72 }} value={l.meal_allowance}
@@ -368,6 +404,23 @@ export function DailyTimesheetForm({
         </table>
       </div>
       <button type="button" onClick={addHoursLine} style={{ ...btnSmall, marginTop: 8 }}>+ Add hours row</button>
+
+      {/* Night-shift suggestion — suggest only, never auto-switch (owner call) */}
+      {form.hours_lines.some(l => l.start_time && parseInt(l.start_time.split(':')[0], 10) >= 14 && l.shift_type === 'Day') && (
+        <div style={{ background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.3)', borderRadius: 8, padding: '8px 12px', marginTop: 8 }}>
+          {form.hours_lines.map((l, i) => (
+            l.start_time && parseInt(l.start_time.split(':')[0], 10) >= 14 && l.shift_type === 'Day' ? (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 12, color: C.textMuted }}>
+                <span>🌙 {l.date || `Row ${i + 1}`} starts at {l.start_time} — shifts starting 2:00 pm or later are usually night shift.</span>
+                <button type="button" onClick={() => setHoursLine(i, { shift_type: 'Night' })}
+                  style={{ ...btnSmall, padding: '3px 10px', fontSize: 11, color: '#93c5fd', borderColor: '#1e3a5f' }}>
+                  Mark as Night
+                </button>
+              </div>
+            ) : null
+          ))}
+        </div>
+      )}
       <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6 }}>
         Meal allowance is calculated automatically: a day of {parseFloat(config.meal_allowance_trigger ?? 9.5)}h or more
         earns ${parseFloat(config.meal_allowance_amount ?? 18.70).toFixed(2)}.
@@ -378,7 +431,8 @@ export function DailyTimesheetForm({
       <div style={{ background: C.accentSoft, border: `1px solid ${C.accentBorder}`, borderRadius: 8, padding: '10px 16px', margin: '16px 0', display: 'flex', gap: 24, flexWrap: 'wrap' }}>
         <div><div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>Total Hours</div><div style={{ fontSize: 20, fontWeight: 800, color: C.accent }}>{totals.totalHours.toFixed(2)}</div></div>
         <div><div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>Normal Hours</div><div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{totals.totalReg.toFixed(2)}</div></div>
-        <div><div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>Overtime</div><div style={{ fontSize: 20, fontWeight: 800, color: Math.max(0, totals.totalHours - totals.totalReg) > 0 ? C.warning : C.textMuted }}>{Math.max(0, totals.totalHours - totals.totalReg).toFixed(2)}</div></div>
+        <div><div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>RDO Accrued</div><div style={{ fontSize: 20, fontWeight: 800, color: totals.totalRdo > 0 ? C.success : C.textMuted }}>{totals.totalRdo.toFixed(2)}</div></div>
+        <div><div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>Overtime</div><div style={{ fontSize: 20, fontWeight: 800, color: totals.totalOt > 0 ? C.warning : C.textMuted }}>{totals.totalOt.toFixed(2)}</div></div>
         <div><div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>Meal Allowance</div><div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>${totals.totalMeal.toFixed(2)}</div></div>
       </div>
 

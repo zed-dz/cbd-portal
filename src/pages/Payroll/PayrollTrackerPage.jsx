@@ -89,11 +89,19 @@ export function PayrollTrackerPage({ showToast }) {
 
   const filtered = filterType === 'all' ? payrollRows : payrollRows.filter(r => r.worker_type === filterType);
 
-  const totals = filtered.reduce((acc, r) => ({
-    pay_hours: acc.pay_hours + (parseFloat(r.pay_hours) || 0),
-    total_pay: acc.total_pay + (parseFloat(r.total_pay) || 0),
-    charge_amount: acc.charge_amount + (parseFloat(r.charge_amount) || 0),
-  }), { pay_hours: 0, total_pay: 0, charge_amount: 0 });
+  const totals = filtered.reduce((acc, r) => {
+    const ot = parseFloat(r.overtime_hours) || 0;
+    const rdo = parseFloat(r.rdo_hours) || 0;
+    const pay = parseFloat(r.pay_hours) || 0;
+    return {
+      pay_hours: acc.pay_hours + pay,
+      ordinary_hours: acc.ordinary_hours + Math.max(0, pay - ot - rdo),
+      ot_hours: acc.ot_hours + ot,
+      rdo_hours: acc.rdo_hours + rdo,
+      total_pay: acc.total_pay + (parseFloat(r.total_pay) || 0),
+      charge_amount: acc.charge_amount + (parseFloat(r.charge_amount) || 0),
+    };
+  }, { pay_hours: 0, ordinary_hours: 0, ot_hours: 0, rdo_hours: 0, total_pay: 0, charge_amount: 0 });
 
   const handleXeroExport = () => {
     const staffRows = filtered.filter(r => r.worker_type !== 'subcontractor');
@@ -262,8 +270,16 @@ export function PayrollTrackerPage({ showToast }) {
           </div>
           <button onClick={() => { setDateFrom(''); setDateTo(''); }} style={btnSecondary}>Clear</button>
           <div style={{ marginLeft: 'auto', background: C.bg, borderRadius: 8, padding: '10px 18px', border: `1px solid ${C.border}` }}>
-            <div style={{ fontSize: 20, fontWeight: 800, color: C.warning }}>{totals.pay_hours.toFixed(1)}h</div>
-            <div style={{ color: C.textMuted, fontSize: 11 }}>Total pay hours</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{totals.ordinary_hours.toFixed(1)}h</div>
+            <div style={{ color: C.textMuted, fontSize: 11 }}>Ordinary hours</div>
+          </div>
+          <div style={{ background: C.bg, borderRadius: 8, padding: '10px 18px', border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.warning }}>{totals.ot_hours.toFixed(1)}h</div>
+            <div style={{ color: C.textMuted, fontSize: 11 }}>Overtime hours</div>
+          </div>
+          <div style={{ background: C.bg, borderRadius: 8, padding: '10px 18px', border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.success }}>{totals.rdo_hours.toFixed(1)}h</div>
+            <div style={{ color: C.textMuted, fontSize: 11 }}>RDO accrued</div>
           </div>
           <div style={{ background: C.bg, borderRadius: 8, padding: '10px 18px', border: `1px solid ${C.border}` }}>
             <div style={{ fontSize: 20, fontWeight: 800, color: C.success }}>${totals.total_pay.toFixed(2)}</div>
@@ -374,6 +390,7 @@ export function PayrollTrackerPage({ showToast }) {
                   <div style={{ fontSize: 11, color: C.textMuted }}>
                     {r.travel_allowance > 0 && <span>T: ${r.travel_allowance} </span>}
                     {r.meal_allowance > 0 && <span>M: ${r.meal_allowance}</span>}
+                    {r.rdo_hours > 0 && <span style={{ color: C.success }} title="Banked to the worker's RDO accrual — not paid in this run"> RDO +{r.rdo_hours}h</span>}
                     {r.min_day_topup > 0 && <span style={{ color: C.success }} title="Full-time minimum day: paid up to a full day, client charged actual hours"> +{r.min_day_topup}h min-day</span>}
                     {r.geo_loading && <span style={{ color: C.accent }}> GEO</span>}
                     {r.is_weekend && <span style={{ color: C.accent }}> WKD</span>}
@@ -395,7 +412,12 @@ export function PayrollTrackerPage({ showToast }) {
             <tr>
               <td style={{ borderTop: `2px solid ${C.border}` }} />
               <td colSpan={4} style={{ padding: '10px 16px', color: C.textMuted, fontSize: 13, borderTop: `2px solid ${C.border}` }}>{filtered.length} records</td>
-              <td style={{ padding: '10px 16px', fontWeight: 700, color: C.text, borderTop: `2px solid ${C.border}` }}>{totals.pay_hours.toFixed(2)}</td>
+              <td style={{ padding: '10px 16px', fontWeight: 700, color: C.text, borderTop: `2px solid ${C.border}`, whiteSpace: 'nowrap' }}>
+                {totals.pay_hours.toFixed(2)}
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: C.textMuted }}>
+                  ord {totals.ordinary_hours.toFixed(2)} · OT {totals.ot_hours.toFixed(2)}{totals.rdo_hours > 0 ? ` · RDO ${totals.rdo_hours.toFixed(2)}` : ''}
+                </div>
+              </td>
               <td colSpan={3} style={{ borderTop: `2px solid ${C.border}` }} />
               <td style={{ padding: '10px 16px', fontWeight: 700, color: C.success, borderTop: `2px solid ${C.border}` }}>${totals.total_pay.toFixed(2)}</td>
               <td style={{ padding: '10px 16px', fontWeight: 700, color: C.warning, borderTop: `2px solid ${C.border}` }}>${totals.charge_amount.toFixed(2)}</td>

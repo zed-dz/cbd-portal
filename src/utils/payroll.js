@@ -96,6 +96,25 @@ export function computeLineOvertimeHours(totalHours, config = {}) {
   return Math.max(0, +(t - computeLineRegularHours(t, config)).toFixed(2));
 }
 
+// Ordinary / RDO / overtime split for one worked day.
+// FULL-TIMERS on a standard weekday: the first 8 worked hours are "normal
+// time" — 7.6 paid ordinary + 0.4 banked to the RDO accrual — and only hours
+// past 8.0 are overtime (40 worked hrs/week = 38 paid + 2.0 RDO accrued).
+// Casuals/subcontractors and weekend/PH shifts: no RDO, OT above the threshold.
+export function splitDailyHours(totalHours, workerType, dateStr, config = {}) {
+  const t = parseFloat(totalHours) || 0;
+  const threshold = parseFloat(config.ot_threshold_daily ?? 7.6);
+  const accrual = parseFloat(config.rdo_daily_accrual ?? 0.4);
+  const dow = dateStr ? new Date(dateStr + 'T12:00:00').getDay() : 1;
+  const weekday = dow >= 1 && dow <= 5 && !PUBLIC_HOLIDAYS.has(dateStr);
+  const regular = +Math.min(t, threshold).toFixed(2);
+  if (workerType === 'full-time' && weekday) {
+    const rdo = +Math.max(0, Math.min(accrual, t - threshold)).toFixed(2);
+    return { regular, rdo, overtime: +Math.max(0, t - threshold - rdo).toFixed(2) };
+  }
+  return { regular, rdo: 0, overtime: +Math.max(0, t - threshold).toFixed(2) };
+}
+
 // Full-time minimum day: a full-timer sent home early on a standard weekday is
 // still paid a full day, while the client is only charged the hours worked.
 // The minimum applies to the DAY as a whole (two 4h shifts on one day already
@@ -183,8 +202,9 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}) {
     // Sunday / public holiday → double time all hours
     basePay = hours * payRate * 2;
   } else {
-    // Standard weekday → normal hours + OT
-    const normalH = Math.max(0, hours - (ts.overtime_hours || 0));
+    // Standard weekday → ordinary + OT. RDO-banked hours are NOT paid today —
+    // they accrue to the worker's RDO balance and are paid when the RDO is taken.
+    const normalH = Math.max(0, hours - (ts.overtime_hours || 0) - (ts.rdo_hours || 0));
     basePay = normalH * payRate + (ts.overtime_hours || 0) * payRateOT;
   }
 
@@ -200,6 +220,7 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}) {
     worker_name: worker.name, worker_type: worker.worker_type,
     date: ts.date, scenario: ts.scenario, site: ts.site, client: ts.client,
     pay_hours: ts.pay_hours, charge_hours: ts.charge_hours, overtime_hours: ts.overtime_hours,
+    rdo_hours: ts.rdo_hours || 0,
     min_day_topup: ts.min_day_topup || 0,
     is_weekend: ts.is_weekend, geo_loading: ts.geo_loading,
     travel_allowance: ts.travel_allowance, meal_allowance: ts.meal_allowance,

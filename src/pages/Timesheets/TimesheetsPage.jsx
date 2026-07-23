@@ -12,6 +12,31 @@ const fmtTime = (iso) => iso
   ? new Date(iso).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
   : '—';
 
+// Week-cycle / date-range filter (feedback: "filter the worker per week cycle").
+const RANGE_PRESETS = [
+  { id: 'all', label: 'All dates' },
+  { id: 'this_week', label: 'This week' },
+  { id: 'last_week', label: 'Last week' },
+  { id: 'past7', label: 'Past 7 days' },
+  { id: 'this_month', label: 'This month' },
+  { id: 'custom', label: 'Custom range…' },
+];
+
+function rangeBounds(preset, from, to) {
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const monday = d => { const x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+  switch (preset) {
+    case 'this_week': { const m = monday(today); const e = new Date(m); e.setDate(e.getDate() + 6); return [iso(m), iso(e)]; }
+    case 'last_week': { const m = monday(today); m.setDate(m.getDate() - 7); const e = new Date(m); e.setDate(e.getDate() + 6); return [iso(m), iso(e)]; }
+    case 'past7': { const s = new Date(today); s.setDate(s.getDate() - 6); return [iso(s), iso(today)]; }
+    case 'this_month': { const s = new Date(today.getFullYear(), today.getMonth(), 1); const e = new Date(today.getFullYear(), today.getMonth() + 1, 0); return [iso(s), iso(e)]; }
+    case 'custom': return [from || null, to || null];
+    default: return [null, null];
+  }
+}
+const dateInRange = (dateStr, lo, hi) => !!dateStr && (!lo || dateStr >= lo) && (!hi || dateStr <= hi);
+
 const tsDefaults = {
   worker_id: '', client: '', site: '', date: '', scenario: 'standard',
   start_time: '', end_time: '', break_minutes: 0,
@@ -54,6 +79,7 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(tsDefaults);
   const [saving, setSaving] = useState(false);
+  const [range, setRange] = useState({ preset: 'all', from: '', to: '' });
 
   const [clients, setClients] = useState([]);
 
@@ -189,10 +215,12 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
     showToast('Xero CSV exported', 'success');
   };
 
+  const [lineLo, lineHi] = rangeBounds(range.preset, range.from, range.to);
   const filtered = timesheets.filter(ts => {
     const matchStatus = !filterStatus || ts.status === filterStatus;
     const matchSearch = !search || ts.workers?.name?.toLowerCase().includes(search.toLowerCase()) || (ts.client || '').toLowerCase().includes(search.toLowerCase()) || (ts.site || '').toLowerCase().includes(search.toLowerCase());
-    return matchStatus && matchSearch;
+    const matchRange = range.preset === 'all' || dateInRange(ts.date, lineLo, lineHi);
+    return matchStatus && matchSearch && matchRange;
   });
   const totalPayHours = filtered.reduce((sum, ts) => sum + (parseFloat(ts.pay_hours ?? ts.hours) || 0), 0);
 
@@ -215,6 +243,15 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
           </select>
+          <select style={{ ...inputStyle, maxWidth: 160 }} value={range.preset} onChange={e => setRange(r => ({ ...r, preset: e.target.value }))}>
+            {RANGE_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+          {range.preset === 'custom' && (
+            <>
+              <input type="date" style={{ ...inputStyle, maxWidth: 150 }} value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} />
+              <input type="date" style={{ ...inputStyle, maxWidth: 150 }} value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} />
+            </>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button onClick={handleApproveAll} style={{ ...btnSmall, color: '#4ade80', borderColor: '#16653a' }}>✓ Approve All Pending</button>
@@ -402,6 +439,7 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
   const [editInitial, setEditInitial] = useState(null);
   const [editWorkerId, setEditWorkerId] = useState('');
   const [loadingForm, setLoadingForm] = useState(false);
+  const [range, setRange] = useState({ preset: 'all', from: '', to: '' });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -455,13 +493,72 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
     load(); refreshBadge?.();
   };
 
+  const [rangeLo, rangeHi] = rangeBounds(range.preset, range.from, range.to);
   const filtered = headers.filter(h => {
     const matchStatus = !filterStatus || h.status === filterStatus;
     const q = search.toLowerCase();
     const matchSearch = !search || (h.workers?.name || '').toLowerCase().includes(q)
       || (h.client || '').toLowerCase().includes(q) || (h.project || '').toLowerCase().includes(q);
-    return matchStatus && matchSearch;
+    const lineDates = (h.timesheets || []).map(l => l.date).filter(Boolean);
+    const matchRange = range.preset === 'all'
+      || (lineDates.length
+        ? lineDates.some(d => dateInRange(d, rangeLo, rangeHi))
+        : dateInRange((h.created_at || '').slice(0, 10), rangeLo, rangeHi));
+    return matchStatus && matchSearch && matchRange;
   });
+
+  // Client-ready timesheet report for the current filter: hours per shift with
+  // the supervisor sign-off (who accepted + when). Opens print → Save as PDF.
+  const openReport = () => {
+    const rows = filtered.flatMap(h => {
+      const lines = [...(h.timesheets || [])].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+      return lines
+        .filter(l => range.preset === 'all' || dateInRange(l.date, rangeLo, rangeHi))
+        .map(l => ({ h, l }));
+    });
+    if (!rows.length) { showToast('No timesheet lines in the current filter.', 'info'); return; }
+    const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const num = (v) => Number(v || 0);
+    const t = rows.reduce((a, { l }) => ({
+      total: a.total + num(l.total_hours), reg: a.reg + num(l.regular_hours ?? l.total_hours),
+      rdo: a.rdo + num(l.rdo_hours), ot: a.ot + num(l.overtime_hours),
+    }), { total: 0, reg: 0, ot: 0, rdo: 0 });
+    const label = range.preset === 'all' ? 'All dates' : `${rangeLo || '…'} to ${rangeHi || '…'}`;
+    const body = rows.map(({ h, l }) => `
+      <tr>
+        <td>${esc(h.workers?.name)}</td><td>${esc(h.client)}</td><td>${esc(h.project)}</td>
+        <td>${esc(fmtDate(l.date))}</td><td>${esc(fmtTime(l.start_time))}</td><td>${esc(fmtTime(l.end_time))}</td>
+        <td>${l.total_break_hours ? l.total_break_hours + 'h' : '—'}</td>
+        <td><b>${num(l.total_hours).toFixed(2)}</b></td><td>${num(l.regular_hours ?? l.total_hours).toFixed(2)}</td>
+        <td>${num(l.rdo_hours) > 0 ? num(l.rdo_hours).toFixed(2) : '—'}</td>
+        <td>${num(l.overtime_hours) > 0 ? num(l.overtime_hours).toFixed(2) : '—'}</td>
+        <td>${esc(h.status)}</td>
+        <td>${h.client_approved ? esc(`${h.client_approved_by || 'Client'} · ${h.client_approved_at ? new Date(h.client_approved_at).toLocaleString('en-AU') : ''}`) : 'awaiting'}</td>
+      </tr>`).join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Timesheet report ${esc(label)}</title>
+    <style>
+      body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #111827; margin: 26px; }
+      h1 { font-size: 18px; margin: 0 0 2px; } .sub { color: #6b7280; font-size: 11.5px; margin-bottom: 14px; }
+      table { width: 100%; border-collapse: collapse; }
+      th { text-align: left; font-size: 9.5px; text-transform: uppercase; letter-spacing: .5px; color: #6b7280; border-bottom: 2px solid #e5e7eb; padding: 5px 6px; }
+      td { font-size: 11px; border-bottom: 1px solid #f3f4f6; padding: 5px 6px; }
+      tfoot td { border-top: 2px solid #e5e7eb; border-bottom: none; font-weight: 700; }
+      @media print { body { margin: 10mm; } }
+    </style></head><body>
+      <h1>Timesheet report</h1>
+      <div class="sub">Range: ${esc(label)} · ${rows.length} shift line${rows.length !== 1 ? 's' : ''} · generated ${new Date().toLocaleString('en-AU')}</div>
+      <table>
+        <thead><tr><th>Worker</th><th>Client</th><th>Project</th><th>Date</th><th>Start</th><th>Finish</th><th>Break</th><th>Total</th><th>Normal</th><th>RDO</th><th>OT</th><th>Status</th><th>Client approval</th></tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot><tr><td colspan="7">Totals</td><td>${t.total.toFixed(2)}</td><td>${t.reg.toFixed(2)}</td><td>${t.rdo > 0 ? t.rdo.toFixed(2) : '—'}</td><td>${t.ot > 0 ? t.ot.toFixed(2) : '—'}</td><td colspan="2"></td></tr></tfoot>
+      </table>
+      <script>window.onload = function () { window.print(); };</script>
+    </body></html>`;
+    const w = window.open('', '_blank', 'width=1000,height=700');
+    if (!w) return;
+    w.document.write(html);
+    w.document.close();
+  };
 
   return (
     <div>
@@ -474,8 +571,20 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
           </select>
+          <select style={{ ...inputStyle, maxWidth: 160 }} value={range.preset} onChange={e => setRange(r => ({ ...r, preset: e.target.value }))}>
+            {RANGE_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+          {range.preset === 'custom' && (
+            <>
+              <input type="date" style={{ ...inputStyle, maxWidth: 150 }} value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} />
+              <input type="date" style={{ ...inputStyle, maxWidth: 150 }} value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} />
+            </>
+          )}
         </div>
-        <button onClick={openAdd} style={btnPrimary}>+ Add Daily Timesheet</button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button onClick={openReport} style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }}>📄 Timesheet report</button>
+          <button onClick={openAdd} style={btnPrimary}>+ Add Daily Timesheet</button>
+        </div>
       </div>
 
       {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : filtered.length === 0 ? (

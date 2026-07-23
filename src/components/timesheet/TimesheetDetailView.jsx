@@ -9,7 +9,10 @@ const fmtTime = (iso) => iso
   ? new Date(iso).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
   : '—';
 
-const lineOT = (l) => Math.max(0, (parseFloat(l.total_hours) || 0) - (parseFloat(l.regular_hours ?? l.total_hours) || 0));
+const lineRdo = (l) => parseFloat(l.rdo_hours) || 0;
+const lineOT = (l) => l.overtime_hours != null
+  ? (parseFloat(l.overtime_hours) || 0)
+  : Math.max(0, (parseFloat(l.total_hours) || 0) - (parseFloat(l.regular_hours ?? l.total_hours) || 0) - lineRdo(l));
 
 // A line is "adjusted" when an admin changed times away from what the worker
 // originally submitted — surfaced so there's never a dispute about the original.
@@ -25,6 +28,7 @@ function sumBy(lines, fn) {
 export function TimesheetDetailView({ header, lines = [], workerName, brand = BRAND_DEFAULT, onClose, onEdit }) {
   const totalHours = sumBy(lines, l => parseFloat(l.total_hours) || 0);
   const totalReg   = sumBy(lines, l => parseFloat(l.regular_hours ?? l.total_hours) || 0);
+  const totalRdo   = sumBy(lines, lineRdo);
   const totalOT    = sumBy(lines, lineOT);
   const totalMeal  = sumBy(lines, l => parseFloat(l.meal_allowance) || 0);
   const adjusted   = lines.filter(isAdjusted);
@@ -69,7 +73,7 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
             <tr>
               <th style={th}>Date</th><th style={th}>Day</th><th style={th}>Shift</th>
               <th style={th}>Start</th><th style={th}>Finish</th><th style={th}>Break</th>
-              <th style={th}>Total</th><th style={th}>Normal</th><th style={th}>OT</th><th style={th}>Meal</th>
+              <th style={th}>Total</th><th style={th}>Normal</th><th style={th}>RDO</th><th style={th}>OT</th><th style={th}>Meal</th>
             </tr>
           </thead>
           <tbody>
@@ -83,6 +87,7 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
                 <td style={td}>{l.total_break_hours ? `${l.total_break_hours}h` : (l.break_minutes ? `${l.break_minutes}m` : '—')}</td>
                 <td style={{ ...td, fontWeight: 700 }}>{Number(l.total_hours || 0).toFixed(2)}</td>
                 <td style={td}>{Number(l.regular_hours ?? l.total_hours ?? 0).toFixed(2)}</td>
+                <td style={{ ...td, color: lineRdo(l) > 0 ? C.success : C.textMuted }}>{lineRdo(l) > 0 ? lineRdo(l).toFixed(2) : '—'}</td>
                 <td style={{ ...td, color: lineOT(l) > 0 ? C.warning : C.textMuted }}>{lineOT(l) > 0 ? lineOT(l).toFixed(2) : '—'}</td>
                 <td style={td}>{(parseFloat(l.meal_allowance) || 0) > 0 ? `$${Number(l.meal_allowance).toFixed(2)}` : '—'}</td>
               </tr>
@@ -93,6 +98,7 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
               <td colSpan={6} style={{ ...td, color: C.textMuted, borderBottom: 'none' }}>Totals</td>
               <td style={{ ...td, fontWeight: 800, color: C.accent, borderBottom: 'none' }}>{totalHours.toFixed(2)}</td>
               <td style={{ ...td, fontWeight: 700, borderBottom: 'none' }}>{totalReg.toFixed(2)}</td>
+              <td style={{ ...td, fontWeight: 700, color: totalRdo > 0 ? C.success : C.textMuted, borderBottom: 'none' }}>{totalRdo > 0 ? totalRdo.toFixed(2) : '—'}</td>
               <td style={{ ...td, fontWeight: 700, color: totalOT > 0 ? C.warning : C.textMuted, borderBottom: 'none' }}>{totalOT > 0 ? totalOT.toFixed(2) : '—'}</td>
               <td style={{ ...td, borderBottom: 'none' }}>{totalMeal > 0 ? `$${totalMeal.toFixed(2)}` : '—'}</td>
             </tr>
@@ -143,6 +149,7 @@ export function printTimesheet({ header, lines = [], workerName, brand = BRAND_D
   const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const totalHours = sumBy(lines, l => parseFloat(l.total_hours) || 0);
   const totalReg   = sumBy(lines, l => parseFloat(l.regular_hours ?? l.total_hours) || 0);
+  const totalRdo   = sumBy(lines, lineRdo);
   const totalOT    = sumBy(lines, lineOT);
   const totalMeal  = sumBy(lines, l => parseFloat(l.meal_allowance) || 0);
   const adjusted   = lines.filter(isAdjusted);
@@ -157,6 +164,7 @@ export function printTimesheet({ header, lines = [], workerName, brand = BRAND_D
       <td>${esc(l.total_break_hours ? l.total_break_hours + 'h' : (l.break_minutes ? l.break_minutes + 'm' : '—'))}</td>
       <td><b>${Number(l.total_hours || 0).toFixed(2)}</b></td>
       <td>${Number(l.regular_hours ?? l.total_hours ?? 0).toFixed(2)}</td>
+      <td>${lineRdo(l) > 0 ? lineRdo(l).toFixed(2) : '—'}</td>
       <td>${lineOT(l) > 0 ? lineOT(l).toFixed(2) : '—'}</td>
       <td>${(parseFloat(l.meal_allowance) || 0) > 0 ? '$' + Number(l.meal_allowance).toFixed(2) : '—'}</td>
     </tr>`).join('');
@@ -203,9 +211,9 @@ export function printTimesheet({ header, lines = [], workerName, brand = BRAND_D
       <div><div class="label">Wet hire</div><div class="val">${header.wet_hire ? 'Yes' : 'No'}</div></div>
     </div>
     <table>
-      <thead><tr><th>Date</th><th>Day</th><th>Shift</th><th>Start</th><th>Finish</th><th>Break</th><th>Total</th><th>Normal</th><th>OT</th><th>Meal</th></tr></thead>
+      <thead><tr><th>Date</th><th>Day</th><th>Shift</th><th>Start</th><th>Finish</th><th>Break</th><th>Total</th><th>Normal</th><th>RDO</th><th>OT</th><th>Meal</th></tr></thead>
       <tbody>${rows}</tbody>
-      <tfoot><tr><td colspan="6">Totals</td><td>${totalHours.toFixed(2)}</td><td>${totalReg.toFixed(2)}</td><td>${totalOT > 0 ? totalOT.toFixed(2) : '—'}</td><td>${totalMeal > 0 ? '$' + totalMeal.toFixed(2) : '—'}</td></tr></tfoot>
+      <tfoot><tr><td colspan="6">Totals</td><td>${totalHours.toFixed(2)}</td><td>${totalReg.toFixed(2)}</td><td>${totalRdo > 0 ? totalRdo.toFixed(2) : '—'}</td><td>${totalOT > 0 ? totalOT.toFixed(2) : '—'}</td><td>${totalMeal > 0 ? '$' + totalMeal.toFixed(2) : '—'}</td></tr></tfoot>
     </table>
     ${adjustedBlock}
     ${header.comments ? `<div class="label" style="margin-top:12px">Tasks completed</div><div class="tasks">${esc(header.comments)}</div>` : ''}

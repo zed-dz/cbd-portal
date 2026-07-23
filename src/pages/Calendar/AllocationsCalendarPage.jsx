@@ -2,6 +2,38 @@ import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, R, MONO, inputStyle, btnPrimary, btnSecondary, btnSmall } from '../../theme';
 import { Modal, Field, Spinner, EmptyState } from '../../components';
+import { PUBLIC_HOLIDAYS } from '../../utils/payroll';
+
+// Calendar entry types — RDO / leave days get their own colours instead of the
+// per-worker colour, so the roster reads at a glance.
+const ALLOCATION_TYPES = [
+  { id: 'work', label: 'Work shift', color: null },
+  { id: 'rdo', label: 'RDO day', color: '#16a34a' },
+  { id: 'personal_leave', label: 'Personal / Sick leave', color: '#ca8a04' },
+  { id: 'annual_leave', label: 'Annual leave', color: '#0284c7' },
+];
+const typeMeta = (a) => ALLOCATION_TYPES.find(t => t.id === (a.allocation_type || 'work')) || ALLOCATION_TYPES[0];
+const isNightAlloc = (a) => !!a.start_time && new Date(a.start_time).getHours() >= 14;
+const PH_TINT = 'rgba(168,85,247,0.12)';
+
+function CalendarLegend() {
+  const chip = (bg, label) => (
+    <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: C.textMuted }}>
+      <span style={{ width: 10, height: 10, borderRadius: 3, background: bg, display: 'inline-block' }} />{label}
+    </span>
+  );
+  return (
+    <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', margin: '2px 0 10px' }}>
+      {chip(C.accent, 'Work (worker colour)')}
+      {chip('#16a34a', 'RDO day')}
+      {chip('#ca8a04', 'Personal / Sick')}
+      {chip('#0284c7', 'Annual leave')}
+      {chip(PH_TINT, 'Public holiday')}
+      <span style={{ fontSize: 11, color: C.textMuted }}>🌙 night shift (starts 2pm+)</span>
+      <span style={{ fontSize: 11, color: C.textMuted }}>✓ faded = timesheet approved</span>
+    </div>
+  );
+}
 
 function getMondayOfWeek(date) {
   const d = new Date(date);
@@ -64,6 +96,7 @@ const ALLOC_COLORS = ['#f97316', '#22c55e', '#3b82f6', '#a855f7', '#ec4899', '#e
 const allocDefaults = {
   worker_id: '', site: '', client: '', project: '', address: '', site_manager: '',
   manager_phone: '', status: 'pending', start_date: '', end_date: '', notes: '',
+  allocation_type: 'work',
 };
 
 export function AllocationsCalendarPage({ showToast }) {
@@ -73,6 +106,7 @@ export function AllocationsCalendarPage({ showToast }) {
   const [selectedWorkerId, setSelectedWorkerId] = useState(null);
   const [allocations, setAllocations] = useState([]);
   const [allWorkers, setAllWorkers] = useState([]);
+  const [approvedSet, setApprovedSet] = useState(() => new Set()); // "workerId|date" with an approved timesheet
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(allocDefaults);
@@ -92,16 +126,19 @@ export function AllocationsCalendarPage({ showToast }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [a, w] = await Promise.all([
+    const [a, w, t] = await Promise.all([
       supabase.from('allocations')
         .select('*, workers(name, job_title)')
         .lte('start_date', rangeEnd)
         .or(`end_date.is.null,end_date.gte.${rangeStart}`),
       supabase.from('workers').select('id, name, job_title').is('archived_at', null).order('name'),
+      supabase.from('timesheets').select('worker_id, date')
+        .eq('status', 'approved').gte('date', rangeStart).lte('date', rangeEnd),
     ]);
     if (a.error) showToast(a.error.message, 'error');
     else setAllocations(a.data || []);
     if (w.data) setAllWorkers(w.data);
+    setApprovedSet(new Set((t.data || []).map(r => `${r.worker_id}|${r.date}`)));
     setLoading(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showToast, rangeStart, rangeEnd]);
@@ -122,6 +159,7 @@ export function AllocationsCalendarPage({ showToast }) {
       project: a.project || '', address: a.address || '', site_manager: a.site_manager || '',
       manager_phone: a.manager_phone || '', status: a.status, start_date: a.start_date || '',
       end_date: a.end_date || '', notes: a.notes || '',
+      allocation_type: a.allocation_type || 'work',
     });
     setModal(a);
   };
@@ -207,6 +245,7 @@ export function AllocationsCalendarPage({ showToast }) {
       <MonthlyWorkerView
         workers={allWorkers}
         allocations={allocations}
+        approvedSet={approvedSet}
         loading={loading}
         monthDate={monthDate}
         prevMonth={prevMonth}
@@ -253,6 +292,8 @@ export function AllocationsCalendarPage({ showToast }) {
         <button onClick={() => openCreate({ start_date: weekDays[0] })} style={{ ...btnPrimary, marginLeft: 'auto' }}>+ Add Allocation</button>
       </div>
 
+      <CalendarLegend />
+
       {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : (
         <div style={{ overflowX: 'auto' }}>
           <div style={{
@@ -268,7 +309,7 @@ export function AllocationsCalendarPage({ showToast }) {
             </div>
             {weekDays.map(day => (
               <div key={day} style={{
-                background: day === todayISO ? 'rgba(249,115,22,0.08)' : C.bg,
+                background: PUBLIC_HOLIDAYS.has(day) ? PH_TINT : (day === todayISO ? 'rgba(249,115,22,0.08)' : C.bg),
                 padding: '10px 8px', borderBottom: `1px solid ${C.border}`,
                 borderRight: `1px solid ${C.border}`, fontSize: 11,
                 color: day === todayISO ? C.accent : C.textMuted,
@@ -306,20 +347,29 @@ export function AllocationsCalendarPage({ showToast }) {
                   return (
                     <div key={day} onClick={() => !dayAllocs.length && openCreate({ worker_id: worker.id, start_date: day })} style={{
                       padding: 4, borderBottom: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`,
-                      minHeight: 52, background: day === todayISO ? 'rgba(249,115,22,0.04)' : C.card,
+                      minHeight: 52,
+                      background: PUBLIC_HOLIDAYS.has(day) ? PH_TINT : (day === todayISO ? 'rgba(249,115,22,0.04)' : C.card),
                       cursor: dayAllocs.length ? 'default' : 'pointer',
                       transition: 'background 0.1s',
                     }}>
-                      {dayAllocs.map(a => (
-                        <div key={a.id} onClick={(e) => { e.stopPropagation(); openEdit(a); }} style={{
-                          background: workerColorMap[a.worker_id] || C.accent,
-                          color: '#fff', borderRadius: 4, padding: '3px 6px', fontSize: 11,
-                          marginBottom: 2, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap', fontWeight: 500,
-                        }}>
-                          {a.client || a.site || 'Allocated'}
-                        </div>
-                      ))}
+                      {dayAllocs.map(a => {
+                        const tm = typeMeta(a);
+                        const done = approvedSet.has(`${a.worker_id}|${day}`);
+                        return (
+                          <div key={a.id} onClick={(e) => { e.stopPropagation(); openEdit(a); }}
+                            title={`${tm.label}${isNightAlloc(a) ? ' · night shift' : ''}${done ? ' · timesheet approved ✓' : ''}`}
+                            style={{
+                              background: tm.color || workerColorMap[a.worker_id] || C.accent,
+                              color: '#fff', borderRadius: 4, padding: '3px 6px', fontSize: 11,
+                              marginBottom: 2, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap', fontWeight: 500,
+                              opacity: done ? 0.55 : 1,
+                              outline: done ? '1px solid rgba(34,197,94,0.9)' : 'none',
+                            }}>
+                            {done ? '✓ ' : ''}{isNightAlloc(a) ? '🌙 ' : ''}{tm.id === 'work' ? (a.client || a.site || 'Allocated') : tm.label}
+                          </div>
+                        );
+                      })}
                     </div>
                   );
                 })}
@@ -352,7 +402,7 @@ export function AllocationsCalendarPage({ showToast }) {
 // ── Monthly per-worker view ────────────────────────────────────────────────
 
 function MonthlyWorkerView({
-  workers, allocations, loading, monthDate, prevMonth, nextMonth, goThisMonth,
+  workers, allocations, approvedSet, loading, monthDate, prevMonth, nextMonth, goThisMonth,
   selectedWorkerId, setSelectedWorkerId, workerColorMap, viewToggle,
   openCreate, openEdit, modal, form, setForm, closeModal, handleSave, saving,
 }) {
@@ -458,6 +508,8 @@ function MonthlyWorkerView({
         )}
       </div>
 
+      <CalendarLegend />
+
       {/* Worker tabs */}
       {workers.length > 0 && (
         <div style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${C.border}`, marginBottom: 18, overflowX: 'auto', paddingBottom: 1 }}>
@@ -551,7 +603,9 @@ function MonthlyWorkerView({
                     style={{
                       position: 'relative',
                       minHeight: 78, padding: 6, borderRadius: R.md,
-                      background: !cell.inMonth ? 'transparent' : (isToday ? 'rgba(249,115,22,0.08)' : C.bg),
+                      background: !cell.inMonth ? 'transparent'
+                        : (isToday ? 'rgba(249,115,22,0.08)'
+                        : (PUBLIC_HOLIDAYS.has(cell.iso) ? PH_TINT : C.bg)),
                       border: isToday ? `1px solid ${C.accent}` : `1px solid ${cell.inMonth ? C.border : 'transparent'}`,
                       cursor: cell.inMonth ? 'pointer' : 'default',
                       opacity: cell.inMonth ? 1 : 0.25,
@@ -564,16 +618,24 @@ function MonthlyWorkerView({
                     }}>
                       {cell.day}
                     </div>
-                    {allocs.map(a => (
-                      <div key={a.id} style={{
-                        background: workerColorMap[a.worker_id] || C.accent,
-                        color: '#fff', borderRadius: R.sm, padding: '2px 6px', fontSize: 10.5,
-                        marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap', fontWeight: 500,
-                      }}>
-                        {a.client || a.site || 'Allocated'}
-                      </div>
-                    ))}
+                    {allocs.map(a => {
+                      const tm = typeMeta(a);
+                      const done = approvedSet.has(`${a.worker_id}|${cell.iso}`);
+                      return (
+                        <div key={a.id}
+                          title={`${tm.label}${isNightAlloc(a) ? ' · night shift' : ''}${done ? ' · timesheet approved ✓' : ''}`}
+                          style={{
+                            background: tm.color || workerColorMap[a.worker_id] || C.accent,
+                            color: '#fff', borderRadius: R.sm, padding: '2px 6px', fontSize: 10.5,
+                            marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap', fontWeight: 500,
+                            opacity: done ? 0.55 : 1,
+                            outline: done ? '1px solid rgba(34,197,94,0.9)' : 'none',
+                          }}>
+                          {done ? '✓ ' : ''}{isNightAlloc(a) ? '🌙 ' : ''}{tm.id === 'work' ? (a.client || a.site || 'Allocated') : tm.label}
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -690,6 +752,13 @@ function AllocationModal({ modal, form, setForm, closeModal, handleSave, saving,
             <select style={inputStyle} value={form.worker_id} onChange={e => setForm(f => ({ ...f, worker_id: e.target.value }))}>
               <option value="">Select a worker…</option>
               {allWorkers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <Field label="Type" hint="RDO / leave days show in their own colour on the calendar.">
+            <select style={inputStyle} value={form.allocation_type || 'work'} onChange={e => setForm(f => ({ ...f, allocation_type: e.target.value }))}>
+              {ALLOCATION_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
             </select>
           </Field>
         </div>

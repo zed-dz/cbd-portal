@@ -166,6 +166,7 @@ function WorkerTimesheets({ currentWorker, showToast, onGoToTake5 }) {
   const [modal, setModal] = useState(false);
   const [viewing, setViewing] = useState(null);      // { header, lines } for the full view
   const [viewLoading, setViewLoading] = useState(false);
+  const [rdoBank, setRdoBank] = useState(null);      // full-timers: hours banked toward an RDO day
 
   // Full view of one submitted timesheet — shareable with a client via Print/PDF.
   const openView = async (h) => {
@@ -184,8 +185,13 @@ function WorkerTimesheets({ currentWorker, showToast, onGoToTake5 }) {
       .eq('worker_id', currentWorker.id).order('created_at', { ascending: false });
     if (error) showToast(error.message, 'error');
     else setHeaders(data || []);
+    if (currentWorker.worker_type === 'full-time') {
+      const { data: rdoRows } = await supabase.from('timesheets')
+        .select('rdo_hours').eq('worker_id', currentWorker.id).eq('status', 'approved');
+      setRdoBank((rdoRows || []).reduce((s, r) => s + (parseFloat(r.rdo_hours) || 0), 0));
+    }
     setLoading(false);
-  }, [currentWorker.id, showToast]);
+  }, [currentWorker.id, currentWorker.worker_type, showToast]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -210,6 +216,13 @@ function WorkerTimesheets({ currentWorker, showToast, onGoToTake5 }) {
                 </div>
               );
             })}
+            {rdoBank != null && (
+              <div style={{ background: C.card, border: `1px solid rgba(34,197,94,0.4)`, borderRadius: 8, padding: '10px 16px', textAlign: 'center' }}
+                title="Hours banked toward your next RDO day — 0.4h accrues for every full weekday worked (first 8 hrs are normal time: 7.6 paid + 0.4 banked).">
+                <div style={{ fontSize: 18, fontWeight: 700, color: C.success }}>{rdoBank.toFixed(1)}</div>
+                <div style={{ color: C.textMuted, fontSize: 11, textTransform: 'uppercase' }}>RDO bank hrs</div>
+              </div>
+            )}
           </div>
           <TableWrap>
             <thead><tr><Th>Submitted</Th><Th>Client</Th><Th>Project</Th><Th>Role</Th><Th>Total Hrs</Th><Th>Status</Th><Th /></tr></thead>
