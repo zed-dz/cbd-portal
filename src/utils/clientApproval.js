@@ -79,7 +79,9 @@ export async function sendTimesheetForClientApproval(headerId, { force = false }
         body: {
           recipients: [{ name: contact.name, email: contact.email }],
           subject: `Timesheet approval requested — ${label}`,
-          body: `Hi ${contact.name},\n\nPlease review and accept the timesheet for ${label}.\n\nOpen it here (no login needed):\n${link}\n\nOnce you accept, the hours are finalised for invoicing. If we don't hear back within 7 days, the hours are finalised automatically.\n\nThanks!`,
+          // NOTE: send-bulk-email already prepends "Hi {name}," to every email —
+          // do NOT add a greeting here or the supervisor gets it twice.
+          body: `Please review and accept the timesheet for ${label}.\n\nOpen it here (no login needed):\n${link}\n\nOnce you accept, the hours are finalised for invoicing. If we don't hear back within 7 days, the hours are finalised automatically.\n\nThanks!`,
           audience: 'mixed',
           gmail_only: true,
         },

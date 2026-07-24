@@ -57,15 +57,32 @@ export function dailyFromHeader(header, lineRows) {
 // Build the {date, start_time, end_time, ...} ISO payload for the RPC.
 // meal_allowance is AUTO-computed from hours here for an immediate echo, but the
 // DB triggers are authoritative on save (admin overrides are passed through).
+//
+// Times MUST be converted to real UTC instants via the browser's timezone.
+// Sending naive "YYYY-MM-DDTHH:MM" strings made Postgres store them as UTC and
+// every display then shifted +10h (7:00 am showed as 5:00 pm — the "portal
+// changed my hours" bug). An end time at/before the start means the shift ran
+// past midnight, so the end rolls to the next day.
+function lineInstant(date, time, rollAfter = null) {
+  if (!date || !time) return '';
+  let d = new Date(`${date}T${time}:00`);
+  if (isNaN(d)) return '';
+  if (rollAfter && d <= rollAfter) d = new Date(d.getTime() + 24 * 3600 * 1000);
+  return d.toISOString();
+}
+
 function buildLinesPayload(form, config) {
   return form.hours_lines
     .filter(l => l.date)
-    .map(l => ({
+    .map(l => {
+      const startISO = lineInstant(l.date, l.start_time);
+      const endISO = lineInstant(l.date, l.end_time, startISO ? new Date(startISO) : null);
+      return ({
       date: l.date,
       shift_type: l.shift_type,
       scenario: l.scenario || 'standard',
-      start_time: l.date && l.start_time ? `${l.date}T${l.start_time}:00` : '',
-      end_time: l.date && l.end_time ? `${l.date}T${l.end_time}:00` : '',
+      start_time: startISO,
+      end_time: endISO,
       total_break_hours: parseFloat(l.total_break_hours) || 0,
       total_hours: parseFloat(l.total_hours) || 0,
       regular_hours: parseFloat(l.regular_hours) || 0,
@@ -73,7 +90,8 @@ function buildLinesPayload(form, config) {
         ? (parseFloat(l.meal_allowance) || 0)
         : autoMealAllowance(l.total_hours, config),
       meal_allowance_override: !!l.meal_allowance_override,
-    }));
+      });
+    });
 }
 
 // Shared Daily Timesheet form. `workerId` is the subject worker.
