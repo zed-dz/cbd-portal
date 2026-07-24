@@ -12,6 +12,22 @@ const fmtTime = (iso) => iso
   ? new Date(iso).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
   : '—';
 
+// datetime-local <-> instant conversion for the Line-tab editor. Times are
+// edited as local wall-clock but stored as true UTC instants — same contract
+// as the daily form (naive strings used to shift every display +10h).
+const toLocalInput = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+const toInstant = (local) => {
+  if (!local) return null;
+  const d = new Date(local);
+  return isNaN(d) ? null : d.toISOString();
+};
+
 // Week-cycle / date-range filter (feedback: "filter the worker per week cycle").
 const RANGE_PRESETS = [
   { id: 'all', label: 'All dates' },
@@ -117,8 +133,8 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
     setForm({
       worker_id: ts.worker_id || '', client: ts.client || '', site: ts.site || '',
       date: ts.date || '', scenario: ts.scenario || 'standard',
-      start_time: ts.start_time ? ts.start_time.slice(0, 16) : '',
-      end_time: ts.end_time ? ts.end_time.slice(0, 16) : '',
+      start_time: toLocalInput(ts.start_time),
+      end_time: toLocalInput(ts.end_time),
       break_minutes: ts.break_minutes || 0,
       pay_hours: ts.pay_hours ?? ts.hours ?? '',
       charge_hours: ts.charge_hours ?? '',
@@ -147,7 +163,7 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
     const payload = {
       worker_id: computed.worker_id, client: computed.client, site: computed.site,
       date: computed.date, scenario: computed.scenario,
-      start_time: computed.start_time || null, end_time: computed.end_time || null,
+      start_time: toInstant(computed.start_time), end_time: toInstant(computed.end_time),
       break_minutes: computed.break_minutes || 0,
       pay_hours: computed.pay_hours !== '' ? parseFloat(computed.pay_hours) : null,
       charge_hours: computed.charge_hours !== '' ? parseFloat(computed.charge_hours) : null,
