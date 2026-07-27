@@ -11,5 +11,7 @@ export { Field }          from './ui/Field';
 export { EmptyState }     from './ui/EmptyState';
 export { TableWrap, Th, Td } from './ui/Table';
 export { SignaturePad } from './ui/SignaturePad';
+export { DateField } from './ui/DateField';
+export { ClockField } from './ui/ClockField';
 export { DailyTimesheetForm, blankDaily, dailyFromHeader } from './timesheet/DailyTimesheetForm';
 export { TimesheetDetailView, printTimesheet } from './timesheet/TimesheetDetailView';

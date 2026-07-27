@@ -3,7 +3,7 @@ import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
 import { fmtDate, fmtDateTime } from '../../utils/dates';
 import { normaliseAUMobile, sendWorkerSms, addAdminNotification, allocationSmsBody, broadcastAdminSms, adminCreateSmsBody, sendAdminEmail } from '../../utils/notify';
-import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge } from '../../components';
+import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, DateField, ClockField } from '../../components';
 import { ROLE_GROUPS, roleChipStyle } from '../../constants/roles';
 
 // Find allocations for a given worker that overlap a [start, end] date range
@@ -27,7 +27,7 @@ function findConflicts(allAllocations, workerId, startISO, endISO, currentId) {
 const allocDefaults = {
   worker_id: '', role: '', site: '', client: '', project: '', address: '', site_supervisor: '',
   manager_phone: '', status: 'pending', start_date: '', end_date: '',
-  arrival_time: '', end_time: '', notes: '',
+  arrival_time: '', notes: '',
 };
 
 export function AllocationsPage({ showToast }) {
@@ -65,8 +65,11 @@ export function AllocationsPage({ showToast }) {
       manager_phone: a.manager_phone || '', status: a.status, start_date: a.start_date || '',
       end_date: a.end_date || '',
       // Extract time-only from stored datetime
-      arrival_time: a.start_time ? a.start_time.slice(11, 16) : '',
-      end_time: a.end_time ? a.end_time.slice(11, 16) : '',
+      // Stored instants render back as LOCAL wall-clock (same tz contract as
+      // timesheets — slicing the raw string showed UTC and drifted +10h).
+      arrival_time: a.start_time
+        ? (d => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`)(new Date(a.start_time))
+        : '',
       notes: a.notes || '',
     });
     setModal(a);
@@ -113,10 +116,12 @@ export function AllocationsPage({ showToast }) {
       start_date: form.start_date || null,
       end_date: form.end_date || null,
       // Combine date + time into full timestamp
+      // Real UTC instant from the local date+time (naive strings shifted +10h).
       start_time: form.arrival_time && form.start_date
-        ? `${form.start_date}T${form.arrival_time}` : null,
-      end_time: form.end_time && form.start_date
-        ? `${form.start_date}T${form.end_time}` : null,
+        ? new Date(`${form.start_date}T${form.arrival_time}:00`).toISOString() : null,
+      // Finish time removed from allocations (owner: "we don't know when they
+      // finish") — actual hours come from the worker's timesheet.
+      end_time: null,
       notes: form.notes || null,
     };
     if (modal === 'add') {
@@ -306,8 +311,8 @@ export function AllocationsPage({ showToast }) {
             <Field label="Site Address"><input style={inputStyle} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></Field>
             <Field label="Site Supervisor"><input style={inputStyle} value={form.site_supervisor} onChange={e => setForm(f => ({ ...f, site_supervisor: e.target.value }))} /></Field>
             <Field label="Supervisor Phone"><input style={inputStyle} value={form.manager_phone} onChange={e => setForm(f => ({ ...f, manager_phone: e.target.value }))} /></Field>
-            <Field label="Start Date *"><input style={inputStyle} type="date" value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} /></Field>
-            <Field label="End Date"><input style={inputStyle} type="date" value={form.end_date} onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))} /></Field>
+            <Field label="Start Date *"><DateField value={form.start_date} onChange={v => setForm(f => ({ ...f, start_date: v }))} /></Field>
+            <Field label="End Date" hint="Leave empty for a single day."><DateField value={form.end_date} onChange={v => setForm(f => ({ ...f, end_date: v }))} /></Field>
             <Field label="Status">
               <select style={inputStyle} value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}>
                 <option value="pending">Pending</option>
@@ -317,11 +322,8 @@ export function AllocationsPage({ showToast }) {
               </select>
             </Field>
             <Field label="Arrival Time">
-              <input style={inputStyle} type="time" value={form.arrival_time} onChange={e => setForm(f => ({ ...f, arrival_time: e.target.value }))} />
-              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>Date is taken from Start Date above</div>
-            </Field>
-            <Field label="End Time">
-              <input style={inputStyle} type="time" value={form.end_time} onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} />
+              <ClockField value={form.arrival_time} onChange={v => setForm(f => ({ ...f, arrival_time: v }))} />
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3 }}>Date is taken from Start Date above. No finish time — actual hours come from the timesheet.</div>
             </Field>
             <div style={{ gridColumn: '1 / -1' }}>
               <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Field>

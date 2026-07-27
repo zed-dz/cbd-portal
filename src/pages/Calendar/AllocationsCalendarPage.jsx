@@ -1,7 +1,7 @@
 import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, R, MONO, inputStyle, btnPrimary, btnSecondary, btnSmall } from '../../theme';
-import { Modal, Field, Spinner, EmptyState } from '../../components';
+import { Modal, Field, Spinner, EmptyState, DateField } from '../../components';
 import { PUBLIC_HOLIDAYS } from '../../utils/payroll';
 
 // Calendar entry types — RDO / leave days get their own colours instead of the
@@ -762,8 +762,8 @@ function AllocationModal({ modal, form, setForm, closeModal, handleSave, saving,
             </select>
           </Field>
         </div>
-        <Field label="Start Date *"><input style={inputStyle} type="date" value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} /></Field>
-        <Field label="End Date"><input style={inputStyle} type="date" value={form.end_date} onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))} /></Field>
+        <Field label="Start Date *"><DateField value={form.start_date} onChange={v => setForm(f => ({ ...f, start_date: v }))} /></Field>
+        <Field label="End Date" hint="Leave empty for a single day."><DateField value={form.end_date} onChange={v => setForm(f => ({ ...f, end_date: v }))} /></Field>
         <Field label="Client"><input style={inputStyle} value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} /></Field>
         <Field label="Site"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
         <Field label="Project"><input style={inputStyle} value={form.project} onChange={e => setForm(f => ({ ...f, project: e.target.value }))} /></Field>
