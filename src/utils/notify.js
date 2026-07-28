@@ -18,12 +18,12 @@ export const PORTAL_URL = 'https://cbd-portal-gray.vercel.app';
 export const ADMIN_EMAIL = 'theteamcbd@gmail.com';
 
 // ── Admin SMS allowlist (ON — Zeff only, owner decision 2026-07-11) ──────────
-// Owner confirmed (after briefly opening SMS to all admins the same day) that
-// admin event SMS should go ONLY to Zeff — the rest of the team relies on the
-// in-app bell + email, which always reach all admins. The roster still comes
-// from the get_admin_notification_recipients RPC; this allowlist restricts who
-// is actually texted. Set to null to text every eligible admin.
-const SMS_ALLOWLIST = ['+61459789590']; // Zeff
+// Owner confirmed that admin event SMS should go ONLY to Zeff — the rest of
+// the team relies on the in-app bell + email. 2026-07-28: updated to Zeff's
+// REAL mobile from his own signup profile — the previous +61459789590 came
+// from a stale duplicate worker row and those texts were landing with Nick.
+// Set to null to text every eligible admin instead.
+const SMS_ALLOWLIST = ['+61420242425']; // Zeff Lunam (verified profile)
 
 // Normalise an Australian mobile to E.164 ("+61…").
 // Accepts "0447 532 346", "0447  532 346", "+61 447 532 346",
@@ -71,6 +71,30 @@ export async function addAdminNotification({ type, title, body, allocation_id, w
       worker_id: worker_id || null,
     }]);
     return { ok: !error, error: error?.message };
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+// Email the allocated worker their new job (alongside the SMS) so a stale
+// mobile number can never silently hide an allocation. send-bulk-email
+// prepends its own "Hi {name}," greeting. Fire-and-forget, never throws.
+export async function sendWorkerAllocationEmail(worker, { client, site, role, start_date }) {
+  try {
+    const email = (worker?.email || '').trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, error: 'no email' };
+    const where = client && site ? `${client} — ${site}` : (client || site || 'a new job');
+    const { data, error } = await supabase.functions.invoke('send-bulk-email', {
+      body: {
+        recipients: [{ name: worker.name || 'there', email }],
+        subject: `New allocation — ${where}`,
+        body: `You've been allocated to ${where}${role ? ` as ${role}` : ''}${start_date ? ` starting ${fmtNiceDate(start_date)}` : ''}.\n\nOpen the portal to accept: ${PORTAL_URL}`,
+        audience: 'mixed',
+        gmail_only: true,
+      },
+    });
+    if (error) return { ok: false, error: error.message };
+    return { ok: !!data?.ok, via: data?.via };
   } catch (e) {
     return { ok: false, error: e?.message || String(e) };
   }

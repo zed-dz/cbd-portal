@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
 import { fmtDate, fmtDateTime } from '../../utils/dates';
-import { normaliseAUMobile, sendWorkerSms, addAdminNotification, allocationSmsBody, broadcastAdminSms, adminCreateSmsBody, sendAdminEmail } from '../../utils/notify';
+import { normaliseAUMobile, sendWorkerSms, addAdminNotification, allocationSmsBody, broadcastAdminSms, adminCreateSmsBody, sendAdminEmail, sendWorkerAllocationEmail } from '../../utils/notify';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, DateField, ClockField } from '../../components';
 import { ROLE_GROUPS, roleChipStyle } from '../../constants/roles';
 
@@ -44,7 +44,7 @@ export function AllocationsPage({ showToast }) {
     setLoading(true);
     const [a, w, c] = await Promise.all([
       supabase.from('allocations').select('*, workers(name, job_title)').order('created_at', { ascending: false }),
-      supabase.from('workers').select('id, name, mobile').is('archived_at', null).order('name'),
+      supabase.from('workers').select('id, name, mobile, email').is('archived_at', null).order('name'),
       supabase.from('clients').select('id, name').order('name'),
     ]);
     if (a.error) showToast(a.error.message, 'error');
@@ -162,6 +162,12 @@ export function AllocationsPage({ showToast }) {
       });
     }
 
+    // (a2) Email the worker too — belt-and-braces so a stale mobile number can
+    // never silently hide an allocation (how zeff's SMS ended up with Nick).
+    sendWorkerAllocationEmail(worker, { client, site, role, start_date: startDate }).then(r => {
+      if (r.ok) showToast(`Email sent to ${name}.`, 'success');
+    });
+
     // (b) Admin in-app notification.
     addAdminNotification({
       type: 'allocation_sent',
@@ -175,9 +181,11 @@ export function AllocationsPage({ showToast }) {
     //     Fire-and-forget — the worker SMS above is the only worker-facing text.
     const where = client || site || '';
     broadcastAdminSms(adminCreateSmsBody({ worker: name, client: where, start_date: startDate, role }));
+    // Clearly an FYI — admins were reading "New allocation: X" personalised
+    // with their own name as the allocation being sent to the wrong person.
     sendAdminEmail(
-      `New allocation: ${name} → ${where || 'client'}`,
-      `${name} has been allocated to ${where || 'a new job'}${role ? ` as ${role}` : ''}${startDate ? ` starting ${startDate}` : ''}. It's been sent to the worker for acceptance.`
+      `Admin update — ${name} allocated to ${where || 'client'}`,
+      `FYI for the admin team (no action needed): ${name} has been allocated to ${where || 'a new job'}${role ? ` as ${role}` : ''}${startDate ? ` starting ${startDate}` : ''}. The worker has been notified by SMS and email to accept it in the portal.`
     );
   };
 
