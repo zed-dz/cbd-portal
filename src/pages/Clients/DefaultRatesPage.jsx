@@ -15,8 +15,13 @@ import { Spinner, TableWrap, Th, Td, EmptyState, Modal, Field } from '../../comp
 // The catch-all A/B/C hourly defaults live in payroll_config
 // (default_client_rate_a/b/c) so they share the no-deploy config editor.
 
-const UOMS = ['hour', 'shift', 'day', 'ton', 'unit', 'km', 'm³', 'm²', 'lm', 'each'];
-const CATEGORIES = ['labour', 'plant', 'attachments', 'materials', 'allowances', 'other'];
+// UOMs and categories cover the printed CBD Schedule of Rates 2026/27 — the
+// card uses "each way" for floatage and "%" for the regional surcharge, and
+// splits plant between wet hire and bolt-on attachments.
+// 'm3'/'m2' are ASCII on purpose — the rate-card CHECK constraint lists them
+// that way, and 'm³'/'m²' would fail on save.
+const UOMS = ['hour', 'shift', 'day', 'ton', 'unit', 'km', 'm3', 'm2', 'lm', 'each', 'each way', '%'];
+const CATEGORIES = ['labour', 'plant', 'attachments', 'materials', 'floatage', 'surcharge', 'allowances', 'other'];
 
 const EMPTY_LINE = {
   role_name: '', rate_a: '', rate_b: '', rate_c: '',
