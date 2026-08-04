@@ -47,7 +47,7 @@ const EMPTY = {
   blood_type: '', allergies: '', conditions: '', medications: '',
   gp_name: '', gp_phone: '', medicare_number: '',
   // Login
-  password: '', password_confirm: '',
+  email: '', password: '', password_confirm: '',
 };
 
 export function OnboardProfilePage({ token }) {
@@ -62,7 +62,11 @@ export function OnboardProfilePage({ token }) {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const { data, error } = await supabase.rpc('get_public_worker_profile', { token });
+      // get_onboard_worker_profile (not get_public_worker_profile): the public
+      // one is the client-facing safe subset and deliberately omits `email`,
+      // which is why the login step used to claim no email was on file for
+      // everyone. This RPC is reachable only with the worker's own token.
+      const { data, error } = await supabase.rpc('get_onboard_worker_profile', { token });
       if (!mounted) return;
       if (error) setError(error.message);
       else if (!data || data.length === 0) setError('Invite link is invalid or has expired.');
@@ -83,6 +87,13 @@ export function OnboardProfilePage({ token }) {
     // The worker must set a login password so they can sign straight into the
     // portal with email + password (this is what was previously missing).
     const pw = form.password || '';
+    // A worker whose row has no email must supply one — it becomes their login.
+    const typedEmail = (form.email || '').trim();
+    if (!profile.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(typedEmail)) {
+      setError('Please enter a valid email address — you’ll use it to log in.');
+      setStep(STEPS.findIndex(s => s.id === 'login'));
+      return;
+    }
     if (pw.length < 8) {
       setError('Please set a password of at least 8 characters so you can log in.');
       setStep(STEPS.findIndex(s => s.id === 'login'));
@@ -97,6 +108,7 @@ export function OnboardProfilePage({ token }) {
     const blank = (v) => (v === '' || v == null) ? null : v;
     const params = {
       token,
+      p_email:                    profile.email ? null : blank(typedEmail),
       p_mobile:                   blank(form.mobile),
       p_alternate_phone:          blank(form.alternate_phone),
       p_address:                  blank(form.address),
@@ -135,10 +147,16 @@ export function OnboardProfilePage({ token }) {
 
     const { data: rpcOk, error: rpcErr } = await supabase.rpc('update_worker_via_token', params);
     if (rpcErr || !rpcOk) {
-      setError(rpcErr?.message || 'Could not save your details. The link may have expired.');
+      const taken = /email_taken/i.test(rpcErr?.message || '');
+      setError(taken
+        ? 'That email is already used by another worker. Use a different address, or sign in with it if the account is yours.'
+        : (rpcErr?.message || 'Could not save your details. The link may have expired.'));
+      if (taken) setStep(STEPS.findIndex(s => s.id === 'login'));
       setSaving(false);
       return;
     }
+    // The row now definitely has an email — reflect it on the success screen.
+    if (!profile.email && typedEmail) setProfile(p => ({ ...p, email: typedEmail }));
 
     // Create the worker's login (email + the password they just set) so they
     // can sign straight into the portal. This is what makes login actually work
@@ -517,17 +535,32 @@ function StepMedical({ form, set }) {
 }
 
 function StepLogin({ form, set, profile }) {
+  // When the office already has an email on file it stays locked (changing the
+  // login address is an admin action). When it doesn't, the worker types their
+  // own here rather than being dead-ended — that block used to fire for EVERY
+  // worker because the profile RPC never returned `email` at all.
+  const onFile = !!profile.email;
   return (
     <>
       <SectionHeader title="Create your login" subtitle="You'll use this to sign into the worker portal — see your jobs, submit timesheets and update your details." />
-      <Field label="Your email">
-        <input style={{ ...inputStyle, opacity: 0.65 }} type="email" value={profile.email || ''} readOnly disabled />
+      <Field
+        label={onFile ? 'Your email' : 'Your email *'}
+        hint={onFile ? undefined : "We don't have an email for you yet — add the one you want to log in with."}
+      >
+        {onFile ? (
+          <input style={{ ...inputStyle, opacity: 0.65 }} type="email" value={profile.email} readOnly disabled />
+        ) : (
+          <input
+            style={inputStyle}
+            type="email"
+            value={form.email}
+            onChange={e => set({ email: e.target.value })}
+            placeholder="you@example.com"
+            autoComplete="email"
+            inputMode="email"
+          />
+        )}
       </Field>
-      {!profile.email && (
-        <div style={{ marginBottom: 12, padding: '8px 12px', background: 'rgba(244,63,94,0.10)', border: '1px solid rgba(244,63,94,0.4)', borderRadius: 8, color: '#fda4af', fontSize: 12 }}>
-          No email is on file for you yet. Ask your CBD contact to add your email — you'll log in with it.
-        </div>
-      )}
       <Field label="Password *" hint="At least 8 characters. You'll sign in with your email and this password.">
         <input style={inputStyle} type="password" value={form.password} onChange={e => set({ password: e.target.value })} placeholder="••••••••" autoComplete="new-password" />
       </Field>
@@ -541,7 +574,7 @@ function StepLogin({ form, set, profile }) {
 function StepReview({ form, profile }) {
   const rows = useMemo(() => [
     ['Name',          profile.name],
-    ...(profile.email ? [['Email', profile.email]] : []),
+    ...((profile.email || form.email) ? [['Email', profile.email || form.email]] : []),
     ['Mobile',        form.mobile || '—'],
     ['DOB',           form.date_of_birth || '—'],
     ['Address',       form.address || '—'],

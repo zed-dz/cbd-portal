@@ -16,7 +16,18 @@ export function OmniHelpBubble() {
   const [q, setQ] = useState('');
   const [msgs, setMsgs] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
   const endRef = useRef(null);
+
+  // Step aside while any modal is open. The bubble is fixed to the bottom-right
+  // at z-index 9999, which is exactly where modals put their Save button — on a
+  // phone it sat on top of it and swallowed the tap (reported 2026-08-04).
+  useEffect(() => {
+    const onModal = (e) => setModalOpen((e.detail || 0) > 0);
+    window.addEventListener('cbd:modal', onModal);
+    setModalOpen((window.__cbdModalCount || 0) > 0);
+    return () => window.removeEventListener('cbd:modal', onModal);
+  }, []);
 
   useEffect(() => {
     fetch(`${VC_URL}/api/ecosystem/config?key=${encodeURIComponent(ECO_KEY)}`)
@@ -32,6 +43,8 @@ export function OmniHelpBubble() {
   }, [msgs, loading]);
 
   if (!enabled) return null;
+  // Never render over a modal — it covers the form's Save button.
+  if (modalOpen) return null;
 
   const ask = async () => {
     const question = q.trim();

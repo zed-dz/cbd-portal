@@ -49,6 +49,11 @@ export function normaliseMobileE164AU(mobile) {
   return digits.startsWith('+') ? digits : `+${digits}`;
 }
 
+// DEPRECATED — do not wire this to a button again. `sms:` is a device handoff:
+// on a desktop browser it only raises a "This site is trying to open Pick an
+// application" prompt and nothing is ever sent (reported 2026-08-04). Send
+// invites through the `send-sms` edge function instead. Kept only so any
+// remaining caller keeps compiling.
 export function smsLink({ mobile, body }) {
   // sms:?body= works on iOS and most modern Android browsers. Number is
   // optional in the URI; if present we prefix with the comma so SMS apps that

@@ -8,7 +8,7 @@ import { EmailHistoryPanel } from '../../components/inbox/EmailHistoryPanel';
 import { WorkerCertificateUploads } from '../../components/certificates/WorkerCertificateUploads';
 import { JOB_TITLES } from '../../constants/jobTitles';
 import { WORKER_TYPES } from '../../constants/scenarios';
-import { onboardLink, publicProfileLink, smsLink, whatsappLink, inviteMessage } from '../../utils/inviteLinks';
+import { onboardLink, publicProfileLink, whatsappLink, inviteMessage, normaliseMobileE164AU } from '../../utils/inviteLinks';
 
 const ARCHIVE_REASONS = [
   { value: 'resigned',        label: 'Resigned (left voluntarily)' },
@@ -53,6 +53,7 @@ const workerDefaults = {
   site: '', client: '', worker_type: 'casual',
   pay_rate_a: '', pay_rate_b: '', pay_rate_c: '',
   subcontractor_abn: '', qualified: false,
+  is_allocator: false,
   send_invite: true,
 };
 
@@ -113,6 +114,7 @@ export function WorkersPage({ showToast }) {
       pay_rate_c: w.pay_rate_c ?? '',
       subcontractor_abn: w.subcontractor_abn || '',
       qualified: !!w.qualified,
+      is_allocator: !!w.is_allocator,
       send_invite: false,
     });
     const { data } = await supabase.from('certifications').select('*').eq('worker_id', w.id).order('expiry', { ascending: true });
@@ -282,13 +284,24 @@ export function WorkersPage({ showToast }) {
     } catch (e) { showToast(link, 'info'); }
   };
 
-  // SMS + WhatsApp share — open the OS messenger app pre-populated. Same
-  // backup path the Pending Workers page offers, but exposed here so an admin
-  // editing a worker can send the invite without leaving the modal.
-  const shareViaSms = (w) => {
+  // SMS sends for real through Twilio (`send-sms`); WhatsApp still opens a
+  // pre-filled chat on the device. The SMS path used to be a `sms:` deep link,
+  // which does nothing on a desktop browser except raise a "Pick an
+  // application" prompt — same bug as the Pending Workers page (2026-08-04).
+  const shareViaSms = async (w) => {
     if (!w.profile_token) { showToast('Worker has no profile token yet. Re-save the record.', 'error'); return; }
+    const to = normaliseMobileE164AU(w.mobile);
+    if (!to) { showToast(`No mobile number on file for ${w.name || 'this worker'}.`, 'error'); return; }
     const firstName = (w.name || '').split(' ')[0];
-    window.open(smsLink({ mobile: w.mobile, body: inviteMessage({ firstName, link: onboardLink(w.profile_token) }) }), '_blank');
+    try {
+      const { data, error } = await supabase.functions.invoke('send-sms', {
+        body: { to, body: inviteMessage({ firstName, link: onboardLink(w.profile_token) }) },
+      });
+      if (error || data?.error) showToast(`Text failed: ${data?.error || error?.message || 'unknown error'}`, 'error');
+      else showToast(`Invite texted to ${to}`, 'success');
+    } catch (e) {
+      showToast(e.message || 'Failed to send the text', 'error');
+    }
   };
   const shareViaWhatsApp = (w) => {
     if (!w.profile_token) { showToast('Worker has no profile token yet. Re-save the record.', 'error'); return; }
@@ -510,6 +523,31 @@ export function WorkersPage({ showToast }) {
               </select>
             </Field>
             <div /> {/* spacer */}
+
+            <div style={{ gridColumn: '1 / -1', marginTop: 2, marginBottom: 2 }}>
+              <label style={{
+                display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer',
+                background: form.is_allocator ? 'rgba(249,115,22,0.08)' : 'transparent',
+                border: `1px solid ${form.is_allocator ? C.accent : C.border}`,
+                borderRadius: 8, padding: '11px 13px', transition: 'all .15s',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={!!form.is_allocator}
+                  onChange={e => setForm(f => ({ ...f, is_allocator: e.target.checked }))}
+                  style={{ marginTop: 2, accentColor: C.accent, width: 16, height: 16, flexShrink: 0 }}
+                />
+                <span>
+                  <span style={{ color: C.text, fontSize: 13, fontWeight: 600 }}>📣 Allocator — gets allocation alerts</span>
+                  <span style={{ display: 'block', color: C.textMuted, fontSize: 11.5, marginTop: 3, lineHeight: 1.5 }}>
+                    Texted and emailed whenever a worker is allocated, accepts or declines.
+                    Tick as many people as you want. Everyone else still sees it in the
+                    notification bell — they just don't get buzzed. If nobody is ticked,
+                    alerts go to the team inbox only.
+                  </span>
+                </span>
+              </label>
+            </div>
 
             <div style={{ gridColumn: '1 / -1', marginTop: 6, marginBottom: 6 }}>
               <div style={{

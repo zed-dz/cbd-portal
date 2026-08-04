@@ -11,6 +11,7 @@ import { AllocationsPage } from '../pages/Allocations/AllocationsPage';
 import { AllocationsCalendarPage } from '../pages/Calendar/AllocationsCalendarPage';
 import { TimesheetsPage } from '../pages/Timesheets/TimesheetsPage';
 import { ClientsPage } from '../pages/Clients/ClientsPage';
+import { DefaultRatesPage } from '../pages/Clients/DefaultRatesPage';
 import { PayrollTrackerPage } from '../pages/Payroll/PayrollTrackerPage';
 import { PayrollConfigPage } from '../pages/Payroll/PayrollConfigPage';
 import { XeroSyncPage } from '../pages/XeroSync/XeroSyncPage';
@@ -98,6 +99,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       label: 'FINANCE',
       items: [
         { id: 'clients', label: '🏗 Clients & Rates' },
+        { id: 'default_rates', label: '💲 Default Rates' },
         { id: 'payroll', label: '💰 Payroll', badge: badges.payroll || null, badgeColor: 'green' },
         { id: 'payments', label: '💳 Payments' },
         { id: 'payroll_config', label: '⚙ Payroll Config' },
@@ -218,6 +220,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'applications'     && <ApplicationsPage    showToast={showToast} onNavigate={navigate} />}
           {activePage === 'timesheets'       && <TimesheetsPage showToast={showToast} isMobile={isMobile} refreshBadge={refreshBadge} />}
           {activePage === 'clients'          && <ClientsPage showToast={showToast} />}
+          {activePage === 'default_rates'    && <DefaultRatesPage showToast={showToast} />}
           {activePage === 'payroll'          && <PayrollTrackerPage showToast={showToast} />}
           {activePage === 'payments'         && <PaymentsPage showToast={showToast} />}
           {activePage === 'payroll_config'   && <PayrollConfigPage showToast={showToast} />}

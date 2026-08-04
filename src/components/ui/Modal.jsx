@@ -11,9 +11,20 @@ export function Modal({ title, onClose, children, width = 480, dismissible = fal
     document.body.style.overflow = 'hidden';
     const onKey = (e) => { if (dismissible && e.key === 'Escape') onClose?.(); };
     window.addEventListener('keydown', onKey);
+
+    // Broadcast that a modal is open so fixed-position furniture (the floating
+    // help bubble) can get out of the way — it sits at z-index 9999 and was
+    // covering the Save button on narrow screens.
+    const bump = (n) => {
+      window.__cbdModalCount = Math.max(0, (window.__cbdModalCount || 0) + n);
+      window.dispatchEvent(new CustomEvent('cbd:modal', { detail: window.__cbdModalCount }));
+    };
+    bump(1);
+
     return () => {
       document.body.style.overflow = prev;
       window.removeEventListener('keydown', onKey);
+      bump(-1);
     };
   }, [onClose, dismissible]);
 

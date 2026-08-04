@@ -17,13 +17,20 @@ export const PORTAL_URL = 'https://cbd-portal-gray.vercel.app';
 // This is the real, monitored team inbox (also the connected Gmail sender).
 export const ADMIN_EMAIL = 'theteamcbd@gmail.com';
 
-// ── Admin SMS allowlist (ON — Zeff only, owner decision 2026-07-11) ──────────
-// Owner confirmed that admin event SMS should go ONLY to Zeff — the rest of
-// the team relies on the in-app bell + email. 2026-07-28: updated to Zeff's
-// REAL mobile from his own signup profile — the previous +61459789590 came
-// from a stale duplicate worker row and those texts were landing with Nick.
-// Set to null to text every eligible admin instead.
-const SMS_ALLOWLIST = ['+61420242425']; // Zeff Lunam (verified profile)
+// ── Allocation recipients = the ALLOCATORS (owner decision 2026-08-04) ──────
+// Allocation events (create / accept / decline) go to whoever is flagged as an
+// allocator on the Workers page (`workers.is_allocator`) — SMS *and* email —
+// not to every admin. This replaced the hard-coded SMS allowlist: the old gate
+// only covered SMS, so Nick and Val kept receiving the emails. The office can
+// now name two or three allocators themselves without a code change.
+//
+// Fail-safe: if NOBODY is flagged, we send no personal alerts at all rather
+// than falling back to the whole team (the old behaviour is exactly what the
+// owner asked us to stop). The shared team inbox still gets the email, so the
+// event is never lost — see sendAdminEmail below.
+function pickAllocators(roster) {
+  return (roster || []).filter(w => w.is_allocator === true);
+}
 
 // Normalise an Australian mobile to E.164 ("+61…").
 // Accepts "0447 532 346", "0447  532 346", "+61 447 532 346",
@@ -139,14 +146,15 @@ export async function broadcastAdminSms(body) {
     const { data, error } = await supabase.rpc('get_admin_notification_recipients');
     if (error) return { ok: false, sent: 0, error: error.message };
 
-    // Only per-event admins with the SMS channel enabled (digest admins get the
-    // once-a-day summary instead). Defaults treat missing prefs as opted-in.
-    const eligible = (data || []).filter(w =>
+    // Allocators only, and only those on per-event mode with the SMS channel
+    // enabled (digest admins get the once-a-day summary instead). Defaults
+    // treat missing prefs as opted-in.
+    const eligible = pickAllocators(data).filter(w =>
       (w.notify_mode || 'per_event') === 'per_event' && w.notify_sms !== false
     );
 
     const seen = new Set();
-    let targets = [];
+    const targets = [];
     for (const w of eligible) {
       const to = normaliseAUMobile(w.mobile);
       if (!to || seen.has(to)) continue;
@@ -154,17 +162,7 @@ export async function broadcastAdminSms(body) {
       targets.push({ to, name: w.name });
     }
 
-    // Emergency gate: when the allowlist is set, override the roster and text
-    // exactly those numbers so we never buzz the whole team by accident.
-    if (Array.isArray(SMS_ALLOWLIST) && SMS_ALLOWLIST.length) {
-      const gate = new Set();
-      targets = SMS_ALLOWLIST
-        .map(n => normaliseAUMobile(n))
-        .filter(n => n && !gate.has(n) && gate.add(n))
-        .map(to => ({ to, name: 'Allowlisted' }));
-    }
-
-    if (!targets.length) return { ok: false, sent: 0, error: 'no admin SMS recipients' };
+    if (!targets.length) return { ok: false, sent: 0, error: 'no allocator SMS recipients' };
 
     const results = await Promise.all(
       targets.map(t => sendWorkerSms(t.to, body).then(r => ({ ...r, to: t.to, name: t.name })))
@@ -175,19 +173,22 @@ export async function broadcastAdminSms(body) {
   }
 }
 
-// Email the admins about an allocation event via send-bulk-email. Notification
-// emails are GOOGLE (Gmail) ONLY — `gmail_only:true` tells send-bulk-email to
-// never fall back to Resend for these. The shared ops mailbox (ADMIN_EMAIL)
-// always gets the event as the team record; additionally each per-event admin
-// with the Email channel on gets a personal copy. Daily-digest admins are
-// skipped here and get the once-a-day summary instead. Fire-and-forget. Never throws.
+// Email the allocators about an allocation event via send-bulk-email.
+// Notification emails are GOOGLE (Gmail) ONLY — `gmail_only:true` tells
+// send-bulk-email to never fall back to Resend for these. The shared ops
+// mailbox (ADMIN_EMAIL) always gets the event as the team record; on top of
+// that, each ALLOCATOR on per-event mode with the Email channel on gets a
+// personal copy. Non-allocator admins get nothing personally — that is the
+// 2026-08-04 fix for "Nick and Val are still receiving these". Daily-digest
+// admins are skipped here and get the once-a-day summary instead.
+// Fire-and-forget. Never throws.
 export async function sendAdminEmail(subject, text) {
   try {
     const recipients = [{ name: 'Admin', email: ADMIN_EMAIL }];
     const seen = new Set([ADMIN_EMAIL.toLowerCase()]);
     try {
       const { data } = await supabase.rpc('get_admin_notification_recipients');
-      for (const w of (data || [])) {
+      for (const w of pickAllocators(data)) {
         const email = (w.email || '').trim();
         if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) continue;
         if ((w.notify_mode || 'per_event') !== 'per_event') continue;

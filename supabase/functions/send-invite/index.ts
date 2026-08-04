@@ -198,6 +198,24 @@ ABN 75 663 693 070`;
   const html = `<!doctype html><html><body style="margin:0;padding:0;background:#0d0f14;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0d0f14;padding:32px 16px;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#131620;border:1px solid #2a2f40;border-radius:14px;padding:32px;"><tr><td><div style="font-size:30px;font-weight:800;color:#f97316;letter-spacing:-0.5px;">CBD</div><div style="font-size:11px;color:#8b90a8;letter-spacing:2px;text-transform:uppercase;margin-top:2px;margin-bottom:24px;">Plant &amp; Labour</div><h1 style="color:#e8eaf2;font-size:22px;margin:0 0 12px 0;font-weight:700;">G'day ${escapeHtml(firstName)},</h1><p style="color:#e8eaf2;font-size:15px;line-height:1.55;margin:0 0 16px 0;">You've been added to the CBD Plant &amp; Labour worker portal. To get on a job, we just need a few details from you — mobile number, address, and your tickets/licences.</p><p style="color:#8b90a8;font-size:14px;line-height:1.55;margin:0 0 28px 0;">Tap the button below to fill out your profile. It takes about a minute.</p><table role="presentation" cellpadding="0" cellspacing="0"><tr><td><a href="${inviteUrl}" style="display:inline-block;background:#f97316;color:#fff;text-decoration:none;font-weight:600;font-size:15px;padding:14px 28px;border-radius:8px;">Complete my profile →</a></td></tr></table><p style="color:#8b90a8;font-size:12px;line-height:1.55;margin:28px 0 0 0;">Or copy this link into your browser:<br><a href="${inviteUrl}" style="color:#f97316;word-break:break-all;">${inviteUrl}</a></p><hr style="border:none;border-top:1px solid #2a2f40;margin:28px 0 16px 0;"><p style="color:#8b90a8;font-size:11px;line-height:1.5;margin:0;font-family:'SF Mono',Consolas,monospace;">CBD PLANT &amp; LABOUR · ABN 75 663 693 070<br>ROAD · RAIL · WATER</p></td></tr></table></td></tr></table></body></html>`;
 
   const r = await sendViaGmail(accessToken, buildMime({ from: fromHeader, to: worker.email, subject, text: plainText, html }));
+
+  // Log every attempt — success AND failure. Without this there was no record
+  // that an invite had been sent at all, so "I clicked Send Email and nothing
+  // happened" was unanswerable (2026-08-04). Never let logging break the send.
+  try {
+    await sb.from('message_log').insert([{
+      channel:         'gmail',
+      audience:        'worker',
+      recipient_id:    worker.id,
+      recipient_name:  worker.name,
+      recipient_email: worker.email,
+      subject,
+      status:          r.ok ? 'sent' : 'failed',
+      error:           r.ok ? null : (r.detail || `gmail_status_${r.status}`),
+      sent_at:         new Date().toISOString(),
+    }]);
+  } catch (_) { /* logging must never block delivery */ }
+
   if (!r.ok) {
     console.error('gmail send failed', r.status, r.detail);
     return json({ error: 'gmail_send_failed', detail: r.detail }, 502);
