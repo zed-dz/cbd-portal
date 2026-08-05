@@ -545,9 +545,7 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
         <td>${esc(h.workers?.name)}</td><td>${esc(h.client)}</td><td>${esc(h.project)}</td>
         <td>${esc(fmtDate(l.date))}</td><td>${esc(fmtTime(l.start_time))}</td><td>${esc(fmtTime(l.end_time))}</td>
         <td>${l.total_break_hours ? l.total_break_hours + 'h' : '—'}</td>
-        <td><b>${num(l.total_hours).toFixed(2)}</b></td><td>${num(l.regular_hours ?? l.total_hours).toFixed(2)}</td>
-        <td>${num(l.rdo_hours) > 0 ? num(l.rdo_hours).toFixed(2) : '—'}</td>
-        <td>${num(l.overtime_hours) > 0 ? num(l.overtime_hours).toFixed(2) : '—'}</td>
+        <td><b>${num(l.total_hours).toFixed(2)}</b></td>
         <td>${esc(h.status)}</td>
         <td>${h.client_approved ? esc(`${h.client_approved_by || 'Client'} · ${h.client_approved_at ? new Date(h.client_approved_at).toLocaleString('en-AU') : ''}`) : 'awaiting'}</td>
       </tr>`).join('');
@@ -564,9 +562,9 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
       <h1>Timesheet report</h1>
       <div class="sub">Range: ${esc(label)} · ${rows.length} shift line${rows.length !== 1 ? 's' : ''} · generated ${new Date().toLocaleString('en-AU')}</div>
       <table>
-        <thead><tr><th>Worker</th><th>Client</th><th>Project</th><th>Date</th><th>Start</th><th>Finish</th><th>Break</th><th>Total</th><th>Normal</th><th>RDO</th><th>OT</th><th>Status</th><th>Client approval</th></tr></thead>
+        <thead><tr><th>Worker</th><th>Client</th><th>Project</th><th>Date</th><th>Start</th><th>Finish</th><th>Break</th><th>Total</th><th>Status</th><th>Approved by</th></tr></thead>
         <tbody>${body}</tbody>
-        <tfoot><tr><td colspan="7">Totals</td><td>${t.total.toFixed(2)}</td><td>${t.reg.toFixed(2)}</td><td>${t.rdo > 0 ? t.rdo.toFixed(2) : '—'}</td><td>${t.ot > 0 ? t.ot.toFixed(2) : '—'}</td><td colspan="2"></td></tr></tfoot>
+        <tfoot><tr><td colspan="7">Totals</td><td>${t.total.toFixed(2)}</td><td colspan="2"></td></tr></tfoot>
       </table>
       <script>window.onload = function () { window.print(); };</script>
     </body></html>`;
