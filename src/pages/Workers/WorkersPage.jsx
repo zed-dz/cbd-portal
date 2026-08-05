@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
-import { fmtDate } from '../../utils/dates';
+import { fmtDate, todayISO } from '../../utils/dates';
+import { SendBlastModal } from '../../components/blast/SendBlastModal';
 import { useDraft, DraftBanner } from '../../utils/useDraft';
 import { Spinner, Badge, Modal, Field, TableWrap, Th, Td, EmptyState, certBadge } from '../../components';
 import { EmailHistoryPanel } from '../../components/inbox/EmailHistoryPanel';
@@ -77,6 +78,9 @@ export function WorkersPage({ showToast }) {
   const [filterAppStatus, setFilterAppStatus] = useState('');
   const [filterLicence, setFilterLicence] = useState('');
   const [archiveView, setArchiveView] = useState('active'); // 'active' | 'archived' | 'all'
+  const [workView, setWorkView] = useState('all');           // 'all' | 'working' | 'free'
+  const [busyIds, setBusyIds] = useState(null);              // worker ids on a job today (null = still loading)
+  const [blastCrew, setBlastCrew] = useState(null);          // { workers, label } for the bulk-message modal
   const [archiveModal, setArchiveModal] = useState(null); // worker being archived
   const [modal, setModal] = useState(null);
   const [editCerts, setEditCerts] = useState([]);
@@ -99,6 +103,29 @@ export function WorkersPage({ showToast }) {
   }, [showToast]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Who is on a job right now. An allocation counts while today falls inside
+  // its date range (a single-day allocation has no end_date), and only if it
+  // hasn't been declined or cancelled. Everyone else is available for work —
+  // which is the list the office wants to bulk-message.
+  useEffect(() => {
+    (async () => {
+      const today = todayISO();
+      const { data, error } = await supabase
+        .from('allocations')
+        .select('worker_id, start_date, end_date, status')
+        .not('status', 'in', '("declined","cancelled")')
+        .lte('start_date', today);
+      if (error) { setBusyIds(new Set()); return; }
+      const ids = new Set(
+        (data || [])
+          .filter(a => !a.end_date || a.end_date >= today)
+          .map(a => a.worker_id)
+          .filter(Boolean)
+      );
+      setBusyIds(ids);
+    })();
+  }, []);
 
   const openAdd = () => { setEditCerts([]); setModal('add'); };
   const openEdit = async (w) => {
@@ -312,9 +339,13 @@ export function WorkersPage({ showToast }) {
   const archivedCount = workers.filter(w => w.archived_at).length;
   const activeCount   = workers.length - archivedCount;
 
+  const isWorking = (w) => !!busyIds && busyIds.has(w.id);
+
   const filtered = workers.filter(w => {
     if (archiveView === 'active'   && w.archived_at)  return false;
     if (archiveView === 'archived' && !w.archived_at) return false;
+    if (workView === 'working' && !isWorking(w)) return false;
+    if (workView === 'free'    &&  isWorking(w)) return false;
     const matchSearch = !search || w.name.toLowerCase().includes(search.toLowerCase()) || w.email.toLowerCase().includes(search.toLowerCase()) || (w.licences || '').toLowerCase().includes(search.toLowerCase());
     const matchType = !filterType || (w.worker_type || 'casual') === filterType;
     const matchStatus = !filterStatus || w.status === filterStatus;
@@ -322,6 +353,11 @@ export function WorkersPage({ showToast }) {
     const matchLicence = !filterLicence || (w.licences || '').toLowerCase().includes(filterLicence.toLowerCase());
     return matchSearch && matchType && matchStatus && matchAppStatus && matchLicence;
   });
+
+  // Counts are over the live roster only — archived people aren't "available".
+  const roster       = workers.filter(w => !w.archived_at);
+  const workingCount = roster.filter(isWorking).length;
+  const freeCount    = roster.length - workingCount;
 
   const allLicences = [...new Set(
     workers.flatMap(w => (w.licences || '').split(',').map(l => l.trim()).filter(Boolean).map(l => l.toLowerCase()))
@@ -347,6 +383,45 @@ export function WorkersPage({ showToast }) {
             }}>{v.label}</button>
           );
         })}
+      </div>
+
+      {/* Who's on a job vs who's free. The office uses the free list to fill
+          tomorrow's jobs and to bulk-message everyone sitting idle. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        {[
+          { id: 'all',     label: `Everyone (${roster.length})`,        dot: null },
+          { id: 'working', label: `On a job now (${workingCount})`,     dot: C.success },
+          { id: 'free',    label: `Not currently working (${freeCount})`, dot: C.textDim },
+        ].map(v => {
+          const on = workView === v.id;
+          return (
+            <button key={v.id} onClick={() => setWorkView(v.id)} disabled={!busyIds} style={{
+              display: 'flex', alignItems: 'center', gap: 7,
+              padding: '7px 14px',
+              background: on ? C.accentSoft : 'transparent',
+              color: on ? C.text : C.textMuted,
+              border: `1px solid ${on ? C.accentBorder : C.border}`,
+              borderRadius: 999, cursor: busyIds ? 'pointer' : 'wait',
+              fontSize: 12.5, fontWeight: on ? 700 : 500,
+              opacity: busyIds ? 1 : 0.55,
+            }}>
+              {v.dot && <span style={{ width: 8, height: 8, borderRadius: '50%', background: v.dot, flexShrink: 0 }} />}
+              {v.label}
+            </button>
+          );
+        })}
+
+        {workView === 'free' && freeCount > 0 && (
+          <button
+            onClick={() => setBlastCrew({
+              workers: roster.filter(w => !isWorking(w)).map(w => ({ id: w.id, name: w.name, email: w.email })),
+              label: 'Not currently working',
+            })}
+            style={{ ...btnPrimary, padding: '7px 14px', fontSize: 12.5, marginLeft: 'auto' }}
+          >
+            📢 Message these {freeCount}
+          </button>
+        )}
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, gap: 12, flexWrap: 'wrap' }}>
@@ -396,6 +471,16 @@ export function WorkersPage({ showToast }) {
                 <Td>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <strong>{w.name}</strong>
+                    {!w.archived_at && busyIds && (
+                      <span
+                        title={isWorking(w) ? 'On a job today' : 'Not currently working'}
+                        style={{
+                          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                          background: isWorking(w) ? C.success : 'transparent',
+                          border: isWorking(w) ? 'none' : `1.5px solid ${C.textDim}`,
+                        }}
+                      />
+                    )}
                     {w.qualified && <span title="Qualified" style={{ fontSize: 11 }}>✅</span>}
                     {w.archived_at && (
                       <span style={{
@@ -748,6 +833,15 @@ export function WorkersPage({ showToast }) {
           worker={archiveModal}
           onClose={() => setArchiveModal(null)}
           onConfirm={handleArchive}
+        />
+      )}
+
+      {blastCrew && (
+        <SendBlastModal
+          presetWorkers={blastCrew.workers}
+          presetLabel={blastCrew.label}
+          onClose={() => setBlastCrew(null)}
+          showToast={showToast}
         />
       )}
     </div>

@@ -9,16 +9,22 @@ const TABS = [
   { id: 'both',    label: '🌐 Everyone',  sub: 'Workers + clients' },
 ];
 
-export function SendBlastModal({ onClose, showToast }) {
+// `presetWorkers` lets a caller hand in an exact worker list instead of the
+// whole active roster — the Workers page uses it to message just the crew who
+// aren't on a job. When it's set the audience tabs are hidden, because the
+// point is to message precisely that group.
+export function SendBlastModal({ onClose, showToast, presetWorkers = null, presetLabel = '' }) {
+  const preset = Array.isArray(presetWorkers);
   const [tab, setTab] = useState('workers');
-  const [workers, setWorkers] = useState([]);
+  const [workers, setWorkers] = useState(preset ? presetWorkers : []);
   const [clients, setClients] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!preset);
   const [subject, setSubject] = useState('');
   const [body, setBody]       = useState('');
   const [sending, setSending] = useState(false);
 
   useEffect(() => {
+    if (preset) return;
     let mounted = true;
     (async () => {
       const [w, c] = await Promise.all([
@@ -31,7 +37,7 @@ export function SendBlastModal({ onClose, showToast }) {
       setLoading(false);
     })();
     return () => { mounted = false; };
-  }, []);
+  }, [preset]);
 
   const buildRecipients = () => {
     const out = [];
@@ -79,7 +85,15 @@ export function SendBlastModal({ onClose, showToast }) {
         <div style={{ display: 'flex', justifyContent: 'center', padding: 32 }}><Spinner /></div>
       ) : (
         <>
-          {/* Audience picker */}
+          {/* Audience picker — hidden when the caller fixed the recipient list */}
+          {preset ? (
+            <div style={{
+              marginBottom: 18, background: C.cardHover, border: `1px solid ${C.borderStrong}`,
+              borderRadius: R.md, padding: '10px 14px', fontSize: 13, color: C.text,
+            }}>
+              👷 {presetLabel || 'Selected workers'} — <strong>{workers.length}</strong> worker{workers.length !== 1 ? 's' : ''}
+            </div>
+          ) : (
           <div style={{
             display: 'flex', gap: 6, marginBottom: 18,
             background: C.bg, border: `1px solid ${C.border}`,
@@ -107,6 +121,7 @@ export function SendBlastModal({ onClose, showToast }) {
               );
             })}
           </div>
+          )}
 
           {/* Audience summary */}
           <div style={{
