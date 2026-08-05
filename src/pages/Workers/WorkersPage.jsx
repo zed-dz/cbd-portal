@@ -339,7 +339,10 @@ export function WorkersPage({ showToast }) {
   const archivedCount = workers.filter(w => w.archived_at).length;
   const activeCount   = workers.length - archivedCount;
 
-  const isWorking = (w) => !!busyIds && busyIds.has(w.id);
+  // Declared as a function (not a const arrow) so it is hoisted: the counts below
+// are computed before this point in some portals, and a const would throw a
+// temporal-dead-zone ReferenceError and blank the Workers page.
+function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
 
   const filtered = workers.filter(w => {
     if (archiveView === 'active'   && w.archived_at)  return false;
