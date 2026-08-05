@@ -379,7 +379,10 @@ export function DailyTimesheetForm({
                 : [...BREAK_OPTIONS, parseFloat(l.total_break_hours) || 0].sort((a, b) => a - b);
               return (
               <tr key={i}>
-                <td style={{ padding: 3 }}><input type="date" style={{ ...cellInput, width: 130 }} value={l.date} onChange={e => setHoursLine(i, { date: e.target.value })} /></td>
+                {/* max=today: a shift can't be logged before it happens. A sheet
+                    dated in the future got approved "before" its own shift date,
+                    which looked wrong to clients on the printed copy. */}
+                <td style={{ padding: 3 }}><input type="date" max={todayISO()} style={{ ...cellInput, width: 130 }} value={l.date} onChange={e => setHoursLine(i, { date: e.target.value > todayISO() ? todayISO() : e.target.value })} /></td>
                 <td style={{ padding: 3, color: C.textMuted, whiteSpace: 'nowrap' }}>{dayFromDate(l.date) || '—'}</td>
                 <td style={{ padding: 3 }}>
                   <select style={{ ...cellInput, width: 120 }} value={l.shift_type} onChange={e => setHoursLine(i, { shift_type: e.target.value })}>

@@ -147,12 +147,19 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
 // browser print dialog (workers/admins pick "Save as PDF" to get a file).
 export function printTimesheet({ header, lines = [], workerName, brand = BRAND_DEFAULT }) {
   const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // The printed sheet goes to the client, so it shows TOTAL hours only. Normal /
+  // RDO / OT / Meal are payroll detail — we pay the worker differently from how
+  // we invoice the client (7.6h ordinary vs 8h billed), and showing the split
+  // invited questions. Workers still record it; it stays on screen for the
+  // office and flows through to payroll untouched.
   const totalHours = sumBy(lines, l => parseFloat(l.total_hours) || 0);
-  const totalReg   = sumBy(lines, l => parseFloat(l.regular_hours ?? l.total_hours) || 0);
-  const totalRdo   = sumBy(lines, lineRdo);
-  const totalOT    = sumBy(lines, lineOT);
-  const totalMeal  = sumBy(lines, l => parseFloat(l.meal_allowance) || 0);
   const adjusted   = lines.filter(isAdjusted);
+
+  // Audit trail for a disputed sheet: who signed it off, and when. The
+  // supervisor sign-off chain already records this as client_approved_by/_at,
+  // so prefer the explicit approver fields and fall back to those.
+  const approvedBy = header.approved_by || header.client_approved_by || '';
+  const approvedAt = header.approved_at || header.client_approved_at || '';
 
   const rows = lines.map(l => `
     <tr>
@@ -163,10 +170,6 @@ export function printTimesheet({ header, lines = [], workerName, brand = BRAND_D
       <td>${esc(fmtTime(l.end_time))}</td>
       <td>${esc(l.total_break_hours ? l.total_break_hours + 'h' : (l.break_minutes ? l.break_minutes + 'm' : '—'))}</td>
       <td><b>${Number(l.total_hours || 0).toFixed(2)}</b></td>
-      <td>${Number(l.regular_hours ?? l.total_hours ?? 0).toFixed(2)}</td>
-      <td>${lineRdo(l) > 0 ? lineRdo(l).toFixed(2) : '—'}</td>
-      <td>${lineOT(l) > 0 ? lineOT(l).toFixed(2) : '—'}</td>
-      <td>${(parseFloat(l.meal_allowance) || 0) > 0 ? '$' + Number(l.meal_allowance).toFixed(2) : '—'}</td>
     </tr>`).join('');
 
   const adjustedBlock = adjusted.length ? `
@@ -202,7 +205,7 @@ export function printTimesheet({ header, lines = [], workerName, brand = BRAND_D
     @media print { body { margin: 12mm; } }
   </style></head><body>
     <h1>${esc(brand)} — Daily Timesheet</h1>
-    <div class="sub">Status: <span class="status">${esc(header.status || 'pending')}</span> &nbsp;·&nbsp; Submitted ${esc(fmtDateTime(header.created_at))}</div>
+    <div class="sub">Status: <span class="status">${esc(header.status || 'pending')}</span>${approvedBy ? ` &nbsp;·&nbsp; Approved by <b>${esc(approvedBy)}</b>${approvedAt ? ` on ${esc(fmtDateTime(approvedAt))}` : ''}` : ''}</div>
     <div class="meta">
       <div><div class="label">Worker</div><div class="val">${esc(workerName || '—')}</div></div>
       <div><div class="label">Client</div><div class="val">${esc(header.client || '—')}</div></div>
@@ -211,9 +214,9 @@ export function printTimesheet({ header, lines = [], workerName, brand = BRAND_D
       <div><div class="label">Wet hire</div><div class="val">${header.wet_hire ? 'Yes' : 'No'}</div></div>
     </div>
     <table>
-      <thead><tr><th>Date</th><th>Day</th><th>Shift</th><th>Start</th><th>Finish</th><th>Break</th><th>Total</th><th>Normal</th><th>RDO</th><th>OT</th><th>Meal</th></tr></thead>
+      <thead><tr><th>Date</th><th>Day</th><th>Shift</th><th>Start</th><th>Finish</th><th>Break</th><th>Total</th></tr></thead>
       <tbody>${rows}</tbody>
-      <tfoot><tr><td colspan="6">Totals</td><td>${totalHours.toFixed(2)}</td><td>${totalReg.toFixed(2)}</td><td>${totalRdo > 0 ? totalRdo.toFixed(2) : '—'}</td><td>${totalOT > 0 ? totalOT.toFixed(2) : '—'}</td><td>${totalMeal > 0 ? '$' + totalMeal.toFixed(2) : '—'}</td></tr></tfoot>
+      <tfoot><tr><td colspan="6">Totals</td><td>${totalHours.toFixed(2)}</td></tr></tfoot>
     </table>
     ${adjustedBlock}
     ${header.comments ? `<div class="label" style="margin-top:12px">Tasks completed</div><div class="tasks">${esc(header.comments)}</div>` : ''}

@@ -179,6 +179,37 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}) {
   const isSundayOrPH = dow === 0 || isPH;
   const hours        = ts.pay_hours || 0;
 
+  // Timesheets saved from 2026-08-06 carry the penalty split the portal actually
+  // recorded (ordinary / RDO / 1.5x / 2x, computed once in split_shift_hours).
+  // Pay straight from those buckets so the payslip can never disagree with the
+  // hours printed on the timesheet — the two used to be derived separately, so a
+  // Sunday could show "7.6 normal + 1.9 OT" while being paid all-2x.
+  const hasSplit = ts.ot15_hours != null || ts.ot2x_hours != null;
+  if (hasSplit && worker.worker_type !== 'subcontractor') {
+    const ord  = Math.max(0, hours - (ts.ot15_hours || 0) - (ts.ot2x_hours || 0) - (ts.rdo_hours || 0));
+    let pay    = ord * payRate + (ts.ot15_hours || 0) * payRate * 1.5 + (ts.ot2x_hours || 0) * payRate * 2;
+    if (ts.geo_loading) pay *= (1 + GEO_PCT);
+    const totalPaySplit = pay + (ts.travel_allowance || 0) + (ts.meal_allowance || 0);
+    const weekendRateS  = ts.is_weekend && clientRecord?.rate_weekend
+      ? parseFloat(clientRecord.rate_weekend) : chargeRate;
+    const chargeAmountS = (ts.charge_hours || 0) * weekendRateS * (ts.geo_loading ? (1 + GEO_PCT) : 1);
+    return {
+      worker_name: worker.name, worker_type: worker.worker_type,
+      date: ts.date, scenario: ts.scenario, site: ts.site, client: ts.client,
+      pay_hours: ts.pay_hours, charge_hours: ts.charge_hours, overtime_hours: ts.overtime_hours,
+      ot15_hours: ts.ot15_hours || 0, ot2x_hours: ts.ot2x_hours || 0,
+      rdo_hours: ts.rdo_hours || 0,
+      min_day_topup: ts.min_day_topup || 0,
+      is_weekend: ts.is_weekend, geo_loading: ts.geo_loading,
+      travel_allowance: ts.travel_allowance, meal_allowance: ts.meal_allowance,
+      base_pay:      pay.toFixed(2),
+      total_pay:     totalPaySplit.toFixed(2),
+      charge_amount: chargeAmountS.toFixed(2),
+      awj_reference: ts.awj_reference || '',
+      xero_pay_item: 'OrdinaryTime',
+    };
+  }
+
   let basePay;
   if (worker.worker_type === 'subcontractor') {
     // Subcontractors: flat rate + flat night/weekend loading
