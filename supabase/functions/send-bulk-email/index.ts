@@ -187,6 +187,41 @@ serve(async (req) => {
     text    = text || 'This is a test of the bulk email path. It was sent via Gmail (Google) — the only email sender.';
   }
 
+  // ── Allocator backstop (2026-08-04) ────────────────────────────────────────
+  // Notification emails (the only ones that set `gmail_only`) must reach the
+  // ALLOCATORS and nobody else on the admin roster. The client already filters,
+  // but a browser tab left open since before the fix still runs the old code and
+  // will happily post the whole admin list — which is exactly how Nick kept
+  // receiving allocation emails after the fix shipped. Enforcing it here makes a
+  // stale client harmless.
+  //
+  // Scope is deliberately tight: only admins who are NOT allocators are dropped.
+  // Workers, clients and site supervisors are never touched, and the deliberate
+  // blast paths (Bulk Messages / Send Blast) don't set `gmail_only`, so the
+  // office can still email admins on purpose.
+  if (body.gmail_only && !body.test) {
+    // Own client: the shared `supa` is created further down, after this guard.
+    const guardDb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+    const { data: blocked } = await guardDb
+      .from('workers')
+      .select('email')
+      .eq('access_level', 'admin')
+      .or('is_allocator.is.null,is_allocator.eq.false')
+      .is('archived_at', null);
+
+    const deny = new Set((blocked || [])
+      .map((w: { email: string | null }) => (w.email || '').trim().toLowerCase())
+      .filter(Boolean));
+
+    if (deny.size) {
+      const before = recipients.length;
+      recipients = recipients.filter(r => !deny.has(r.email.trim().toLowerCase()));
+      if (recipients.length !== before) {
+        console.log(`allocator backstop: dropped ${before - recipients.length} non-allocator admin recipient(s)`);
+      }
+    }
+  }
+
   if (!recipients.length) return json({ error: 'no_valid_recipients' }, 400);
   if (!subject) return json({ error: 'missing_subject' }, 400);
   if (!text)    return json({ error: 'missing_body' }, 400);
