@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../supabaseClient';
-import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
+import { C, R, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
 import { todayISO, fmtDate } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
 import { computeTimesheetHours, buildXeroCSV } from '../../utils/payroll';
 import { SCENARIOS } from '../../constants/scenarios';
-import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, timesheetBadge, DailyTimesheetForm, dailyFromHeader, blankDaily, TimesheetDetailView } from '../../components';
+import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, timesheetBadge, DailyTimesheetForm, dailyFromHeader, blankDaily, TimesheetDetailView, DateRangeFilter, printTimesheetBatch } from '../../components';
 import { sendTimesheetForClientApproval, markClientApprovedManually } from '../../utils/clientApproval';
 
 const fmtTime = (iso) => iso
@@ -28,15 +28,8 @@ const toInstant = (local) => {
   return isNaN(d) ? null : d.toISOString();
 };
 
-// Week-cycle / date-range filter (feedback: "filter the worker per week cycle").
-const RANGE_PRESETS = [
-  { id: 'all', label: 'All dates' },
-  { id: 'this_week', label: 'This week' },
-  { id: 'last_week', label: 'Last week' },
-  { id: 'past7', label: 'Past 7 days' },
-  { id: 'this_month', label: 'This month' },
-  { id: 'custom', label: 'Custom range…' },
-];
+// Date-range filter. The preset list now lives in the DateRangeFilter component;
+// rangeBounds() below only has to resolve an explicit custom range.
 
 function rangeBounds(preset, from, to) {
   const today = new Date(); today.setHours(12, 0, 0, 0);
@@ -263,15 +256,11 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
           </select>
-          <select style={{ ...inputStyle, maxWidth: 160 }} value={range.preset} onChange={e => setRange(r => ({ ...r, preset: e.target.value }))}>
-            {RANGE_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
-          {range.preset === 'custom' && (
-            <>
-              <input type="date" style={{ ...inputStyle, maxWidth: 150 }} value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} />
-              <input type="date" style={{ ...inputStyle, maxWidth: 150 }} value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} />
-            </>
-          )}
+          <DateRangeFilter
+            from={range.preset === 'custom' ? range.from : null}
+            to={range.preset === 'custom' ? range.to : null}
+            onApply={({ from, to }) => setRange({ preset: (from || to) ? 'custom' : 'all', from: from || '', to: to || '' })}
+          />
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button onClick={handleApproveAll} style={{ ...btnSmall, color: '#4ade80', borderColor: '#16653a' }}>✓ Approve All Pending</button>
@@ -456,6 +445,13 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);      // 'add' | header object | null
   const [viewing, setViewing] = useState(null);  // header (with embedded lines) shown in the full view
+  const [selected, setSelected] = useState(() => new Set()); // header ids ticked for bulk download
+
+  const toggleOne = (id) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
   const [editInitial, setEditInitial] = useState(null);
   const [editWorkerId, setEditWorkerId] = useState('');
   const [loadingForm, setLoadingForm] = useState(false);
@@ -527,6 +523,61 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
     return matchStatus && matchSearch && matchRange;
   });
 
+  // ── Bulk selection ────────────────────────────────────────────────────────
+  // Selection is stored as header ids but always intersected with what's on
+  // screen, so narrowing the filter can never leave a hidden row silently
+  // included in a download.
+  const selectedSheets     = filtered.filter(h => selected.has(h.id));
+  const allShownSelected   = filtered.length > 0 && filtered.every(h => selected.has(h.id));
+  const selectedTotalHours = selectedSheets.reduce(
+    (sum, h) => sum + (h.timesheets || []).reduce((s, l) => s + (parseFloat(l.total_hours) || 0), 0), 0);
+
+  const toggleAllShown = () => setSelected(prev => {
+    const next = new Set(prev);
+    if (allShownSelected) filtered.forEach(h => next.delete(h.id));
+    else filtered.forEach(h => next.add(h.id));
+    return next;
+  });
+
+  // One row per shift line so the CSV can be pivoted in Excel.
+  const downloadSelectedCSV = () => {
+    if (!selectedSheets.length) return;
+    const rows = selectedSheets.flatMap(h =>
+      [...(h.timesheets || [])]
+        .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+        .map(l => ({
+          Worker:            h.workers?.name || '',
+          Date:              l.date || '',
+          Day:               l.date ? new Date(l.date + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'long' }) : '',
+          Client:            h.client || '',
+          Project:           h.project || '',
+          Role:              h.role || '',
+          Shift:             l.shift_type || 'Day',
+          Start:             fmtTime(l.start_time),
+          Finish:            fmtTime(l.end_time),
+          'Break (h)':       l.total_break_hours ?? '',
+          'Total hours':     Number(l.total_hours || 0).toFixed(2),
+          Status:            h.status || '',
+          'Approved by':     h.approved_by || h.client_approved_by || '',
+          'Approved at':     h.approved_at || h.client_approved_at || '',
+          'Tasks completed': h.comments || '',
+        })));
+    if (!rows.length) { showToast('The selected timesheets have no shift lines.', 'info'); return; }
+    downloadCSV(`timesheets_${todayISO()}.csv`, rows);
+    showToast(`${rows.length} shift line${rows.length === 1 ? '' : 's'} exported`, 'success');
+  };
+
+  const downloadSelectedPDF = () => {
+    if (!selectedSheets.length) return;
+    printTimesheetBatch({
+      sheets: selectedSheets.map(h => ({
+        header: h,
+        lines: [...(h.timesheets || [])].sort((a, b) => (a.date || '').localeCompare(b.date || '')),
+        workerName: h.workers?.name || '',
+      })),
+    });
+  };
+
   // Client-ready timesheet report for the current filter: hours per shift with
   // the supervisor sign-off (who accepted + when). Opens print → Save as PDF.
   const openReport = () => {
@@ -589,15 +640,11 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
           </select>
-          <select style={{ ...inputStyle, maxWidth: 160 }} value={range.preset} onChange={e => setRange(r => ({ ...r, preset: e.target.value }))}>
-            {RANGE_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
-          {range.preset === 'custom' && (
-            <>
-              <input type="date" style={{ ...inputStyle, maxWidth: 150 }} value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} />
-              <input type="date" style={{ ...inputStyle, maxWidth: 150 }} value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} />
-            </>
-          )}
+          <DateRangeFilter
+            from={range.preset === 'custom' ? range.from : null}
+            to={range.preset === 'custom' ? range.to : null}
+            onApply={({ from, to }) => setRange({ preset: (from || to) ? 'custom' : 'all', from: from || '', to: to || '' })}
+          />
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button onClick={openReport} style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }}>📄 Timesheet report</button>
@@ -605,11 +652,35 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
         </div>
       </div>
 
+      {/* Bulk actions. Appears only once something is ticked, so the page stays
+          quiet in normal use. "Download PDF" opens one document containing every
+          selected timesheet, one per page — the browser's Save-as-PDF turns that
+          into a single file instead of dozens of separate downloads. */}
+      {selectedSheets.length > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          background: C.accentSoft, border: `1px solid ${C.accentBorder}`,
+          borderRadius: R.md, padding: '10px 14px', marginBottom: 12,
+        }}>
+          <strong style={{ color: C.text, fontSize: 13 }}>
+            {selectedSheets.length} timesheet{selectedSheets.length === 1 ? '' : 's'} selected
+          </strong>
+          <span style={{ color: C.textMuted, fontSize: 12.5, fontFamily: '"DM Mono", monospace' }}>
+            {selectedTotalHours.toFixed(2)} hrs
+          </span>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button onClick={downloadSelectedCSV} style={{ ...btnSmall, color: '#4ade80', borderColor: '#16653a' }}>📄 Download CSV</button>
+            <button onClick={downloadSelectedPDF} style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }}>🖨 Download PDF</button>
+            <button onClick={() => setSelected(new Set())} style={btnSmall}>Clear</button>
+          </div>
+        </div>
+      )}
+
       {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : filtered.length === 0 ? (
         <EmptyState message="No daily timesheets found." />
       ) : (
         <TableWrap>
-          <thead><tr><Th>Worker</Th><Th>Date</Th><Th>Client</Th><Th>Project</Th><Th>Role</Th><Th>Start</Th><Th>Finish</Th><Th>Normal</Th><Th>OT</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
+          <thead><tr><Th><input type="checkbox" checked={allShownSelected} onChange={toggleAllShown} title="Select all shown" style={{ accentColor: C.accent, width: 15, height: 15, cursor: 'pointer' }} /></Th><Th>Worker</Th><Th>Date</Th><Th>Client</Th><Th>Project</Th><Th>Role</Th><Th>Start</Th><Th>Finish</Th><Th>Normal</Th><Th>OT</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
           <tbody>
             {filtered.map(h => {
               const info = lineInfo(h);
@@ -617,7 +688,8 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
               const last = info.lines[info.lines.length - 1];
               const single = info.lines.length === 1;
               return (
-              <tr key={h.id}>
+              <tr key={h.id} style={{ background: selected.has(h.id) ? C.accentSoft : undefined }}>
+                <Td><input type="checkbox" checked={selected.has(h.id)} onChange={() => toggleOne(h.id)} onClick={e => e.stopPropagation()} style={{ accentColor: C.accent, width: 15, height: 15, cursor: 'pointer' }} /></Td>
                 <Td>{h.workers?.name || '—'}</Td>
                 <Td>
                   {info.lines.length === 0 ? fmtDate(h.created_at)

@@ -225,8 +225,98 @@ export function printTimesheet({ header, lines = [], workerName, brand = BRAND_D
     <script>window.onload = function () { window.print(); };</script>
   </body></html>`;
 
+  openPrintWindow(html);
+}
+
+function openPrintWindow(html) {
   const w = window.open('', '_blank', 'width=900,height=700');
   if (!w) return;
   w.document.write(html);
   w.document.close();
+}
+
+// Print MANY timesheets as one document, one per page. This is what "download
+// all the timesheets at once" needs: the browser's print dialog has a
+// Save-as-PDF destination, so a batch of 40 sheets becomes a single 40-page PDF
+// rather than 40 separate downloads.
+export function printTimesheetBatch({ sheets = [], brand = BRAND_DEFAULT }) {
+  if (!sheets.length) return;
+  const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const page = ({ header, lines = [], workerName }) => {
+    const totalHours = sumBy(lines, l => parseFloat(l.total_hours) || 0);
+    const adjusted   = lines.filter(isAdjusted);
+    const approvedBy = header.approved_by || header.client_approved_by || '';
+    const approvedAt = header.approved_at || header.client_approved_at || '';
+    const statusCss  = header.status === 'approved' ? 'background:#dcfce7;color:#15803d;'
+                     : header.status === 'rejected' ? 'background:#fee2e2;color:#b91c1c;'
+                     : 'background:#fef9c3;color:#a16207;';
+    const rows = lines.map(l => `
+      <tr>
+        <td>${esc(fmtDate(l.date))}${isAdjusted(l) ? ' ✎' : ''}</td>
+        <td>${esc(dayFromDate(l.date))}</td>
+        <td>${esc(l.shift_type || 'Day')}</td>
+        <td>${esc(fmtTime(l.start_time))}</td>
+        <td>${esc(fmtTime(l.end_time))}</td>
+        <td>${esc(l.total_break_hours ? l.total_break_hours + 'h' : (l.break_minutes ? l.break_minutes + 'm' : '—'))}</td>
+        <td><b>${Number(l.total_hours || 0).toFixed(2)}</b></td>
+      </tr>`).join('');
+    const adjustedBlock = adjusted.length ? `
+      <div class="adjusted"><b>✎ Hours adjusted after submission</b>
+        ${adjusted.map(l => `<div>${esc(fmtDate(l.date))}: originally ${esc(fmtTime(l.original_start_time))} – ${esc(fmtTime(l.original_end_time))} · adjusted to ${esc(fmtTime(l.start_time))} – ${esc(fmtTime(l.end_time))} by ${esc(l.adjusted_by || 'admin')} on ${esc(fmtDateTime(l.adjusted_at))}</div>`).join('')}
+      </div>` : '';
+    return `
+    <section class="sheet">
+      <h1>${esc(brand)} — Daily Timesheet</h1>
+      <div class="sub">Status: <span class="status" style="${statusCss}">${esc(header.status || 'pending')}</span>${approvedBy ? ` &nbsp;·&nbsp; Approved by <b>${esc(approvedBy)}</b>${approvedAt ? ` on ${esc(fmtDateTime(approvedAt))}` : ''}` : ''}</div>
+      <div class="meta">
+        <div><div class="label">Worker</div><div class="val">${esc(workerName || '—')}</div></div>
+        <div><div class="label">Client</div><div class="val">${esc(header.client || '—')}</div></div>
+        <div><div class="label">Project</div><div class="val">${esc(header.project || '—')}</div></div>
+        <div><div class="label">Role</div><div class="val">${esc(header.role || '—')}</div></div>
+        <div><div class="label">Wet hire</div><div class="val">${header.wet_hire ? 'Yes' : 'No'}</div></div>
+      </div>
+      <table>
+        <thead><tr><th>Date</th><th>Day</th><th>Shift</th><th>Start</th><th>Finish</th><th>Break</th><th>Total</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><td colspan="6">Totals</td><td>${totalHours.toFixed(2)}</td></tr></tfoot>
+      </table>
+      ${adjustedBlock}
+      ${header.comments ? `<div class="label" style="margin-top:12px">Tasks completed</div><div class="tasks">${esc(header.comments)}</div>` : ''}
+    </section>`;
+  };
+
+  const grand = sheets.reduce((s, x) => s + sumBy(x.lines || [], l => parseFloat(l.total_hours) || 0), 0);
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(brand)} — ${sheets.length} timesheets</title>
+  <style>
+    body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #111827; margin: 32px; }
+    h1 { font-size: 20px; margin: 0 0 2px; } .sub { color: #6b7280; font-size: 12px; margin-bottom: 18px; }
+    .meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 20px; margin-bottom: 18px; }
+    .meta .label, .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #6b7280; }
+    .meta .val { font-size: 13px; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+    th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: #6b7280; border-bottom: 2px solid #e5e7eb; padding: 6px 8px; }
+    td { font-size: 12.5px; border-bottom: 1px solid #f3f4f6; padding: 6px 8px; }
+    tfoot td { border-top: 2px solid #e5e7eb; border-bottom: none; font-weight: 700; }
+    .adjusted { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px; padding: 10px 12px; font-size: 11.5px; margin: 12px 0; }
+    .adjusted b { display: block; margin-bottom: 4px; color: #92400e; }
+    .tasks { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 12px; font-size: 12.5px; white-space: pre-wrap; margin-top: 6px; }
+    .status { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .cover { border-bottom: 2px solid #e5e7eb; padding-bottom: 14px; margin-bottom: 22px; }
+    .cover .big { font-size: 22px; font-weight: 800; }
+    /* one timesheet per page, but never a trailing blank page */
+    .sheet { page-break-after: always; }
+    .sheet:last-of-type { page-break-after: auto; }
+    @media print { body { margin: 12mm; } }
+  </style></head><body>
+    <div class="cover">
+      <div class="big">${esc(brand)} — Timesheets</div>
+      <div class="sub" style="margin:6px 0 0">${sheets.length} timesheet${sheets.length === 1 ? '' : 's'} · ${grand.toFixed(2)} total hours · generated ${esc(new Date().toLocaleString('en-AU'))}</div>
+    </div>
+    ${sheets.map(page).join('')}
+    <script>window.onload = function () { window.print(); };</script>
+  </body></html>`;
+
+  openPrintWindow(html);
 }
