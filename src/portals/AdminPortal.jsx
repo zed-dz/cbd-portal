@@ -10,6 +10,7 @@ import { WorkersPage } from '../pages/Workers/WorkersPage';
 import { AllocationsPage } from '../pages/Allocations/AllocationsPage';
 import { AllocationsCalendarPage } from '../pages/Calendar/AllocationsCalendarPage';
 import { TimesheetsPage } from '../pages/Timesheets/TimesheetsPage';
+import { localISO } from '../utils/dates';
 import { ClientsPage } from '../pages/Clients/ClientsPage';
 import { DefaultRatesPage } from '../pages/Clients/DefaultRatesPage';
 import { PayrollTrackerPage } from '../pages/Payroll/PayrollTrackerPage';
@@ -47,7 +48,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       supabase.from('workers').select('*', { count: 'exact', head: true }).is('archived_at', null),
       supabase.from('allocations').select('*', { count: 'exact', head: true }).in('status', ['pending', 'confirmed']),
       supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-      supabase.from('certifications').select('*', { count: 'exact', head: true }).lt('expiry', new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]),
+      supabase.from('certifications').select('*', { count: 'exact', head: true }).lt('expiry', localISO(new Date(Date.now() + 30 * 86400000))),
       supabase.from('workers').select('*', { count: 'exact', head: true }).neq('app_status', 'Active').is('archived_at', null),
       supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'approved').eq('xero_exported', false),
       supabase.from('worker_applications').select('*', { count: 'exact', head: true }).eq('status', 'new'),

@@ -150,8 +150,14 @@ serve(async (req) => {
 
   const { data: admins } = await supa
     .from('workers')
-    .select('name, email, access_level, notify_mode, notify_email')
-    .eq('access_level', 'admin');
+    // is_allocator + archived_at: the digest is an allocation summary, so it must
+    // follow the same rule as the per-event alerts - allocators only, and never
+    // an archived worker. Without this, any admin switching to "Daily digest"
+    // re-opened the leak the 2026-08-04 allocator change closed.
+    .select('name, email, access_level, notify_mode, notify_email, is_allocator, archived_at')
+    .eq('access_level', 'admin')
+    .eq('is_allocator', true)
+    .is('archived_at', null);
   let recipients = (admins || []).filter((a: any) =>
     (a.notify_mode || 'per_event') === 'daily_digest' &&
     a.notify_email !== false &&

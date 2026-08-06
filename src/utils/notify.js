@@ -201,7 +201,7 @@ export async function sendAdminEmail(subject, text) {
     } catch { /* fall back to the shared ops mailbox only */ }
 
     const { data, error } = await supabase.functions.invoke('send-bulk-email', {
-      body: { recipients, subject, body: text, audience: 'mixed', gmail_only: true },
+      body: { recipients, subject, body: text, audience: 'mixed', gmail_only: true, admin_notification: true },
     });
     if (error) return { ok: false, error: error.message };
     if (data?.error) return { ok: false, error: data.error };

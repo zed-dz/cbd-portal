@@ -180,6 +180,10 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
       status: computed.status, notes: computed.notes || null,
       // Mirror pay_hours → hours for backward compat
       hours: computed.pay_hours !== '' ? parseFloat(computed.pay_hours) : null,
+      // total_hours must be set: the auto-meal DB trigger reads it, and with it
+      // NULL it coalesced to 0 and forced the meal allowance to $0 on every save
+      // from this form — even a 10-hour day.
+      total_hours: computed.pay_hours !== '' ? parseFloat(computed.pay_hours) : null,
     };
 
     if (modal === 'add') {

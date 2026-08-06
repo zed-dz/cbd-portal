@@ -8,8 +8,17 @@ export function fmtDateTime(str) {
   return new Date(str).toLocaleString('en-AU', { dateStyle: 'short', timeStyle: 'short' });
 }
 
+// Local 'YYYY-MM-DD'. NEVER use toISOString() for a calendar date: that reads the
+// UTC date, and in AEST/AEDT (UTC+10/+11) the UTC date is still YESTERDAY from
+// local midnight until 10–11am — the whole working morning. That made "today"
+// wrong for timesheet dates, clock-ins, Take 5 work_date and the calendar.
+export function localISO(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 export function todayISO() {
-  return new Date().toISOString().split('T')[0];
+  return localISO();
 }
 
 // True when a 'YYYY-MM-DD' work date falls on a Tuesday or Thursday.

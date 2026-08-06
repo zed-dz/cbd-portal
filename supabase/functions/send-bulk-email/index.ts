@@ -169,7 +169,8 @@ serve(async (req) => {
     body?: string;
     audience?: string;
     sent_by?: string;
-    gmail_only?: boolean;   // legacy flag — Gmail is always the only sender now
+    gmail_only?: boolean;
+    admin_notification?: boolean;  // set by sendAdminEmail; scopes the allocator backstop   // legacy flag — Gmail is always the only sender now
     test?: boolean;
     to?: string;
   };
@@ -199,7 +200,15 @@ serve(async (req) => {
   // Workers, clients and site supervisors are never touched, and the deliberate
   // blast paths (Bulk Messages / Send Blast) don't set `gmail_only`, so the
   // office can still email admins on purpose.
-  if (body.gmail_only && !body.test) {
+  //
+  // Scope guard: this must fire ONLY on an admin broadcast. sendWorkerAllocationEmail
+  // and the supervisor sign-off also set gmail_only, but they send to exactly ONE
+  // person — and if that person happens to be an admin who isn't an allocator
+  // (Nick, Chris, Mathew and Val all are), the filter emptied the list and their
+  // own allocation email was dropped with a 400. An admin broadcast always has
+  // the shared team inbox plus the allocators, so it is never a single recipient.
+  const isAdminBroadcast = body.admin_notification === true || recipients.length > 1;
+  if (body.gmail_only && !body.test && isAdminBroadcast) {
     // Own client: the shared `supa` is created further down, after this guard.
     const guardDb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
     const { data: blocked } = await guardDb

@@ -3,6 +3,7 @@ import { supabase } from '../../supabaseClient';
 import { C, R, MONO, inputStyle, btnPrimary, btnSecondary, btnSmall } from '../../theme';
 import { Modal, Field, Spinner, EmptyState, DateField } from '../../components';
 import { PUBLIC_HOLIDAYS } from '../../utils/payroll';
+import { localISO } from '../../utils/dates';
 
 // Calendar entry types — RDO / leave days get their own colours instead of the
 // per-worker colour, so the roster reads at a glance.
@@ -48,7 +49,7 @@ function getWeekDays(monday) {
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(monday);
     d.setDate(d.getDate() + i);
-    return d.toISOString().split('T')[0];
+    return localISO(d);
   });
 }
 
@@ -59,7 +60,9 @@ function isAllocOnDay(alloc, dayISO) {
   return start <= dayISO && end >= dayISO;
 }
 
-function isoFromDate(d) { return d.toISOString().split('T')[0]; }
+// Local date, not UTC — toISOString() on a local-midnight Date lands on the
+// previous day in AEST/AEDT, which shifted every cell in the calendar by one.
+function isoFromDate(d) { return localISO(d); }
 
 function getMonthGrid(year, month /* 0-indexed */) {
   // Returns a 6-row × 7-col grid of { iso, inMonth, dow } cells starting on Monday.
@@ -276,7 +279,7 @@ export function AllocationsCalendarPage({ showToast }) {
     return `${DAY_LABELS[d.getDay() === 0 ? 6 : d.getDay() - 1]} ${d.getDate()}/${d.getMonth() + 1}`;
   };
 
-  const todayISO = new Date().toISOString().split('T')[0];
+  const todayISO = localISO();
 
   return (
     <div>
@@ -409,7 +412,7 @@ function MonthlyWorkerView({
   const year  = monthDate.getFullYear();
   const month = monthDate.getMonth();
   const monthLabel = monthDate.toLocaleString('en-AU', { month: 'long', year: 'numeric' });
-  const todayISO = new Date().toISOString().split('T')[0];
+  const todayISO = localISO();
 
   const grid = useMemo(() => getMonthGrid(year, month), [year, month]);
 

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, R, MONO, btnPrimary, btnSecondary } from '../../theme';
-import { todayISO, fmtDate } from '../../utils/dates';
+import { todayISO, localISO, fmtDate } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
 import { Spinner, allocationBadge, timesheetBadge } from '../../components';
 
@@ -18,8 +18,8 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
     (async () => {
       try {
         const today = todayISO();
-        const in30 = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
-        const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+        const in30 = localISO(new Date(Date.now() + 30 * 86400000));
+        const weekAgo = localISO(new Date(Date.now() - 7 * 86400000));
         const [onSite, available, pendingTs, licAlerts, weekHours, pendingList, expired, allocs, payrollReady] = await Promise.all([
           supabase.from('workers').select('id', { count: 'exact' }).eq('status', 'on_site').is('archived_at', null),
           supabase.from('workers').select('id', { count: 'exact' }).eq('status', 'available').is('archived_at', null),

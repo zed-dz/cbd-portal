@@ -50,7 +50,12 @@ export function computeTimesheetHours(form, workerType, config = {}) {
   const is_weekend = dayOfWeek === 0 || dayOfWeek === 6 || PUBLIC_HOLIDAYS.has(dateStr);
 
   const overtime_hours   = pay_hours > OT_THRESHOLD ? roundTo15Min(pay_hours - OT_THRESHOLD) : 0;
-  const travel_allowance = workerType === 'casual' ? TRAVEL_AMT : 0;
+  // Casuals get one travel allowance per SHIFT — not on leave, rain-off, LWOP or
+  // training days, where nobody travelled anywhere. This mirrors the DB's own
+  // casual_travel_allowance() rule, which the UI value was overriding.
+  const travelScenarios  = ['standard', 'emergency_callout'];
+  const travel_allowance = (workerType === 'casual' && travelScenarios.includes(form.scenario || 'standard'))
+    ? TRAVEL_AMT : 0;
   const meal_allowance   = pay_hours >= MEAL_TRIGGER ? MEAL_AMT : 0;
 
   return { pay_hours, charge_hours, overtime_hours, is_weekend, travel_allowance, meal_allowance };
@@ -270,7 +275,10 @@ export function buildXeroCSV(rows, periodFrom, periodTo, downloadFn) {
     'Pay Period End':     periodTo,
     'Earnings Rate Name': r.xero_pay_item,
     'Hours':              r.pay_hours,
-    'Amount':             r.total_pay,
+    // base_pay, NOT total_pay: total_pay already includes travel + meal, and the
+    // two allowance columns below carry them separately. Using total_pay here
+    // paid both allowances twice on any import that maps those columns.
+    'Amount':             r.base_pay,
     'Travel Allowance':   r.travel_allowance,
     'Meal Allowance':     r.meal_allowance,
     'AWJ Reference':      r.awj_reference,
