@@ -16,3 +16,4 @@ export { DateRangeFilter, presetBounds, RANGE_PRESETS } from './ui/DateRangeFilt
 export { ClockField } from './ui/ClockField';
 export { DailyTimesheetForm, blankDaily, dailyFromHeader } from './timesheet/DailyTimesheetForm';
 export { TimesheetDetailView, printTimesheet, printTimesheetBatch } from './timesheet/TimesheetDetailView';
+export { ClientSitesManager } from './clients/ClientSitesManager';

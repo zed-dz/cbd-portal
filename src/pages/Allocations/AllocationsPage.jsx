@@ -34,6 +34,8 @@ export function AllocationsPage({ showToast }) {
   const [allocations, setAllocations] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [clients, setClients] = useState([]);
+  const [sites, setSites] = useState([]);
+  const [siteContacts, setSiteContacts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState('');
   const [modal, setModal] = useState(null);
@@ -42,15 +44,21 @@ export function AllocationsPage({ showToast }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [a, w, c] = await Promise.all([
+    const [a, w, c, s, k] = await Promise.all([
       supabase.from('allocations').select('*, workers(name, job_title)').order('created_at', { ascending: false }),
       supabase.from('workers').select('id, name, mobile, email').is('archived_at', null).order('name'),
       supabase.from('clients').select('id, name').order('name'),
+      // A client can run several jobs at once, so sites are their own list and the
+      // Site picker below narrows to the chosen client rather than being free text.
+      supabase.from('client_sites').select('id, client_id, name, address').eq('is_active', true).order('name'),
+      supabase.from('client_site_contacts').select('id, site_id, name, role, email, phone, is_primary').order('name'),
     ]);
     if (a.error) showToast(a.error.message, 'error');
     else setAllocations(a.data || []);
     if (w.data) setWorkers(w.data);
     if (c.data) setClients(c.data);
+    if (s.data) setSites(s.data);
+    if (k.data) setSiteContacts(k.data);
     setLoading(false);
   }, [showToast]);
 
@@ -340,7 +348,42 @@ export function AllocationsPage({ showToast }) {
               </>
             </Field>
             <Field label="Project"><input style={inputStyle} value={form.project} onChange={e => setForm(f => ({ ...f, project: e.target.value }))} /></Field>
-            <Field label="Site"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
+            <Field label="Site" hint={(() => {
+              const cs = clients.filter(c => c.name === form.client).map(c => c.id);
+              const n = sites.filter(s => cs.includes(s.client_id)).length;
+              return n ? `${n} site${n === 1 ? '' : 's'} on file for this client` : 'No sites on file yet — type one, or add it under Clients & Rates → Sites';
+            })()}>
+              <>
+                <input style={inputStyle} list="alloc-sites-list" value={form.site}
+                  onChange={e => {
+                    const v = e.target.value;
+                    const cs = clients.filter(c => c.name === form.client).map(c => c.id);
+                    const hit = sites.find(s => cs.includes(s.client_id) && s.name === v);
+                    // Picking a known site fills the supervisor from that site's
+                    // approving contact, so the person who signs off the timesheet
+                    // is the one who actually runs that job.
+                    const contact = hit
+                      ? siteContacts.find(k => k.site_id === hit.id && k.is_primary)
+                        || siteContacts.find(k => k.site_id === hit.id)
+                      : null;
+                    setForm(f => ({
+                      ...f,
+                      site: v,
+                      ...(hit?.address && !f.address ? { address: hit.address } : {}),
+                      ...(contact && !f.site_supervisor ? { site_supervisor: contact.name } : {}),
+                      ...(contact?.phone && !f.manager_phone ? { manager_phone: contact.phone } : {}),
+                    }));
+                  }}
+                  placeholder={form.client ? 'Type or select…' : 'Pick a client first'} />
+                <datalist id="alloc-sites-list">
+                  {(() => {
+                    const cs = clients.filter(c => c.name === form.client).map(c => c.id);
+                    return sites.filter(s => cs.includes(s.client_id))
+                      .map(s => <option key={s.id} value={s.name}>{s.address || s.name}</option>);
+                  })()}
+                </datalist>
+              </>
+            </Field>
             <Field label="Site Address"><input style={inputStyle} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></Field>
             <Field label="Site Supervisor"><input style={inputStyle} value={form.site_supervisor} onChange={e => setForm(f => ({ ...f, site_supervisor: e.target.value }))} /></Field>
             <Field label="Supervisor Phone"><input style={inputStyle} value={form.manager_phone} onChange={e => setForm(f => ({ ...f, manager_phone: e.target.value }))} /></Field>

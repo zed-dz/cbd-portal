@@ -4,7 +4,7 @@ import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '..
 import { todayISO } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
 import { useDraft, DraftBanner } from '../../utils/useDraft';
-import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState } from '../../components';
+import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, ClientSitesManager } from '../../components';
 import { EmailHistoryPanel } from '../../components/inbox/EmailHistoryPanel';
 
 const clientDefaults = {
@@ -97,6 +97,7 @@ function ClientsList({ showToast }) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);
+  const [sitesFor, setSitesFor] = useState(null); // client whose sites/contacts are open
   const draftKey = modal === 'add'
     ? 'client_add'
     : modal && typeof modal === 'object'
@@ -248,6 +249,7 @@ function ClientsList({ showToast }) {
                 </Td>
                 <Td>
                   <div style={{ display: 'flex', gap: 6 }}>
+                    <button onClick={() => setSitesFor(c)} style={btnSmall}>🏗 Sites</button>
                     <button onClick={() => openEdit(c)} style={btnSmall}>Edit</button>
                     <button onClick={() => handleDelete(c)} style={btnDanger}>Delete</button>
                   </div>
@@ -351,6 +353,14 @@ function ClientsList({ showToast }) {
           initialTab={jobsClient._initialTab || 'jobs'}
           showToast={showToast}
           onClose={() => { setJobsClient(null); load(); }}
+        />
+      )}
+
+      {sitesFor && (
+        <ClientSitesManager
+          client={sitesFor}
+          showToast={showToast}
+          onClose={() => { setSitesFor(null); load(); }}
         />
       )}
     </>
