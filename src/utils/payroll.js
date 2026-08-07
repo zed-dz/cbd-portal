@@ -181,6 +181,45 @@ export const SHIFT_TYPES = ['Day', 'Night', 'Weekend', 'Public Holiday'];
 // Saturday day beyond 8h is billed at B throughout for the same reason.
 const CHARGE_DAY_THRESHOLD = 8;
 
+// Match a timesheet's role to a line on the client's Schedule of Rates.
+//
+// Exact matching silently mis-billed, because the role names people allocate and
+// the names on the rate cards drifted apart. Measured 2026-08-07:
+//   "General Labourer" vs Matt Civil's "General Labour"   -> fell back to $100 instead of $50
+//   "Operator - Dozer" vs JK Williams' "Operator"          -> fell back to $66 instead of $84.25
+// A miss is not harmless: it quietly bills the catch-all rate, which can be double
+// the agreed price or well under it.
+//
+// So we try progressively looser matches and REPORT which tier hit, so the Payroll
+// screen can flag a row that never found a priced line instead of showing a
+// confident wrong number.
+const normRole = (s) => (s || '')
+  .toString().toLowerCase()
+  .replace(/[^a-z0-9\s-]/g, ' ')     // drop brackets/punctuation: "Operator (EWP)" -> "operator ewp"
+  .replace(/\blabourers?\b/g, 'labour')  // labourer / labourers -> labour
+  .replace(/\s+/g, ' ')
+  .trim();
+
+// "Operator - Dozer" -> "operator". Everything before the first dash separator.
+const roleHead = (s) => normRole(s).split(/\s*-\s*/)[0].trim();
+
+export function findRateLine(rateLines, role) {
+  const lines = rateLines || [];
+  if (!lines.length || !role) return { line: null, match: 'none' };
+
+  const want = normRole(role);
+  const exact = lines.find(r => normRole(r.role_name) === want);
+  if (exact) return { line: exact, match: 'exact' };
+
+  // "Operator - Dozer" against a card that only prices "Operator".
+  const head = roleHead(role);
+  const byHead = lines.find(r => normRole(r.role_name) === head)
+              || lines.find(r => roleHead(r.role_name) === head);
+  if (byHead) return { line: byHead, match: 'role-group' };
+
+  return { line: null, match: 'none' };
+}
+
 // A priced line from the client's Schedule of Rates wins; the client's own A/B/C
 // is the catch-all; the legacy single-rate columns are the last resort so older
 // clients that were never given bands still bill something rather than $0.
@@ -223,7 +262,17 @@ export function computeChargeAmount(ts, clientRecord, rateLine, opts = {}) {
   return amount * (ts.geo_loading ? (1 + geoPct) : 1);
 }
 
-export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLine = null) {
+// Where the charge rate came from, so Payroll can show it rather than presenting a
+// catch-all rate as if it were the agreed one.
+export function chargeRateSource(clientRecord, rateLine, match) {
+  if (rateLine) return match === 'exact' ? 'schedule' : 'schedule-group';
+  const hasBands = [clientRecord?.rate_a, clientRecord?.rate_b, clientRecord?.rate_c]
+    .some(v => Number.isFinite(parseFloat(v)) && parseFloat(v) > 0);
+  if (hasBands) return 'client-fallback';
+  return 'legacy';
+}
+
+export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLine = null, rateMatch = 'none') {
   const OT_MULT      = parseFloat(config.ot_multiplier               ?? 1.5);
   const GEO_PCT      = parseFloat(config.geo_loading_pct             ?? 0.10);
   const SUB_NIGHT    = parseFloat(config.subcontractor_night_loading  ?? 10.00);
@@ -255,7 +304,7 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
     const chargeAmountS = computeChargeAmount(ts, clientRecord, rateLine, { isSaturday, isSundayOrPH, geoPct: GEO_PCT });
     return {
       worker_name: worker.name, worker_type: worker.worker_type,
-      date: ts.date, scenario: ts.scenario, site: ts.site, client: ts.client,
+      date: ts.date, scenario: ts.scenario, site: ts.site, client: ts.client, role: ts.role,
       pay_hours: ts.pay_hours, charge_hours: ts.charge_hours, overtime_hours: ts.overtime_hours,
       ot15_hours: ts.ot15_hours || 0, ot2x_hours: ts.ot2x_hours || 0,
       rdo_hours: ts.rdo_hours || 0,
@@ -265,6 +314,7 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
       base_pay:      pay.toFixed(2),
       total_pay:     totalPaySplit.toFixed(2),
       charge_amount: chargeAmountS.toFixed(2),
+      charge_rate_source: chargeRateSource(clientRecord, rateLine, rateMatch),
       awj_reference: ts.awj_reference || '',
       xero_pay_item: 'OrdinaryTime',
     };
@@ -306,7 +356,7 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
 
   return {
     worker_name: worker.name, worker_type: worker.worker_type,
-    date: ts.date, scenario: ts.scenario, site: ts.site, client: ts.client,
+    date: ts.date, scenario: ts.scenario, site: ts.site, client: ts.client, role: ts.role,
     pay_hours: ts.pay_hours, charge_hours: ts.charge_hours, overtime_hours: ts.overtime_hours,
     rdo_hours: ts.rdo_hours || 0,
     min_day_topup: ts.min_day_topup || 0,
@@ -315,6 +365,7 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
     base_pay:      basePay.toFixed(2),
     total_pay:     totalPay.toFixed(2),
     charge_amount: chargeAmount.toFixed(2),
+    charge_rate_source: chargeRateSource(clientRecord, rateLine, rateMatch),
     awj_reference: ts.awj_reference || '',
     xero_pay_item: worker.worker_type === 'subcontractor' ? 'SubcontractorFee' : 'OrdinaryTime',
   };

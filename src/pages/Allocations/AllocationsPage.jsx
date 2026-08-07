@@ -117,6 +117,16 @@ export function AllocationsPage({ showToast }) {
       worker_id: form.worker_id,
       role: form.role || null,
       site: form.site, client: form.client, project: form.project,
+      // Names stay as the human record of what was typed; the ids are what payroll
+      // bills off, so a client that exists once per site can no longer be resolved
+      // to the wrong rate card. Resolved here rather than trusted from state so a
+      // hand-typed site that happens to match still links up.
+      ...(() => {
+        const cs = clients.filter(c => c.name === form.client);
+        const site = sites.find(s => cs.some(c => c.id === s.client_id) && s.name === form.site) || null;
+        const client = site ? cs.find(c => c.id === site.client_id) : (cs.length === 1 ? cs[0] : null);
+        return { site_id: site?.id || null, client_id: client?.id || null };
+      })(),
       address: form.address,
       site_manager: form.site_supervisor,   // DB column stays site_manager
       manager_phone: form.manager_phone,

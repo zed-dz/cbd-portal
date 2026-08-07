@@ -3,7 +3,7 @@ import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnSecondary, btnSmall } from '../../theme';
 import { fmtDate } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
-import { computePayrollRow, buildXeroCSV, applyFullTimeMinDay } from '../../utils/payroll';
+import { computePayrollRow, buildXeroCSV, applyFullTimeMinDay, findRateLine } from '../../utils/payroll';
 import { Spinner, TableWrap, Th, Td, EmptyState } from '../../components';
 
 const XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize';
@@ -89,16 +89,18 @@ export function PayrollTrackerPage({ showToast }) {
   const workersById = Object.fromEntries(workers.map(w => [w.id, w]));
   const payrollRows = applyFullTimeMinDay(timesheets, workersById, configMap).map(ts => {
     const worker = workers.find(w => w.id === ts.worker_id) || {};
-    const client = clients.find(c => c.name === ts.client) || null;
-    // Timesheets store the client as free text, so this matches by name and takes
-    // the first hit. Where a client has duplicate rows per site with different
-    // rates, that is the wrong record as often as the right one — the fix is real
-    // client/site foreign keys (F6), not a change here.
-    const rateLine = client
-      ? rateCards.find(r => r.client_id === client.id
-          && (r.role_name || '').trim().toLowerCase() === (ts.role || '').trim().toLowerCase()) || null
-      : null;
-    return { ...computePayrollRow(ts, { ...worker, name: ts.workers?.name || worker.name }, client, configMap, rateLine), _id: ts.id, _xero_exported: ts.xero_exported };
+    // Prefer the real foreign key. Falling back to the typed name is what caused
+    // the wrong-rate bug: several clients share a name, differ only by site, and
+    // carry different rate cards, so first-match-wins billed at whichever row
+    // happened to sort first. Rows written before the ids existed still resolve by
+    // name — correct for every client whose name is unique.
+    const client = (ts.client_id && clients.find(c => c.id === ts.client_id))
+      || clients.find(c => c.name === ts.client)
+      || null;
+    const { line: rateLine, match: rateMatch } = client
+      ? findRateLine(rateCards.filter(r => r.client_id === client.id), ts.role)
+      : { line: null, match: 'none' };
+    return { ...computePayrollRow(ts, { ...worker, name: ts.workers?.name || worker.name }, client, configMap, rateLine, rateMatch), _id: ts.id, _xero_exported: ts.xero_exported };
   });
 
   const filtered = filterType === 'all' ? payrollRows : payrollRows.filter(r => r.worker_type === filterType);
@@ -412,7 +414,24 @@ export function PayrollTrackerPage({ showToast }) {
                   </div>
                 </Td>
                 <Td><span style={{ fontWeight: 700, color: C.success }}>${r.total_pay}</span></Td>
-                <Td><span style={{ color: C.warning }}>${r.charge_amount}</span></Td>
+                <Td>
+                  <span style={{ color: C.warning }}>${r.charge_amount}</span>
+                  {/* A row that never matched a priced line is billing the catch-all
+                      rate, which can be well over or under the agreed price. Say so
+                      rather than presenting it as the client's real rate. */}
+                  {r.charge_rate_source === 'client-fallback' && (
+                    <span title={`No Schedule of Rates line matches the role "${r.role || ''}" for ${r.client || 'this client'}. Billing the client's fallback A/B/C rate instead.`}
+                      style={{ marginLeft: 6, fontSize: 10, color: C.textMuted, borderBottom: `1px dotted ${C.warning}`, cursor: 'help' }}>
+                      fallback
+                    </span>
+                  )}
+                  {r.charge_rate_source === 'legacy' && (
+                    <span title="This client has no rate bands at all — billing the old single-rate column."
+                      style={{ marginLeft: 6, fontSize: 10, color: C.danger || C.warning, cursor: 'help' }}>
+                      ⚠ no rates
+                    </span>
+                  )}
+                </Td>
                 <Td><span style={{ fontSize: 11, color: C.textMuted }}>{r.awj_reference || '—'}</span></Td>
                 <Td>
                   {r._xero_exported
