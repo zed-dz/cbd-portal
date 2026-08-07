@@ -291,7 +291,7 @@ function ClientsList({ showToast }) {
             <div style={{ gridColumn: '1 / -1', marginTop: 4 }}>
               <div style={{ background: 'rgba(249,115,22,0.06)', border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 14px' }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, letterSpacing: 1, marginBottom: 8 }}>
-                  💵 DEFAULT CLIENT RATES ($/hr)
+                  💵 FALLBACK RATES ($/hr) — OPTIONAL, LEAVE BLANK IF UNSURE
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
                   <Field label="A — Normal (Mon–Fri ≤8h)">
@@ -311,7 +311,10 @@ function ClientsList({ showToast }) {
                   </Field>
                 </div>
                 <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
-                  Catch-all defaults. Add a full Schedule of Rates (per line item, with UOM) under <strong>Rates</strong> on the client row to override.
+                  <strong>You do not have to fill these in.</strong> They are only a catch-all used when a role has no
+                  priced line on this client's Schedule of Rates. Most clients should instead get a full
+                  Schedule of Rates (per line item, with UOM) under <strong>Rates</strong> on the client row —
+                  that is what prices each worker category properly.
                 </div>
               </div>
             </div>

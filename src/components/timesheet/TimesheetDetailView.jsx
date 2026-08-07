@@ -25,7 +25,14 @@ function sumBy(lines, fn) {
 // Full, client-presentable view of one daily timesheet (header + line rows).
 // Shows hours only — no pay or charge rates — so it's safe to hand to a client
 // or to the worker. Print/Save-PDF opens a light print-friendly window.
-export function TimesheetDetailView({ header, lines = [], workerName, brand = BRAND_DEFAULT, onClose, onEdit }) {
+//
+// This is the screen a worker or client sees when ACCEPTING a timesheet, so by
+// default it mirrors the printed PDF exactly: Start / Break / Finish / Total and
+// nothing else. Normal, RDO, OT and Meal are payroll detail — we pay the worker
+// differently from how we invoice the client, and showing the split here invited
+// questions from both sides. Pass showPayDetail to bring the breakdown back for
+// an admin-only context.
+export function TimesheetDetailView({ header, lines = [], workerName, brand = BRAND_DEFAULT, onClose, onEdit, showPayDetail = false }) {
   const totalHours = sumBy(lines, l => parseFloat(l.total_hours) || 0);
   const totalReg   = sumBy(lines, l => parseFloat(l.regular_hours ?? l.total_hours) || 0);
   const totalRdo   = sumBy(lines, lineRdo);
@@ -72,8 +79,9 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
           <thead>
             <tr>
               <th style={th}>Date</th><th style={th}>Day</th><th style={th}>Shift</th>
-              <th style={th}>Start</th><th style={th}>Finish</th><th style={th}>Break</th>
-              <th style={th}>Total</th><th style={th}>Normal</th><th style={th}>RDO</th><th style={th}>OT</th><th style={th}>Meal</th>
+              <th style={th}>Start</th><th style={th}>Break</th><th style={th}>Finish</th>
+              <th style={th}>Total</th>
+              {showPayDetail && (<><th style={th}>Normal</th><th style={th}>RDO</th><th style={th}>OT</th><th style={th}>Meal</th></>)}
             </tr>
           </thead>
           <tbody>
@@ -83,13 +91,15 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
                 <td style={td}>{dayFromDate(l.date) || '—'}</td>
                 <td style={td}>{l.shift_type || 'Day'}</td>
                 <td style={td}>{fmtTime(l.start_time)}</td>
-                <td style={td}>{fmtTime(l.end_time)}</td>
                 <td style={td}>{l.total_break_hours ? `${l.total_break_hours}h` : (l.break_minutes ? `${l.break_minutes}m` : '—')}</td>
+                <td style={td}>{fmtTime(l.end_time)}</td>
                 <td style={{ ...td, fontWeight: 700 }}>{Number(l.total_hours || 0).toFixed(2)}</td>
-                <td style={td}>{Number(l.regular_hours ?? l.total_hours ?? 0).toFixed(2)}</td>
-                <td style={{ ...td, color: lineRdo(l) > 0 ? C.success : C.textMuted }}>{lineRdo(l) > 0 ? lineRdo(l).toFixed(2) : '—'}</td>
-                <td style={{ ...td, color: lineOT(l) > 0 ? C.warning : C.textMuted }}>{lineOT(l) > 0 ? lineOT(l).toFixed(2) : '—'}</td>
-                <td style={td}>{(parseFloat(l.meal_allowance) || 0) > 0 ? `$${Number(l.meal_allowance).toFixed(2)}` : '—'}</td>
+                {showPayDetail && (<>
+                  <td style={td}>{Number(l.regular_hours ?? l.total_hours ?? 0).toFixed(2)}</td>
+                  <td style={{ ...td, color: lineRdo(l) > 0 ? C.success : C.textMuted }}>{lineRdo(l) > 0 ? lineRdo(l).toFixed(2) : '—'}</td>
+                  <td style={{ ...td, color: lineOT(l) > 0 ? C.warning : C.textMuted }}>{lineOT(l) > 0 ? lineOT(l).toFixed(2) : '—'}</td>
+                  <td style={td}>{(parseFloat(l.meal_allowance) || 0) > 0 ? `$${Number(l.meal_allowance).toFixed(2)}` : '—'}</td>
+                </>)}
               </tr>
             ))}
           </tbody>
@@ -97,10 +107,12 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
             <tr>
               <td colSpan={6} style={{ ...td, color: C.textMuted, borderBottom: 'none' }}>Totals</td>
               <td style={{ ...td, fontWeight: 800, color: C.accent, borderBottom: 'none' }}>{totalHours.toFixed(2)}</td>
-              <td style={{ ...td, fontWeight: 700, borderBottom: 'none' }}>{totalReg.toFixed(2)}</td>
-              <td style={{ ...td, fontWeight: 700, color: totalRdo > 0 ? C.success : C.textMuted, borderBottom: 'none' }}>{totalRdo > 0 ? totalRdo.toFixed(2) : '—'}</td>
-              <td style={{ ...td, fontWeight: 700, color: totalOT > 0 ? C.warning : C.textMuted, borderBottom: 'none' }}>{totalOT > 0 ? totalOT.toFixed(2) : '—'}</td>
-              <td style={{ ...td, borderBottom: 'none' }}>{totalMeal > 0 ? `$${totalMeal.toFixed(2)}` : '—'}</td>
+              {showPayDetail && (<>
+                <td style={{ ...td, fontWeight: 700, borderBottom: 'none' }}>{totalReg.toFixed(2)}</td>
+                <td style={{ ...td, fontWeight: 700, color: totalRdo > 0 ? C.success : C.textMuted, borderBottom: 'none' }}>{totalRdo > 0 ? totalRdo.toFixed(2) : '—'}</td>
+                <td style={{ ...td, fontWeight: 700, color: totalOT > 0 ? C.warning : C.textMuted, borderBottom: 'none' }}>{totalOT > 0 ? totalOT.toFixed(2) : '—'}</td>
+                <td style={{ ...td, borderBottom: 'none' }}>{totalMeal > 0 ? `$${totalMeal.toFixed(2)}` : '—'}</td>
+              </>)}
             </tr>
           </tfoot>
         </table>
