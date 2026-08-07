@@ -15,6 +15,7 @@ export function PayrollTrackerPage({ showToast }) {
   const [timesheets, setTimesheets] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [clients, setClients] = useState([]);
+  const [rateCards, setRateCards] = useState([]);
   const [configMap, setConfigMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState('');
@@ -58,16 +59,21 @@ export function PayrollTrackerPage({ showToast }) {
       .order('date', { ascending: false });
     if (dateFrom) q = q.gte('date', dateFrom);
     if (dateTo) q = q.lte('date', dateTo);
-    const [t, w, cl, cfg] = await Promise.all([
+    const [t, w, cl, cfg, rc] = await Promise.all([
       q,
       supabase.from('workers').select('id, name, worker_type, pay_rate_regular, pay_rate_overtime, subcontractor_abn').order('name'),
-      supabase.from('clients').select('id, name, rate_regular, rate_overtime, rate_night, rate_weekend').order('name'),
+      supabase.from('clients').select('id, name, rate_a, rate_b, rate_c, rate_regular, rate_overtime, rate_night, rate_weekend').order('name'),
       supabase.from('payroll_config').select('config_key, config_value'),
+      // Per-client Schedule of Rates. Charging bills column A/B/C off the line
+      // that matches the timesheet's role, so a night shift is billed at the
+      // loaded rate instead of the flat one.
+      supabase.from('client_rate_cards').select('client_id, role_name, rate_a, rate_b, rate_c'),
     ]);
     if (t.error) showToast(t.error.message, 'error');
     else setTimesheets(t.data || []);
     if (w.data) setWorkers(w.data);
     if (cl.data) setClients(cl.data);
+    if (rc.data) setRateCards(rc.data);
     if (cfg.data) {
       const map = {};
       cfg.data.forEach(r => { map[r.config_key] = r.config_value; });
@@ -84,7 +90,15 @@ export function PayrollTrackerPage({ showToast }) {
   const payrollRows = applyFullTimeMinDay(timesheets, workersById, configMap).map(ts => {
     const worker = workers.find(w => w.id === ts.worker_id) || {};
     const client = clients.find(c => c.name === ts.client) || null;
-    return { ...computePayrollRow(ts, { ...worker, name: ts.workers?.name || worker.name }, client, configMap), _id: ts.id, _xero_exported: ts.xero_exported };
+    // Timesheets store the client as free text, so this matches by name and takes
+    // the first hit. Where a client has duplicate rows per site with different
+    // rates, that is the wrong record as often as the right one — the fix is real
+    // client/site foreign keys (F6), not a change here.
+    const rateLine = client
+      ? rateCards.find(r => r.client_id === client.id
+          && (r.role_name || '').trim().toLowerCase() === (ts.role || '').trim().toLowerCase()) || null
+      : null;
+    return { ...computePayrollRow(ts, { ...worker, name: ts.workers?.name || worker.name }, client, configMap, rateLine), _id: ts.id, _xero_exported: ts.xero_exported };
   });
 
   const filtered = filterType === 'all' ? payrollRows : payrollRows.filter(r => r.worker_type === filterType);

@@ -308,10 +308,35 @@ export function AllocationsPage({ showToast }) {
             </div>
             <Field label="Client">
               <>
-                <input style={inputStyle} list="alloc-clients-list" value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} placeholder="Type or select…" />
+                <input style={inputStyle} list="alloc-clients-list" value={form.client}
+                  onChange={e => {
+                    const v = e.target.value;
+                    // Several clients share a name and differ only by site, so the
+                    // bare name told you nothing about which job you'd picked.
+                    // Fill Site/Project from the record when the name is
+                    // unambiguous; leave them alone when it isn't, so the
+                    // allocator has to choose rather than be silently given one.
+                    const hits = clients.filter(c => c.name === v);
+                    setForm(f => ({
+                      ...f,
+                      client: v,
+                      ...(hits.length === 1 && !f.site ? { site: hits[0].site || f.site } : {}),
+                    }));
+                  }}
+                  placeholder="Type or select…" />
                 <datalist id="alloc-clients-list">
-                  {clients.map(c => <option key={c.id} value={c.name} />)}
+                  {clients.map(c => (
+                    <option key={c.id} value={c.name}>
+                      {c.site ? `${c.name} — ${c.site}` : c.name}
+                    </option>
+                  ))}
                 </datalist>
+                {clients.filter(c => c.name === form.client).length > 1 && (
+                  <div style={{ fontSize: 11, color: C.warning, marginTop: 4 }}>
+                    ⚠ {clients.filter(c => c.name === form.client).length} clients share this name (different sites).
+                    Check the Site field below — rates can differ between them.
+                  </div>
+                )}
               </>
             </Field>
             <Field label="Project"><input style={inputStyle} value={form.project} onChange={e => setForm(f => ({ ...f, project: e.target.value }))} /></Field>

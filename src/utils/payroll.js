@@ -165,7 +165,65 @@ export function autoMealAllowance(totalHours, config = {}) {
 
 export const SHIFT_TYPES = ['Day', 'Night', 'Weekend', 'Public Holiday'];
 
-export function computePayrollRow(ts, worker, clientRecord, config = {}) {
+// --- Client charging ---------------------------------------------------------
+// Owner-specified Schedule of Rates bands (2026-08-07). We used to bill
+// charge_hours x one flat rate with only a weekend variant, so a night shift was
+// PAID at 1.5x/2x and BILLED at 1x — the loading came straight out of margin.
+//
+//   Mon-Fri day    first 8h column A, everything after column B
+//   Mon-Fri night  all hours column B
+//   Saturday day   all hours column B
+//   Saturday night all hours column C
+//   Sunday day     all hours column C
+//   Sunday night   all hours column C
+//
+// Public holidays are billed as Sunday (column C) — NOT owner-confirmed, flagged.
+// Saturday day beyond 8h is billed at B throughout for the same reason.
+const CHARGE_DAY_THRESHOLD = 8;
+
+// A priced line from the client's Schedule of Rates wins; the client's own A/B/C
+// is the catch-all; the legacy single-rate columns are the last resort so older
+// clients that were never given bands still bill something rather than $0.
+function chargeBands(clientRecord, rateLine) {
+  const pick = (...vals) => {
+    for (const v of vals) {
+      const n = parseFloat(v);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    return 0;
+  };
+  const A = pick(rateLine?.rate_a, clientRecord?.rate_a, clientRecord?.rate_regular);
+  const B = pick(rateLine?.rate_b, clientRecord?.rate_b, clientRecord?.rate_overtime, A);
+  const C = pick(rateLine?.rate_c, clientRecord?.rate_c, clientRecord?.rate_weekend, B);
+  return { A, B, C };
+}
+
+// Exported so the invoice screen and any test can bill exactly as payroll does.
+export function computeChargeAmount(ts, clientRecord, rateLine, opts = {}) {
+  const { isSaturday = false, isSundayOrPH = false, geoPct = 0 } = opts;
+  const hours = parseFloat(ts.charge_hours) || 0;
+  if (hours <= 0) return 0;
+
+  const { A, B, C } = chargeBands(clientRecord, rateLine);
+  const night = !!ts.is_night_shift;
+  let amount;
+
+  if (isSundayOrPH) {
+    amount = hours * C;                       // Sunday / PH, day or night
+  } else if (isSaturday) {
+    amount = hours * (night ? C : B);         // Sat night C, Sat day B
+  } else if (night) {
+    amount = hours * B;                       // weekday night
+  } else {
+    const ordinary = Math.min(hours, CHARGE_DAY_THRESHOLD);
+    const beyond   = Math.max(0, hours - CHARGE_DAY_THRESHOLD);
+    amount = ordinary * A + beyond * B;       // weekday day: 8h at A, rest at B
+  }
+
+  return amount * (ts.geo_loading ? (1 + geoPct) : 1);
+}
+
+export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLine = null) {
   const OT_MULT      = parseFloat(config.ot_multiplier               ?? 1.5);
   const GEO_PCT      = parseFloat(config.geo_loading_pct             ?? 0.10);
   const SUB_NIGHT    = parseFloat(config.subcontractor_night_loading  ?? 10.00);
@@ -174,7 +232,6 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}) {
 
   const payRate    = parseFloat(worker.pay_rate_regular || 0);
   const payRateOT  = parseFloat(worker.pay_rate_overtime || payRate * OT_MULT);
-  const chargeRate = parseFloat(clientRecord?.rate_regular || 0);
 
   // Detect day type from date (use noon to avoid DST edge cases)
   const d   = ts.date ? new Date(ts.date + 'T12:00:00') : null;
@@ -195,9 +252,7 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}) {
     let pay    = ord * payRate + (ts.ot15_hours || 0) * payRate * 1.5 + (ts.ot2x_hours || 0) * payRate * 2;
     if (ts.geo_loading) pay *= (1 + GEO_PCT);
     const totalPaySplit = pay + (ts.travel_allowance || 0) + (ts.meal_allowance || 0);
-    const weekendRateS  = ts.is_weekend && clientRecord?.rate_weekend
-      ? parseFloat(clientRecord.rate_weekend) : chargeRate;
-    const chargeAmountS = (ts.charge_hours || 0) * weekendRateS * (ts.geo_loading ? (1 + GEO_PCT) : 1);
+    const chargeAmountS = computeChargeAmount(ts, clientRecord, rateLine, { isSaturday, isSundayOrPH, geoPct: GEO_PCT });
     return {
       worker_name: worker.name, worker_type: worker.worker_type,
       date: ts.date, scenario: ts.scenario, site: ts.site, client: ts.client,
@@ -247,10 +302,7 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}) {
   if (ts.geo_loading) basePay *= (1 + GEO_PCT);
 
   const totalPay    = basePay + (ts.travel_allowance || 0) + (ts.meal_allowance || 0);
-  const weekendRate = ts.is_weekend && clientRecord?.rate_weekend
-    ? parseFloat(clientRecord.rate_weekend) : chargeRate;
-  const chargeAmount = (ts.charge_hours || 0) * weekendRate
-    * (ts.geo_loading ? (1 + GEO_PCT) : 1);
+  const chargeAmount = computeChargeAmount(ts, clientRecord, rateLine, { isSaturday, isSundayOrPH, geoPct: GEO_PCT });
 
   return {
     worker_name: worker.name, worker_type: worker.worker_type,
