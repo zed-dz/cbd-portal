@@ -81,24 +81,66 @@ based on session + `currentWorker.role`.
 
 ## Pay/charge rate model (important)
 
-Migrated from a confusing `regular / overtime / night / weekend` set of columns to a
-clean **A/B/C band** system. **Don't add back the old labels**.
+**Pay and charge are two different rule sets — read the right table.** They used
+to be documented here as one shared A/B/C table, which was wrong: the thresholds
+genuinely differ (Saturday day *pay* splits at **2h**; Saturday day *charge* has
+no split at all).
 
-| Band | Multiplier | When it applies |
-|------|------------|-----------------|
-| A    | 1×    | Normal time — Mon–Fri ≤ 8h |
-| B    | 1.5×  | OT 1.5× — also covers night-shift M–F < 8h and Saturday day < 8h |
-| C    | 2×    | OT 2× — Sat > 8h, Sat night, all Sunday, all Public Holidays |
+`A/B/C` name the **client rate-card columns** (1× / 1.5× / 2× tiers). **Don't add
+back the old `regular / overtime / night / weekend` labels** in the UI.
 
-Both **workers** (pay rates) and **clients** (charge rates) have A/B/C columns.
-The **legacy columns** (`pay_rate_regular`, `pay_rate_overtime`, `rate_night`,
-`rate_weekend`) are **still mirrored on save** for backward compat with payroll
-calc code that still references them — until that's fully migrated, keep the
-mirror writes alive in [WorkersPage.jsx](src/pages/Workers/WorkersPage.jsx) and
-[ClientsPage.jsx](src/pages/Clients/ClientsPage.jsx).
+### Pay — what the worker is paid
 
-Per-client per-role overrides live in `client_rate_cards` (e.g., "Sydney Water —
-Operator A/B/C").
+Authoritative source is the DB function `split_shift_hours()` (migration
+`20260806_penalty_rates_and_approver.sql`). It writes `ordinary / rdo_hours /
+ot15_hours / ot2x_hours` onto each timesheet at save time, and payroll pays
+straight from those stored buckets — so the payslip can never disagree with the
+hours printed on the timesheet.
+
+| Shift | Split |
+|---|---|
+| Sunday · Public Holiday · **Saturday night** | **all hours 2×** |
+| **Saturday day** | first **2h** at 1.5×, everything after at 2× |
+| Weekday night | first **8h** at 1.5×, everything after at 2× |
+| Weekday day — full-time | 7.6h ordinary + 0.4h banked to RDO, then 1.5× to the 10th hour, then 2× |
+| Weekday day — casual / subcontractor | 8h ordinary, then 1.5× to the 10th hour, then 2× |
+| Any non-worked scenario (leave, rain-off, LWOP, training…) | **all ordinary** — penalties never apply |
+
+`computePayrollRow` in [payroll.js](src/utils/payroll.js) reproduces these shapes
+as a **fallback** for pre-2026-08-06 rows carrying no stored split, and always for
+subcontractors (flat rate + flat `subcontractor_night_loading`, default $10).
+Thresholds are overridable in `payroll_config`: `saturday_threshold_hours` (2),
+`night_threshold_hours` (8), `ot_threshold_daily` (7.6), `rdo_daily_accrual` (0.4).
+
+Payroll reads `workers.pay_rate_regular` / `pay_rate_overtime` — **not** the worker
+A/B/C columns — and derives penalty rates as multiples of `pay_rate_regular`. That
+is why the legacy mirror writes in
+[WorkersPage.jsx](src/pages/Workers/WorkersPage.jsx) must stay alive.
+
+### Charge — what the client is billed
+
+Single source: `computeChargeAmount` in [payroll.js](src/utils/payroll.js). Bands
+come from the matched `client_rate_cards` line, else the client's own A/B/C, else
+the legacy `rate_regular / rate_overtime / rate_weekend` columns — so keep the
+mirror writes in [ClientsPage.jsx](src/pages/Clients/ClientsPage.jsx) alive too.
+
+| Shift | Billed |
+|---|---|
+| Sunday · Public Holiday (day or night) | all hours **C** |
+| Saturday night | all hours **C** |
+| **Saturday day** | all hours **B** — no threshold |
+| Weekday night | all hours **B** |
+| Weekday day | first **8h** at **A**, everything after at **B** |
+
+⚠️ **Known margin asymmetry — NOT owner-confirmed.** Pay reaches 2× in places
+charge never does: a Saturday day shift is *paid* 2× from hour 3 but *billed* at B
+for its whole length, and weekday overtime bills at B however long it runs, never
+reaching C. Public holidays are billed as Sunday (C) by assumption. See the
+comment block above `CHARGE_DAY_THRESHOLD` in payroll.js before "fixing" either.
+
+Per-client per-role overrides live in `client_rate_cards`. Role matching is fuzzy
+on purpose (`findRateLine`) and reports which tier matched, so a row that never
+found a priced line is flagged rather than silently billed the catch-all.
 
 ---
 
