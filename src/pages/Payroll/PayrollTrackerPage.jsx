@@ -3,7 +3,7 @@ import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnSecondary, btnSmall } from '../../theme';
 import { fmtDate } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
-import { computePayrollRow, buildXeroCSV, applyFullTimeMinDay, findRateLine } from '../../utils/payroll';
+import { computePayrollRow, buildXeroCSV, buildPayBreakdownCSV, applyFullTimeMinDay, findRateLine } from '../../utils/payroll';
 import { Spinner, TableWrap, Th, Td, EmptyState } from '../../components';
 
 const XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize';
@@ -21,6 +21,7 @@ export function PayrollTrackerPage({ showToast }) {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [filterType, setFilterType] = useState('all');
+  const [filterWorker, setFilterWorker] = useState('all');
   const [xeroConnected, setXeroConnected] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [pushing, setPushing] = useState(false);
@@ -100,30 +101,68 @@ export function PayrollTrackerPage({ showToast }) {
     const { line: rateLine, match: rateMatch } = client
       ? findRateLine(rateCards.filter(r => r.client_id === client.id), ts.role)
       : { line: null, match: 'none' };
-    return { ...computePayrollRow(ts, { ...worker, name: ts.workers?.name || worker.name }, client, configMap, rateLine, rateMatch), _id: ts.id, _xero_exported: ts.xero_exported };
+    return { ...computePayrollRow(ts, { ...worker, name: ts.workers?.name || worker.name }, client, configMap, rateLine, rateMatch), _id: ts.id, _worker_id: ts.worker_id, _xero_exported: ts.xero_exported };
   });
 
-  const filtered = filterType === 'all' ? payrollRows : payrollRows.filter(r => r.worker_type === filterType);
+  // Only offer workers who actually have rows in the current range. A dropdown of
+  // every worker ever hired is unusable during a pay run.
+  const workersInRange = workers.filter(w => payrollRows.some(r => r._worker_id === w.id));
 
-  const totals = filtered.reduce((acc, r) => {
-    const ot = parseFloat(r.overtime_hours) || 0;
-    const rdo = parseFloat(r.rdo_hours) || 0;
-    const pay = parseFloat(r.pay_hours) || 0;
-    return {
-      pay_hours: acc.pay_hours + pay,
-      ordinary_hours: acc.ordinary_hours + Math.max(0, pay - ot - rdo),
-      ot_hours: acc.ot_hours + ot,
-      rdo_hours: acc.rdo_hours + rdo,
-      total_pay: acc.total_pay + (parseFloat(r.total_pay) || 0),
-      charge_amount: acc.charge_amount + (parseFloat(r.charge_amount) || 0),
-    };
-  }, { pay_hours: 0, ordinary_hours: 0, ot_hours: 0, rdo_hours: 0, total_pay: 0, charge_amount: 0 });
+  const filtered = payrollRows.filter(r =>
+    (filterType === 'all' || r.worker_type === filterType) &&
+    (filterWorker === 'all' || r._worker_id === filterWorker)
+  );
+
+  const num = (v) => parseFloat(v) || 0;
+
+  // Bucket hours and bucket dollars come straight off computePayrollRow, so these
+  // totals cannot disagree with the per-row figures the way a re-derived
+  // "pay - ot - rdo" sum could.
+  const totals = filtered.reduce((acc, r) => ({
+    pay_hours:      acc.pay_hours      + num(r.pay_hours),
+    ordinary_hours: acc.ordinary_hours + num(r.ordinary_hours),
+    ot15_hours:     acc.ot15_hours     + num(r.ot15_hours),
+    ot2x_hours:     acc.ot2x_hours     + num(r.ot2x_hours),
+    rdo_hours:      acc.rdo_hours      + num(r.rdo_hours),
+    ordinary_pay:   acc.ordinary_pay   + num(r.ordinary_pay),
+    ot15_pay:       acc.ot15_pay       + num(r.ot15_pay),
+    ot2x_pay:       acc.ot2x_pay       + num(r.ot2x_pay),
+    allowances:     acc.allowances     + num(r.travel_allowance) + num(r.meal_allowance),
+    total_pay:      acc.total_pay      + num(r.total_pay),
+    charge_amount:  acc.charge_amount  + num(r.charge_amount),
+  }), { pay_hours: 0, ordinary_hours: 0, ot15_hours: 0, ot2x_hours: 0, rdo_hours: 0,
+        ordinary_pay: 0, ot15_pay: 0, ot2x_pay: 0, allowances: 0, total_pay: 0, charge_amount: 0 });
+
+  // One line per worker: the view the office actually pays from.
+  const byWorker = Object.values(filtered.reduce((acc, r) => {
+    const k = r._worker_id || r.worker_name;
+    if (!acc[k]) acc[k] = { key: k, name: r.worker_name, type: r.worker_type, shifts: 0,
+                            ordinary: 0, ot15: 0, ot2x: 0, rdo: 0, allowances: 0, pay: 0, charge: 0 };
+    const a = acc[k];
+    a.shifts     += 1;
+    a.ordinary   += num(r.ordinary_hours);
+    a.ot15       += num(r.ot15_hours);
+    a.ot2x       += num(r.ot2x_hours);
+    a.rdo        += num(r.rdo_hours);
+    a.allowances += num(r.travel_allowance) + num(r.meal_allowance);
+    a.pay        += num(r.total_pay);
+    a.charge     += num(r.charge_amount);
+    return acc;
+  }, {})).sort((a, b) => b.pay - a.pay);
 
   const handleXeroExport = () => {
     const staffRows = filtered.filter(r => r.worker_type !== 'subcontractor');
     if (!staffRows.length) { showToast('No staff timesheets to export.', 'info'); return; }
     buildXeroCSV(staffRows, dateFrom || 'all', dateTo || 'dates', downloadCSV);
     showToast('Xero CSV exported', 'success');
+  };
+
+  // The pay-run export: every row with normal / 1.5x / 2x hours AND dollars, so the
+  // office can see what each worker is owed without opening the portal.
+  const handleBreakdownExport = () => {
+    if (!filtered.length) { showToast('Nothing to export in this range.', 'info'); return; }
+    buildPayBreakdownCSV(filtered, dateFrom || 'all', dateTo || 'dates', downloadCSV);
+    showToast(`Pay breakdown exported (${filtered.length} rows)`, 'success');
   };
 
   const handleSubExport = () => {
@@ -284,14 +323,25 @@ export function PayrollTrackerPage({ showToast }) {
               <option value="subcontractor">Subcontractor</option>
             </select>
           </div>
-          <button onClick={() => { setDateFrom(''); setDateTo(''); }} style={btnSecondary}>Clear</button>
+          <div>
+            <label style={{ color: C.textMuted, fontSize: 12, display: 'block', marginBottom: 4 }}>Worker</label>
+            <select style={{ ...inputStyle, width: 200 }} value={filterWorker} onChange={e => setFilterWorker(e.target.value)}>
+              <option value="all">All workers ({workersInRange.length})</option>
+              {workersInRange.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+          </div>
+          <button onClick={() => { setDateFrom(''); setDateTo(''); setFilterType('all'); setFilterWorker('all'); }} style={btnSecondary}>Clear</button>
           <div style={{ marginLeft: 'auto', background: C.bg, borderRadius: 8, padding: '10px 18px', border: `1px solid ${C.border}` }}>
             <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{totals.ordinary_hours.toFixed(1)}h</div>
-            <div style={{ color: C.textMuted, fontSize: 11 }}>Ordinary hours</div>
+            <div style={{ color: C.textMuted, fontSize: 11 }}>Normal time · ${totals.ordinary_pay.toFixed(2)}</div>
           </div>
           <div style={{ background: C.bg, borderRadius: 8, padding: '10px 18px', border: `1px solid ${C.border}` }}>
-            <div style={{ fontSize: 20, fontWeight: 800, color: C.warning }}>{totals.ot_hours.toFixed(1)}h</div>
-            <div style={{ color: C.textMuted, fontSize: 11 }}>Overtime hours</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.warning }}>{totals.ot15_hours.toFixed(1)}h</div>
+            <div style={{ color: C.textMuted, fontSize: 11 }}>OT 1.5× · ${totals.ot15_pay.toFixed(2)}</div>
+          </div>
+          <div style={{ background: C.bg, borderRadius: 8, padding: '10px 18px', border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.accent }}>{totals.ot2x_hours.toFixed(1)}h</div>
+            <div style={{ color: C.textMuted, fontSize: 11 }}>OT 2× · ${totals.ot2x_pay.toFixed(2)}</div>
           </div>
           <div style={{ background: C.bg, borderRadius: 8, padding: '10px 18px', border: `1px solid ${C.border}` }}>
             <div style={{ fontSize: 20, fontWeight: 800, color: C.success }}>{totals.rdo_hours.toFixed(1)}h</div>
@@ -308,6 +358,7 @@ export function PayrollTrackerPage({ showToast }) {
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
           <button onClick={handleXeroExport} style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }}>↓ Export Xero CSV (Staff)</button>
+          <button onClick={handleBreakdownExport} style={{ ...btnSmall, color: '#86efac', borderColor: '#14532d' }}>↓ Export Pay Breakdown CSV</button>
           <button onClick={handleSubExport} style={{ ...btnSmall, color: '#fde047', borderColor: '#713f12' }}>↓ Export Subcontractors CSV</button>
         </div>
       </div>
@@ -379,7 +430,7 @@ export function PayrollTrackerPage({ showToast }) {
                 />
               </Th>
               <Th>Worker</Th><Th>Type</Th><Th>Date</Th><Th>Scenario</Th>
-              <Th>Pay Hrs</Th><Th>Charge Hrs</Th><Th>OT Hrs</Th>
+              <Th>Pay Hrs</Th><Th>Normal</Th><Th>OT 1.5×</Th><Th>OT 2×</Th><Th>Charge Hrs</Th>
               <Th>Allowances</Th><Th>Total Pay</Th><Th>Charge Amt</Th><Th>AWJ Ref</Th><Th>Xero</Th>
             </tr>
           </thead>
@@ -400,8 +451,22 @@ export function PayrollTrackerPage({ showToast }) {
                 <Td>{fmtDate(r.date)}</Td>
                 <Td><span style={{ fontSize: 11, color: C.textMuted }}>{r.scenario}</span></Td>
                 <Td><span style={{ fontWeight: 700 }}>{r.pay_hours}</span></Td>
+                <Td title={`Normal time @ $${r.pay_rate}/hr`}>
+                  {r.ordinary_hours > 0
+                    ? <span>{r.ordinary_hours} <span style={{ fontSize: 10, color: C.textMuted }}>${r.ordinary_pay}</span></span>
+                    : '—'}
+                </Td>
+                <Td title={`Overtime at 1.5x @ $${r.ot15_rate}/hr`}>
+                  {r.ot15_hours > 0
+                    ? <span style={{ color: C.warning }}>{r.ot15_hours} <span style={{ fontSize: 10, color: C.textMuted }}>${r.ot15_pay}</span></span>
+                    : '—'}
+                </Td>
+                <Td title={`Overtime at 2x @ $${r.ot2x_rate}/hr`}>
+                  {r.ot2x_hours > 0
+                    ? <span style={{ color: C.accent }}>{r.ot2x_hours} <span style={{ fontSize: 10, color: C.textMuted }}>${r.ot2x_pay}</span></span>
+                    : '—'}
+                </Td>
                 <Td>{r.charge_hours}</Td>
-                <Td>{r.overtime_hours > 0 ? <span style={{ color: C.warning }}>{r.overtime_hours}</span> : '—'}</Td>
                 <Td>
                   <div style={{ fontSize: 11, color: C.textMuted }}>
                     {r.travel_allowance > 0 && <span>T: ${r.travel_allowance} </span>}
@@ -444,20 +509,79 @@ export function PayrollTrackerPage({ showToast }) {
           <tfoot>
             <tr>
               <td style={{ borderTop: `2px solid ${C.border}` }} />
-              <td colSpan={4} style={{ padding: '10px 16px', color: C.textMuted, fontSize: 13, borderTop: `2px solid ${C.border}` }}>{filtered.length} records</td>
-              <td style={{ padding: '10px 16px', fontWeight: 700, color: C.text, borderTop: `2px solid ${C.border}`, whiteSpace: 'nowrap' }}>
-                {totals.pay_hours.toFixed(2)}
-                <div style={{ fontSize: 10.5, fontWeight: 600, color: C.textMuted }}>
-                  ord {totals.ordinary_hours.toFixed(2)} · OT {totals.ot_hours.toFixed(2)}{totals.rdo_hours > 0 ? ` · RDO ${totals.rdo_hours.toFixed(2)}` : ''}
-                </div>
+              <td colSpan={4} style={{ padding: '10px 16px', color: C.textMuted, fontSize: 13, borderTop: `2px solid ${C.border}` }}>
+                {filtered.length} records{totals.rdo_hours > 0 ? ` · RDO accrued ${totals.rdo_hours.toFixed(2)}h` : ''}
               </td>
-              <td colSpan={3} style={{ borderTop: `2px solid ${C.border}` }} />
+              <td style={{ padding: '10px 16px', fontWeight: 700, color: C.text, borderTop: `2px solid ${C.border}`, whiteSpace: 'nowrap' }}>{totals.pay_hours.toFixed(2)}</td>
+              <td style={{ padding: '10px 16px', fontWeight: 700, color: C.text, borderTop: `2px solid ${C.border}`, whiteSpace: 'nowrap' }}>
+                {totals.ordinary_hours.toFixed(2)}
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: C.textMuted }}>${totals.ordinary_pay.toFixed(2)}</div>
+              </td>
+              <td style={{ padding: '10px 16px', fontWeight: 700, color: C.warning, borderTop: `2px solid ${C.border}`, whiteSpace: 'nowrap' }}>
+                {totals.ot15_hours.toFixed(2)}
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: C.textMuted }}>${totals.ot15_pay.toFixed(2)}</div>
+              </td>
+              <td style={{ padding: '10px 16px', fontWeight: 700, color: C.accent, borderTop: `2px solid ${C.border}`, whiteSpace: 'nowrap' }}>
+                {totals.ot2x_hours.toFixed(2)}
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: C.textMuted }}>${totals.ot2x_pay.toFixed(2)}</div>
+              </td>
+              <td colSpan={2} style={{ borderTop: `2px solid ${C.border}` }} />
               <td style={{ padding: '10px 16px', fontWeight: 700, color: C.success, borderTop: `2px solid ${C.border}` }}>${totals.total_pay.toFixed(2)}</td>
               <td style={{ padding: '10px 16px', fontWeight: 700, color: C.warning, borderTop: `2px solid ${C.border}` }}>${totals.charge_amount.toFixed(2)}</td>
               <td colSpan={2} style={{ borderTop: `2px solid ${C.border}` }} />
             </tr>
           </tfoot>
         </TableWrap>
+
+        {/* Pay summary by worker: the pay run in one line per person - what they
+            worked, in which bucket, and what they get paid. */}
+        {byWorker.length > 0 && (
+          <div style={{ marginTop: 22 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+              <h3 style={{ margin: 0, fontSize: 15, color: C.text }}>Pay summary by worker</h3>
+              <span style={{ fontSize: 12, color: C.textMuted }}>
+                {byWorker.length} worker{byWorker.length !== 1 ? 's' : ''} · what each person is owed for this period
+              </span>
+            </div>
+            <TableWrap>
+              <thead>
+                <tr>
+                  <Th>Worker</Th><Th>Type</Th><Th>Shifts</Th>
+                  <Th>Normal</Th><Th>OT 1.5×</Th><Th>OT 2×</Th><Th>RDO</Th>
+                  <Th>Allowances</Th><Th>Total Pay</Th><Th>Charge</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {byWorker.map(w => (
+                  <tr key={w.key}>
+                    <Td><strong>{w.name}</strong></Td>
+                    <Td><span style={{ fontSize: 11, color: C.textMuted, fontFamily: '"DM Mono", monospace' }}>{w.type}</span></Td>
+                    <Td>{w.shifts}</Td>
+                    <Td>{w.ordinary > 0 ? `${w.ordinary.toFixed(2)}h` : '—'}</Td>
+                    <Td>{w.ot15 > 0 ? <span style={{ color: C.warning }}>{w.ot15.toFixed(2)}h</span> : '—'}</Td>
+                    <Td>{w.ot2x > 0 ? <span style={{ color: C.accent }}>{w.ot2x.toFixed(2)}h</span> : '—'}</Td>
+                    <Td>{w.rdo > 0 ? <span style={{ color: C.success }} title="Banked to the RDO accrual, not paid in this run">+{w.rdo.toFixed(2)}h</span> : '—'}</Td>
+                    <Td>{w.allowances > 0 ? `$${w.allowances.toFixed(2)}` : '—'}</Td>
+                    <Td><span style={{ fontWeight: 800, color: C.success }}>${w.pay.toFixed(2)}</span></Td>
+                    <Td><span style={{ color: C.warning }}>${w.charge.toFixed(2)}</span></Td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={3} style={{ padding: '10px 16px', color: C.textMuted, fontSize: 13, borderTop: `2px solid ${C.border}` }}>Totals</td>
+                  <td style={{ padding: '10px 16px', fontWeight: 700, color: C.text, borderTop: `2px solid ${C.border}` }}>{totals.ordinary_hours.toFixed(2)}h</td>
+                  <td style={{ padding: '10px 16px', fontWeight: 700, color: C.warning, borderTop: `2px solid ${C.border}` }}>{totals.ot15_hours.toFixed(2)}h</td>
+                  <td style={{ padding: '10px 16px', fontWeight: 700, color: C.accent, borderTop: `2px solid ${C.border}` }}>{totals.ot2x_hours.toFixed(2)}h</td>
+                  <td style={{ padding: '10px 16px', fontWeight: 700, color: C.success, borderTop: `2px solid ${C.border}` }}>{totals.rdo_hours.toFixed(2)}h</td>
+                  <td style={{ padding: '10px 16px', fontWeight: 700, color: C.text, borderTop: `2px solid ${C.border}` }}>${totals.allowances.toFixed(2)}</td>
+                  <td style={{ padding: '10px 16px', fontWeight: 800, color: C.success, borderTop: `2px solid ${C.border}` }}>${totals.total_pay.toFixed(2)}</td>
+                  <td style={{ padding: '10px 16px', fontWeight: 700, color: C.warning, borderTop: `2px solid ${C.border}` }}>${totals.charge_amount.toFixed(2)}</td>
+                </tr>
+              </tfoot>
+            </TableWrap>
+          </div>
+        )}
         </>
       )}
     </div>

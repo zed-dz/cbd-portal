@@ -272,6 +272,12 @@ export function chargeRateSource(clientRecord, rateLine, match) {
   return 'legacy';
 }
 
+// Pay splits into three buckets - ordinary, 1.5x and 2x - so payroll can show
+// exactly what a worker is owed instead of one opaque "OT hours" number. Every
+// branch below fills the same six variables and the pay is summed ONCE at the
+// bottom, so bucket hours and the dollar total can never drift apart. The dollar
+// amounts are identical to what this function paid before the split was exposed;
+// only the reporting is new.
 export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLine = null, rateMatch = 'none') {
   const OT_MULT      = parseFloat(config.ot_multiplier               ?? 1.5);
   const GEO_PCT      = parseFloat(config.geo_loading_pct             ?? 0.10);
@@ -289,76 +295,74 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
   const isSaturday   = dow === 6;
   const isSundayOrPH = dow === 0 || isPH;
   const hours        = ts.pay_hours || 0;
+  const rdoHours     = ts.rdo_hours || 0;
+
+  let ordH = 0, ot15H = 0, ot2xH = 0;
+  let ordRate = payRate, ot15Rate = payRate * 1.5, ot2xRate = payRate * 2;
+  let loading = 0;
 
   // Timesheets saved from 2026-08-06 carry the penalty split the portal actually
-  // recorded (ordinary / RDO / 1.5x / 2x, computed once in split_shift_hours).
-  // Pay straight from those buckets so the payslip can never disagree with the
-  // hours printed on the timesheet — the two used to be derived separately, so a
-  // Sunday could show "7.6 normal + 1.9 OT" while being paid all-2x.
-  const hasSplit = ts.ot15_hours != null || ts.ot2x_hours != null;
-  if (hasSplit && worker.worker_type !== 'subcontractor') {
-    const ord  = Math.max(0, hours - (ts.ot15_hours || 0) - (ts.ot2x_hours || 0) - (ts.rdo_hours || 0));
-    let pay    = ord * payRate + (ts.ot15_hours || 0) * payRate * 1.5 + (ts.ot2x_hours || 0) * payRate * 2;
-    if (ts.geo_loading) pay *= (1 + GEO_PCT);
-    const totalPaySplit = pay + (ts.travel_allowance || 0) + (ts.meal_allowance || 0);
-    const chargeAmountS = computeChargeAmount(ts, clientRecord, rateLine, { isSaturday, isSundayOrPH, geoPct: GEO_PCT });
-    return {
-      worker_name: worker.name, worker_type: worker.worker_type,
-      date: ts.date, scenario: ts.scenario, site: ts.site, client: ts.client, role: ts.role,
-      pay_hours: ts.pay_hours, charge_hours: ts.charge_hours, overtime_hours: ts.overtime_hours,
-      ot15_hours: ts.ot15_hours || 0, ot2x_hours: ts.ot2x_hours || 0,
-      rdo_hours: ts.rdo_hours || 0,
-      min_day_topup: ts.min_day_topup || 0,
-      is_weekend: ts.is_weekend, geo_loading: ts.geo_loading,
-      travel_allowance: ts.travel_allowance, meal_allowance: ts.meal_allowance,
-      base_pay:      pay.toFixed(2),
-      total_pay:     totalPaySplit.toFixed(2),
-      charge_amount: chargeAmountS.toFixed(2),
-      charge_rate_source: chargeRateSource(clientRecord, rateLine, rateMatch),
-      awj_reference: ts.awj_reference || '',
-      xero_pay_item: 'OrdinaryTime',
-    };
-  }
+  // recorded (computed once in split_shift_hours). Pay straight from those stored
+  // buckets so the payslip can never disagree with the hours on the timesheet.
+  const useStored = (ts.ot15_hours != null || ts.ot2x_hours != null)
+                 && worker.worker_type !== 'subcontractor';
 
-  let basePay;
-  if (worker.worker_type === 'subcontractor') {
-    // Subcontractors: flat rate + flat night/weekend loading
-    const normalH = Math.max(0, hours - (ts.overtime_hours || 0));
-    basePay = normalH * payRate + (ts.overtime_hours || 0) * payRateOT;
-    if (ts.is_night_shift || ts.is_weekend || isSaturday || isSundayOrPH) basePay += SUB_NIGHT;
+  if (useStored) {
+    ot15H = ts.ot15_hours || 0;
+    ot2xH = ts.ot2x_hours || 0;
+    ordH  = Math.max(0, hours - ot15H - ot2xH - rdoHours);
+  } else if (worker.worker_type === 'subcontractor') {
+    // Subcontractors carry their own two rates plus a flat night/weekend loading.
+    // They are not on the award penalty ladder, so their OT sits in the 1.5x slot
+    // but is paid at whatever pay_rate_overtime says.
+    ot15H    = ts.overtime_hours || 0;
+    ordH     = Math.max(0, hours - ot15H);
+    ot15Rate = payRateOT;
+    if (ts.is_night_shift || ts.is_weekend || isSaturday || isSundayOrPH) loading = SUB_NIGHT;
   } else if (ts.is_night_shift && (isSaturday || isSundayOrPH)) {
-    // Saturday/Sunday/PH night → double time all hours
-    basePay = hours * payRate * 2;
+    ot2xH = hours;                                   // Sat/Sun/PH night -> all 2x
   } else if (ts.is_night_shift) {
-    // Weekday night → first NIGHT_THRESH hrs at 1.5x, rest at 2x
-    const h1 = Math.min(hours, NIGHT_THRESH);
-    const h2 = Math.max(0, hours - NIGHT_THRESH);
-    basePay = h1 * payRate * 1.5 + h2 * payRate * 2;
+    ot15H = Math.min(hours, NIGHT_THRESH);           // weekday night -> 8h at 1.5x
+    ot2xH = Math.max(0, hours - NIGHT_THRESH);       //                  rest at 2x
   } else if (isSaturday) {
-    // Saturday → first SAT_THRESH hrs at 1.5x, rest at 2x
-    const h1 = Math.min(hours, SAT_THRESH);
-    const h2 = Math.max(0, hours - SAT_THRESH);
-    basePay = h1 * payRate * 1.5 + h2 * payRate * 2;
+    ot15H = Math.min(hours, SAT_THRESH);             // Sat day -> first 2h at 1.5x
+    ot2xH = Math.max(0, hours - SAT_THRESH);         //            rest at 2x
   } else if (isSundayOrPH) {
-    // Sunday / public holiday → double time all hours
-    basePay = hours * payRate * 2;
+    ot2xH = hours;                                   // Sunday / PH -> all 2x
   } else {
-    // Standard weekday → ordinary + OT. RDO-banked hours are NOT paid today —
-    // they accrue to the worker's RDO balance and are paid when the RDO is taken.
-    const normalH = Math.max(0, hours - (ts.overtime_hours || 0) - (ts.rdo_hours || 0));
-    basePay = normalH * payRate + (ts.overtime_hours || 0) * payRateOT;
+    // Standard weekday. RDO-banked hours are NOT paid today - they accrue to the
+    // worker's RDO balance and are paid when the RDO is taken.
+    ot15H    = ts.overtime_hours || 0;
+    ordH     = Math.max(0, hours - ot15H - rdoHours);
+    ot15Rate = payRateOT;
   }
 
-  if (ts.geo_loading) basePay *= (1 + GEO_PCT);
+  const geo          = ts.geo_loading ? (1 + GEO_PCT) : 1;
+  const ordinary_pay = ordH  * ordRate  * geo;
+  const ot15_pay     = ot15H * ot15Rate * geo;
+  const ot2x_pay     = ot2xH * ot2xRate * geo;
+  const loading_pay  = loading * geo;
+  const basePay      = ordinary_pay + ot15_pay + ot2x_pay + loading_pay;
 
-  const totalPay    = basePay + (ts.travel_allowance || 0) + (ts.meal_allowance || 0);
+  const totalPay     = basePay + (ts.travel_allowance || 0) + (ts.meal_allowance || 0);
   const chargeAmount = computeChargeAmount(ts, clientRecord, rateLine, { isSaturday, isSundayOrPH, geoPct: GEO_PCT });
 
   return {
     worker_name: worker.name, worker_type: worker.worker_type,
     date: ts.date, scenario: ts.scenario, site: ts.site, client: ts.client, role: ts.role,
     pay_hours: ts.pay_hours, charge_hours: ts.charge_hours, overtime_hours: ts.overtime_hours,
-    rdo_hours: ts.rdo_hours || 0,
+    // The three pay buckets - always present, on every row, whatever the branch.
+    ordinary_hours: +ordH.toFixed(2),
+    ot15_hours:     +ot15H.toFixed(2),
+    ot2x_hours:     +ot2xH.toFixed(2),
+    rdo_hours:      rdoHours,
+    pay_rate:       payRate.toFixed(2),
+    ot15_rate:      ot15Rate.toFixed(2),
+    ot2x_rate:      ot2xRate.toFixed(2),
+    ordinary_pay:   ordinary_pay.toFixed(2),
+    ot15_pay:       ot15_pay.toFixed(2),
+    ot2x_pay:       ot2x_pay.toFixed(2),
+    loading_pay:    loading_pay.toFixed(2),
     min_day_topup: ts.min_day_topup || 0,
     is_weekend: ts.is_weekend, geo_loading: ts.geo_loading,
     travel_allowance: ts.travel_allowance, meal_allowance: ts.meal_allowance,
@@ -369,6 +373,40 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
     awj_reference: ts.awj_reference || '',
     xero_pay_item: worker.worker_type === 'subcontractor' ? 'SubcontractorFee' : 'OrdinaryTime',
   };
+}
+
+// "What are we actually paying this person." One row per timesheet with the three
+// pay buckets, their rates and their dollars. The Xero CSV is shaped for import and
+// is unreadable as a pay check - this one is for the office to read and pay from.
+export function buildPayBreakdownCSV(rows, periodFrom, periodTo, downloadFn) {
+  const out = rows.map(r => ({
+    'Worker':            r.worker_name,
+    'Type':              r.worker_type,
+    'Date':              r.date,
+    'Client':            r.client,
+    'Site':              r.site,
+    'Role':              r.role,
+    'Scenario':          r.scenario,
+    'Pay Hours':         r.pay_hours,
+    'Normal Hours':      r.ordinary_hours,
+    'OT 1.5x Hours':     r.ot15_hours,
+    'OT 2x Hours':       r.ot2x_hours,
+    'RDO Accrued Hours': r.rdo_hours,
+    'Base Rate':         r.pay_rate,
+    'OT 1.5x Rate':      r.ot15_rate,
+    'OT 2x Rate':        r.ot2x_rate,
+    'Normal $':          r.ordinary_pay,
+    'OT 1.5x $':         r.ot15_pay,
+    'OT 2x $':           r.ot2x_pay,
+    'Loading $':         r.loading_pay,
+    'Travel Allowance':  r.travel_allowance || 0,
+    'Meal Allowance':    r.meal_allowance || 0,
+    'TOTAL PAY':         r.total_pay,
+    'Charge Hours':      r.charge_hours,
+    'Charge Amount':     r.charge_amount,
+    'AWJ Reference':     r.awj_reference,
+  }));
+  downloadFn(`pay_breakdown_${periodFrom}_to_${periodTo}.csv`, out);
 }
 
 export function buildXeroCSV(rows, periodFrom, periodTo, downloadFn) {

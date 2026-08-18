@@ -282,6 +282,32 @@ pandoc/npm cache failures). Use `Z:\tmp` as a scratch area if needed.
 
 ---
 
+## Recent additions (2026-08-18 - payroll pay breakdown)
+
+- **Payroll now shows what a worker is actually PAID, not just hours.**
+  `computePayrollRow` was refactored so every branch fills the same three buckets
+  - ordinary / 1.5x / 2x - and the pay is summed once at the bottom. Each row now
+  carries `ordinary_hours|ot15_hours|ot2x_hours`, the rate used for each
+  (`pay_rate|ot15_rate|ot2x_rate`) and the dollars (`ordinary_pay|ot15_pay|ot2x_pay`,
+  plus `loading_pay` for the subcontractor flat night/weekend loading).
+  **No dollar amount changed** - verified by running the pre- and post-refactor
+  functions over a 2,560-case matrix (4 worker types x 4 day types x night x geo x
+  stored-split x 5 hour values x client/rate-line present): 0 money mismatches, and
+  bucket hours + bucket dollars reconcile to `pay_hours` / `base_pay` on every case.
+- **Filter by worker** on the Payroll page. The dropdown only lists workers who have
+  rows in the current date range, and filters on `worker_id` (not the name) so
+  same-named workers can't collide. Clear now resets the type + worker filters too.
+- **Table columns**: the single "OT Hrs" column became **Normal / OT 1.5x / OT 2x**,
+  each showing hours with the dollars underneath and the rate on hover. The stat
+  tiles split the same way, and the footer totals each bucket.
+- **"Pay summary by worker"** table under the detail table - one line per person
+  (shifts, normal, 1.5x, 2x, RDO, allowances, total pay, charge). This is the view
+  the office actually pays from.
+- **New `buildPayBreakdownCSV`** + "Export Pay Breakdown CSV" button: every row with
+  bucket hours, bucket rates, bucket dollars, allowances and total pay. The Xero CSV
+  is shaped for import and is unreadable as a pay check - this one is for humans.
+  Respects the current filters, so "one worker, one week" is two clicks.
+
 ## Recent additions (2026-07-12 — AUTONOMOUS supervisor sign-off chain)
 
 - **Fully autonomous timesheet chain** (owner request, two iterations same day):
