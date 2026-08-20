@@ -1,0 +1,1773 @@
+<title>CBD Portal Handbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap">
+
+<style>
+/* ─────────────────────────────────────────────────────────────────
+   Tokens. Light palette on bare :root, redefined for dark twice so
+   OS-dark and the explicit toggle both win. Components only ever
+   read tokens — never a literal, never a color inside a media block.
+   Accent + semantics are lifted straight from the portal's theme.js
+   so the handbook and the product read as one system.
+   ───────────────────────────────────────────────────────────────── */
+:root {
+  --accent:        #d1580a;
+  --accent-strong: #b8480a;
+  --accent-soft:   rgba(249,115,22,0.10);
+  --accent-border: rgba(249,115,22,0.30);
+
+  --ok:      #15803d;  --ok-soft:      rgba(34,197,94,0.12);
+  --warn:    #a16207;  --warn-soft:    rgba(234,179,8,0.14);
+  --danger:  #b91c1c;  --danger-soft:  rgba(239,68,68,0.10);
+  --info:    #0369a1;  --info-soft:    rgba(56,189,248,0.12);
+
+  --bg:        #f6f7fa;
+  --surface:   #ffffff;
+  --surface-2: #eef1f6;
+  --rail:      #f0f2f7;
+  --line:      #dde1ea;
+  --line-soft: #e7eaf1;
+
+  --ink:       #12161f;
+  --ink-2:     #3d4455;
+  --muted:     #656d80;
+  --dim:       #8b93a5;
+
+  --shadow: 0 1px 2px rgba(11,14,20,.05), 0 8px 24px rgba(11,14,20,.06);
+  --radius: 11px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --accent:        #f97316;
+    --accent-strong: #fb923c;
+    --accent-soft:   rgba(249,115,22,0.12);
+    --accent-border: rgba(249,115,22,0.32);
+
+    --ok:     #22c55e;  --ok-soft:     rgba(34,197,94,0.12);
+    --warn:   #eab308;  --warn-soft:   rgba(234,179,8,0.12);
+    --danger: #ef4444;  --danger-soft: rgba(239,68,68,0.12);
+    --info:   #38bdf8;  --info-soft:   rgba(56,189,248,0.10);
+
+    --bg:        #0b0e14;
+    --surface:   #11151e;
+    --surface-2: #171c27;
+    --rail:      #0e1219;
+    --line:      #222838;
+    --line-soft: #1a1f2b;
+
+    --ink:       #eef0f6;
+    --ink-2:     #c3c9d8;
+    --muted:     #8a92a8;
+    --dim:       #5b6276;
+
+    --shadow: 0 1px 2px rgba(0,0,0,.20), 0 16px 40px rgba(0,0,0,.45);
+  }
+}
+
+:root[data-theme="dark"] {
+  --accent:        #f97316;
+  --accent-strong: #fb923c;
+  --accent-soft:   rgba(249,115,22,0.12);
+  --accent-border: rgba(249,115,22,0.32);
+
+  --ok:     #22c55e;  --ok-soft:     rgba(34,197,94,0.12);
+  --warn:   #eab308;  --warn-soft:   rgba(234,179,8,0.12);
+  --danger: #ef4444;  --danger-soft: rgba(239,68,68,0.12);
+  --info:   #38bdf8;  --info-soft:   rgba(56,189,248,0.10);
+
+  --bg:        #0b0e14;
+  --surface:   #11151e;
+  --surface-2: #171c27;
+  --rail:      #0e1219;
+  --line:      #222838;
+  --line-soft: #1a1f2b;
+
+  --ink:       #eef0f6;
+  --ink-2:     #c3c9d8;
+  --muted:     #8a92a8;
+  --dim:       #5b6276;
+
+  --shadow: 0 1px 2px rgba(0,0,0,.20), 0 16px 40px rgba(0,0,0,.45);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Public Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 15.5px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 {
+  font-family: Syne, "Public Sans", ui-sans-serif, system-ui, sans-serif;
+  text-wrap: balance;
+  margin: 0;
+  letter-spacing: -0.015em;
+}
+
+code, kbd, .mono, .num {
+  font-family: "DM Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── Shell ─────────────────────────────────────────────────────── */
+.shell { display: grid; grid-template-columns: 264px minmax(0,1fr); gap: 0; }
+
+.rail {
+  position: sticky; top: 0; align-self: start;
+  height: 100vh; overflow-y: auto;
+  background: var(--rail);
+  border-right: 1px solid var(--line);
+  padding: 20px 0 40px;
+}
+.rail-brand { padding: 4px 18px 16px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+.rail-brand .logo {
+  font-family: Syne, sans-serif; font-size: 27px; font-weight: 800;
+  color: var(--accent); line-height: 1; letter-spacing: -0.5px;
+}
+.rail-brand .sub {
+  font-family: "DM Mono", monospace; font-size: 9px; color: var(--muted);
+  letter-spacing: 2.2px; text-transform: uppercase; margin-top: 5px; font-weight: 500;
+}
+.rail-search { padding: 0 14px 14px; }
+.rail-search input {
+  width: 100%; padding: 7px 10px; font: inherit; font-size: 13px;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 7px;
+}
+.rail-search input::placeholder { color: var(--dim); }
+
+.rail-group { margin-bottom: 16px; padding: 0 10px; }
+.rail-group > .rail-label {
+  font-family: "DM Mono", monospace; font-size: 9px; letter-spacing: 2.2px;
+  text-transform: uppercase; color: var(--dim); padding: 0 10px;
+  margin-bottom: 6px; font-weight: 500;
+}
+.rail a.nav {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 11px; margin-bottom: 2px;
+  color: var(--muted); text-decoration: none; font-size: 13.5px;
+  border-left: 3px solid transparent;
+  border-radius: 0 8px 8px 0;
+  transition: background 120ms, color 120ms;
+}
+.rail a.nav:hover { background: var(--surface-2); color: var(--ink); }
+.rail a.nav.on { background: var(--surface-2); color: var(--ink); border-left-color: var(--accent); font-weight: 600; }
+.rail a.nav .pill {
+  margin-left: auto; font-family: "DM Mono", monospace; font-size: 9.5px;
+  font-weight: 500; padding: 1px 7px; border-radius: 999px; color: #fff;
+}
+.pill.green { background: #16a34a; } .pill.orange { background: #ea580c; }
+.pill.red   { background: #dc2626; } .pill.yellow { background: #ca8a04; }
+
+.main { min-width: 0; padding: 0 0 120px; }
+.wrap { max-width: 860px; margin: 0 auto; padding: 0 40px; }
+
+/* ── Masthead ──────────────────────────────────────────────────── */
+.masthead { border-bottom: 1px solid var(--line); background: var(--surface); }
+.masthead .wrap { padding-top: 56px; padding-bottom: 40px; }
+.eyebrow {
+  font-family: "DM Mono", monospace; font-size: 10.5px; letter-spacing: 2.4px;
+  text-transform: uppercase; color: var(--accent); font-weight: 500; margin-bottom: 16px;
+}
+h1 { font-size: clamp(34px, 5vw, 48px); font-weight: 800; line-height: 1.04; }
+.standfirst { font-size: 18px; color: var(--ink-2); margin-top: 18px; max-width: 62ch; }
+.meta-row {
+  display: flex; flex-wrap: wrap; gap: 8px 10px; margin-top: 26px;
+  font-family: "DM Mono", monospace; font-size: 11.5px; color: var(--muted);
+}
+.meta-row span {
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px;
+  background: var(--bg);
+}
+
+/* ── Sections ──────────────────────────────────────────────────── */
+section { padding-top: 52px; scroll-margin-top: 12px; }
+section > .wrap > h2 {
+  font-size: 27px; font-weight: 700; padding-bottom: 12px;
+  border-bottom: 2px solid var(--accent); display: inline-block;
+}
+.kicker {
+  font-family: "DM Mono", monospace; font-size: 10.5px; letter-spacing: 2.2px;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 10px; font-weight: 500;
+}
+h3 { font-size: 20px; font-weight: 700; margin-top: 34px; }
+h4 { font-size: 15.5px; font-weight: 700; margin-top: 24px; color: var(--ink); }
+p { margin: 13px 0; max-width: 68ch; }
+.lede { font-size: 16.5px; color: var(--ink-2); max-width: 66ch; }
+
+ul, ol { max-width: 66ch; padding-left: 22px; }
+li { margin: 7px 0; }
+li::marker { color: var(--muted); }
+
+/* Purpose strip under each page heading */
+.purpose {
+  display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 15px 18px; margin: 18px 0 6px; font-size: 14.5px;
+}
+.purpose dt {
+  font-family: "DM Mono", monospace; font-size: 10px; letter-spacing: 1.6px;
+  text-transform: uppercase; color: var(--muted); padding-top: 4px; font-weight: 500;
+}
+.purpose dd { margin: 0; color: var(--ink-2); }
+
+/* Tables */
+.tbl-wrap { overflow-x: auto; margin: 18px 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 460px; }
+th, td { text-align: left; padding: 10px 15px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+thead th {
+  background: var(--surface-2); color: var(--muted);
+  font-family: "DM Mono", monospace; font-size: 10px; font-weight: 500;
+  letter-spacing: 1.5px; text-transform: uppercase; white-space: nowrap;
+}
+tbody tr:last-child td { border-bottom: none; }
+td.num, th.num { font-family: "DM Mono", monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td strong { font-weight: 600; }
+
+/* Callouts */
+.note {
+  border-radius: var(--radius); padding: 14px 17px; margin: 20px 0;
+  border: 1px solid var(--line); background: var(--surface);
+  font-size: 14.5px; max-width: 68ch;
+}
+.note p { margin: 7px 0; max-width: none; }
+.note p:first-child { margin-top: 0; } .note p:last-child { margin-bottom: 0; }
+.note .tag {
+  display: block; font-family: "DM Mono", monospace; font-size: 10px;
+  letter-spacing: 1.8px; text-transform: uppercase; margin-bottom: 7px; font-weight: 500;
+}
+.note.warn   { background: var(--warn-soft);   border-color: var(--warn);   }
+.note.warn .tag { color: var(--warn); }
+.note.danger { background: var(--danger-soft); border-color: var(--danger); }
+.note.danger .tag { color: var(--danger); }
+.note.ok     { background: var(--ok-soft);     border-color: var(--ok);     }
+.note.ok .tag { color: var(--ok); }
+.note.info   { background: var(--info-soft);   border-color: var(--info);   }
+.note.info .tag { color: var(--info); }
+
+/* Numbered recipes — used ONLY where the steps are a real sequence */
+.recipe { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 22px; margin: 20px 0; box-shadow: var(--shadow); }
+.recipe > h4 { margin-top: 0; font-size: 16px; }
+.recipe ol { counter-reset: step; list-style: none; padding-left: 0; margin: 14px 0 0; }
+.recipe ol li {
+  counter-increment: step; position: relative;
+  padding-left: 38px; margin: 0 0 14px; min-height: 26px;
+}
+.recipe ol li:last-child { margin-bottom: 0; }
+.recipe ol li::before {
+  content: counter(step, decimal-leading-zero);
+  position: absolute; left: 0; top: 1px;
+  font-family: "DM Mono", monospace; font-size: 11px; font-weight: 500;
+  color: var(--accent); background: var(--accent-soft);
+  border: 1px solid var(--accent-border); border-radius: 6px;
+  width: 26px; height: 22px; display: grid; place-items: center;
+}
+
+code {
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+  padding: 1px 6px; border-radius: 5px; font-size: 0.88em; color: var(--ink);
+  white-space: nowrap;
+}
+kbd {
+  background: var(--surface); border: 1px solid var(--line);
+  border-bottom-width: 2px; padding: 1px 7px; border-radius: 5px;
+  font-size: 0.85em; color: var(--ink-2);
+}
+
+.chip {
+  display: inline-block; font-family: "DM Mono", monospace; font-size: 10.5px;
+  padding: 2px 9px; border-radius: 999px; border: 1px solid currentColor;
+  font-weight: 500; white-space: nowrap;
+}
+.chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); }
+.chip.danger { color: var(--danger); } .chip.info { color: var(--info); }
+.chip.dim { color: var(--muted); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px,1fr)); gap: 13px; margin: 20px 0; }
+.card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 16px 17px;
+}
+.card .t { font-family: Syne, sans-serif; font-weight: 700; font-size: 15px; margin-bottom: 5px; }
+.card .d { font-size: 13.5px; color: var(--muted); line-height: 1.55; }
+
+hr.rule { border: none; border-top: 1px solid var(--line); margin: 46px 0 0; }
+
+.footer { border-top: 1px solid var(--line); margin-top: 60px; background: var(--surface); }
+.footer .wrap { padding-top: 30px; padding-bottom: 40px; font-size: 13.5px; color: var(--muted); }
+
+.totop {
+  position: fixed; right: 22px; bottom: 22px; z-index: 40;
+  background: var(--surface); color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 9px 16px; font: inherit; font-size: 12.5px; cursor: pointer;
+  box-shadow: var(--shadow); opacity: 0; pointer-events: none;
+  transition: opacity 180ms;
+}
+.totop.show { opacity: 1; pointer-events: auto; }
+.totop:hover { border-color: var(--accent); color: var(--accent); }
+
+.rail-hide { display: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+
+@media (max-width: 940px) {
+  .shell { grid-template-columns: 1fr; }
+  .rail { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line); }
+  .wrap { padding: 0 22px; }
+  .masthead .wrap { padding-top: 36px; padding-bottom: 30px; }
+}
+</style>
+
+<div class="shell">
+
+<!-- ── Left rail: mirrors the portal's own sidebar, group for group ── -->
+<nav class="rail" aria-label="Handbook sections">
+  <div class="rail-brand">
+    <div class="logo">CBD</div>
+    <div class="sub">Portal Handbook</div>
+  </div>
+
+  <div class="rail-search">
+    <input id="navFilter" type="search" placeholder="Filter sections…" aria-label="Filter sections">
+  </div>
+
+  <div class="rail-group">
+    <div class="rail-label">Start</div>
+    <a class="nav" href="#start">Read this first</a>
+    <a class="nav" href="#words">What the words mean</a>
+  </div>
+
+  <div class="rail-group">
+    <div class="rail-label">Main</div>
+    <a class="nav" href="#dashboard">📊 Dashboard</a>
+    <a class="nav" href="#workers">👷 Workers <span class="pill green">n</span></a>
+    <a class="nav" href="#allocations">📋 Allocations <span class="pill orange">n</span></a>
+    <a class="nav" href="#calendar">📅 Calendar</a>
+    <a class="nav" href="#timesheets">🕐 Timesheets <span class="pill red">n</span></a>
+  </div>
+
+  <div class="rail-group">
+    <div class="rail-label">Finance</div>
+    <a class="nav" href="#clients">🏗 Clients &amp; Rates</a>
+    <a class="nav" href="#default-rates">💲 Default Rates</a>
+    <a class="nav" href="#payroll">💰 Payroll <span class="pill green">n</span></a>
+    <a class="nav" href="#payments">💳 Payments</a>
+    <a class="nav" href="#payroll-config">⚙ Payroll Config</a>
+    <a class="nav" href="#xero">🔄 Xero Data</a>
+  </div>
+
+  <div class="rail-group">
+    <div class="rail-label">Tools</div>
+    <a class="nav" href="#inbox">📨 Inbox</a>
+    <a class="nav" href="#templates">📝 Email Templates</a>
+    <a class="nav" href="#bulk">📢 Bulk Messages</a>
+    <a class="nav" href="#licences">🪪 Licence Agent <span class="pill red">n</span></a>
+    <a class="nav" href="#applications">📥 Applications <span class="pill orange">n</span></a>
+    <a class="nav" href="#pending">📱 Pending Workers <span class="pill yellow">n</span></a>
+    <a class="nav" href="#appviews">📲 App Views</a>
+    <a class="nav" href="#reports">📁 Reports</a>
+  </div>
+
+  <div class="rail-group">
+    <div class="rail-label">Worker app</div>
+    <a class="nav" href="#worker-app">What workers see</a>
+  </div>
+
+  <div class="rail-group">
+    <div class="rail-label">The rules</div>
+    <a class="nav" href="#pay-rules">How pay is worked out</a>
+    <a class="nav" href="#charge-rules">How clients are charged</a>
+  </div>
+
+  <div class="rail-group">
+    <div class="rail-label">Reference</div>
+    <a class="nav" href="#recipes">Job recipes</a>
+    <a class="nav" href="#trouble">When it goes wrong</a>
+  </div>
+</nav>
+
+<main class="main">
+
+<!-- ═══ MASTHEAD ═══ -->
+<header class="masthead">
+  <div class="wrap">
+    <div class="eyebrow">CBD Plant &amp; Labour · Operations Portal</div>
+    <h1>The portal, explained page by page</h1>
+    <p class="standfirst">
+      Everything the portal does, what each button actually means, and the exact steps
+      for the jobs you'll do every week. Written so you can open it mid-task, find the
+      one thing you need, and get back to work.
+    </p>
+    <div class="meta-row">
+      <span>cbd-portal-gray.vercel.app</span>
+      <span>Same build runs MRA + Hecate</span>
+      <span>Last verified 21 Aug 2026</span>
+    </div>
+  </div>
+</header>
+
+<!-- ═══ START ═══ -->
+<section id="start">
+  <div class="wrap">
+    <div class="kicker">Start</div>
+    <h2>Read this first</h2>
+
+    <p class="lede">
+      The portal runs the whole labour-hire operation in one place: who works for you,
+      where they're going, what they did, what they get paid, and what the client gets billed.
+      It replaced the paper-and-spreadsheet version of all of that.
+    </p>
+
+    <h3>It has two faces</h3>
+    <div class="cards">
+      <div class="card">
+        <div class="t">Admin portal</div>
+        <div class="d">What office staff see. The full sidebar — workers, allocations, timesheets, payroll, clients, settings.</div>
+      </div>
+      <div class="card">
+        <div class="t">Worker portal</div>
+        <div class="d">What a worker sees on their phone. Their own jobs, their own timesheets, their tickets. Nothing else.</div>
+      </div>
+    </div>
+
+    <p>
+      To see exactly what a worker sees, hit <strong>👁 Worker View</strong> in the top bar.
+      You're previewing as yourself. <strong>✕ Exit Preview</strong> brings you back. Use this
+      before you send anything out — it saves the "what does this look like on their end?" round trip.
+    </p>
+
+    <h3>Who can do what</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Role</th><th>Gets</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Admin</strong></td><td>Everything. Workers, money, settings, the lot.</td></tr>
+          <tr><td><strong>Manager</strong></td><td>Same as admin. For senior office staff.</td></tr>
+          <tr><td><strong>Worker</strong></td><td>The phone portal only. Their own jobs and timesheets.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      People sign themselves up on the login page. <strong>The very first person to ever
+      sign up becomes admin automatically.</strong> Everyone after that lands as a worker,
+      and an admin promotes them from the Workers page.
+    </p>
+
+    <div class="recipe">
+      <h4>Your first ten minutes</h4>
+      <ol>
+        <li>Open the portal and sign in. If you've never logged in, use the <strong>Create account</strong> tab.</li>
+        <li>Land on <strong>Dashboard</strong>. Read the six number cards top to bottom — that's the state of the business right now.</li>
+        <li>Click <strong>👷 Workers</strong>. Find yourself. Check your name, email and role are right.</li>
+        <li>Click <strong>🕐 Timesheets</strong>. This is where the week's work arrives. Anything red in the sidebar badge is waiting on a human.</li>
+        <li>Hit <strong>👁 Worker View</strong> in the top bar, look around, then <strong>✕ Exit Preview</strong>. Now you know both sides.</li>
+      </ol>
+    </div>
+
+    <div class="note info">
+      <span class="tag">The badges tell you what needs you</span>
+      <p>
+        Those little coloured numbers in the sidebar aren't decoration — each one is a live count
+        of things sitting in a queue. <span class="chip danger">red</span> on Timesheets means
+        timesheets are pending. <span class="chip warn">yellow</span> on Pending Workers means people can't log in yet.
+        If every badge is quiet, there's nothing waiting on you.
+      </p>
+    </div>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ GLOSSARY ═══ -->
+<section id="words">
+  <div class="wrap">
+    <div class="kicker">Start</div>
+    <h2>What the words mean</h2>
+    <p class="lede">The portal uses a handful of terms in a very specific way. Get these five right and the rest of the system reads itself.</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Term</th><th>What it actually means</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Pay hours</strong></td>
+            <td>Hours <em>the worker gets paid for.</em> Not always the hours they stood on site — a rained-off day pays 8 even if they went home at 10am.</td>
+          </tr>
+          <tr>
+            <td><strong>Charge hours</strong></td>
+            <td>Hours <em>the client gets billed for.</em> On that same rained-off day this might be 4, or 0. <strong>Pay and charge are deliberately separate numbers.</strong></td>
+          </tr>
+          <tr>
+            <td><strong>Scenario</strong></td>
+            <td>What kind of day it was. Standard, rain-off, leave, training, public holiday. The scenario is what decides the pay/charge split above.</td>
+          </tr>
+          <tr>
+            <td><strong>A / B / C</strong></td>
+            <td>The three price tiers on a client's rate card. <strong>A</strong> = normal, <strong>B</strong> = 1.5×, <strong>C</strong> = 2×. These are <em>charge</em> rates — what you bill.</td>
+          </tr>
+          <tr>
+            <td><strong>RDO</strong></td>
+            <td>Rostered day off. A full-timer working a normal weekday banks 0.4h per day instead of being paid it. <strong>RDO hours are not paid in that run</strong> — they're paid when the day is taken.</td>
+          </tr>
+          <tr>
+            <td><strong>Allocation</strong></td>
+            <td>A booking. "This worker goes to that client's site on these dates." Made before the work happens.</td>
+          </tr>
+          <tr>
+            <td><strong>Timesheet</strong></td>
+            <td>The record of what actually happened. Made after the work happens.</td>
+          </tr>
+          <tr>
+            <td><strong>Schedule of Rates</strong></td>
+            <td>A client's agreed price list, line by line — Labourer, 8t Excavator, Tipping Fee — each with its own unit and A/B/C prices.</td>
+          </tr>
+          <tr>
+            <td><strong>Wet hire</strong></td>
+            <td>Machine supplied <em>with</em> an operator. Tracked separately on the daily timesheet.</td>
+          </tr>
+          <tr>
+            <td><strong>Take 5</strong></td>
+            <td>The pre-start safety check a worker fills in on their phone: what's the task, what could hurt me, what am I doing about it.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ DASHBOARD ═══ -->
+<section id="dashboard">
+  <div class="wrap">
+    <div class="kicker">Main</div>
+    <h2>📊 Dashboard</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>The state of the business in one screen.</dd>
+      <dt>Open it</dt><dd>Every morning. It's the landing page for a reason.</dd>
+      <dt>Watch for</dt><dd>The Urgent Alerts panel — expired licences mean someone can't legally be on site.</dd>
+    </dl>
+
+    <h3>The six cards</h3>
+    <p>Every card is clickable and takes you straight to the page that fixes it.</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Card</th><th>Counts</th><th>Takes you to</th></tr></thead>
+        <tbody>
+          <tr><td><strong>On Site Today</strong></td><td>Workers allocated to a job today</td><td>Workers</td></tr>
+          <tr><td><strong>Available Pool</strong></td><td>Workers with no job today</td><td>Workers</td></tr>
+          <tr><td><strong>Awaiting Approval</strong></td><td>Timesheets sitting pending</td><td>Timesheets</td></tr>
+          <tr><td><strong>Licence Alerts</strong></td><td>Tickets expiring within 30 days</td><td>Licence Agent</td></tr>
+          <tr><td><strong>Week Billing</strong></td><td>Charge value of this week's approved work</td><td>Payroll</td></tr>
+          <tr><td><strong>Ready for Payroll</strong></td><td>Approved timesheets not yet sent to Xero</td><td>Payroll</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>The panels underneath</h3>
+    <ul>
+      <li><strong>Urgent Alerts</strong> — expired licences. You can dismiss one, but dismissing doesn't fix it.</li>
+      <li><strong>Pending Timesheets</strong> — the last five waiting on approval.</li>
+      <li><strong>Today's Allocations</strong> — who's where today, with a CSV export.</li>
+    </ul>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ WORKERS ═══ -->
+<section id="workers">
+  <div class="wrap">
+    <div class="kicker">Main</div>
+    <h2>👷 Workers</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>Everyone who works for you — full-time, casual and subcontractor.</dd>
+      <dt>Open it</dt><dd>Hiring someone, changing a pay rate, checking a ticket, offboarding.</dd>
+      <dt>Watch for</dt><dd>Pay rates here feed payroll directly. A wrong number here becomes a wrong payslip.</dd>
+    </dl>
+
+    <h3>Adding a worker</h3>
+    <p>Hit <strong>+ Add Worker</strong>. You must fill in:</p>
+    <ul>
+      <li><strong>Full name</strong> — this must match their name in Xero <em>exactly</em>, or the payroll push will skip them.</li>
+      <li><strong>Email</strong> — this is their login.</li>
+      <li><strong>Worker Type</strong> — Full-Time, Casual or Subcontractor. This changes how they get paid, so get it right.</li>
+      <li><strong>Pay Rate Regular</strong> ($/hr) — the base rate everything else is calculated from.</li>
+    </ul>
+    <p>Worth adding: mobile, address, job title, OT rate, and licences. Subcontractors get an extra <strong>ABN</strong> field.</p>
+
+    <div class="note warn">
+      <span class="tag">The three worker types are not cosmetic</span>
+      <p><strong>Full-time</strong> — banks RDO hours, and gets topped up to a full 8h day if sent home early on a normal weekday.</p>
+      <p><strong>Casual</strong> — gets a travel allowance every shift they actually work. No RDO.</p>
+      <p><strong>Subcontractor</strong> — paid on their own two rates plus a flat loading for nights and weekends. Not on the award penalty ladder at all, and excluded from the Xero staff payroll push.</p>
+    </div>
+
+    <h3>Finding people</h3>
+    <ul>
+      <li>Search by name or email.</li>
+      <li><strong>🪪 All Licences</strong> dropdown — filter to everyone holding a given ticket. Type <code>ewp</code> to find every EWP holder.</li>
+      <li>Filter by worker type or status.</li>
+    </ul>
+
+    <h3>Offboarding — archive, don't delete</h3>
+    <p>
+      When someone leaves, <strong>archive</strong> them. They vanish from the active roster and
+      the dropdowns, but every timesheet, payslip and record they ever touched stays intact.
+      Deleting would tear a hole in your history.
+    </p>
+    <p>You pick a reason, and the portal records who archived them and when:</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Reason</th></tr></thead>
+        <tbody>
+          <tr><td>Resigned (left voluntarily)</td></tr>
+          <tr><td>End of contract</td></tr>
+          <tr><td>Let go (performance / conduct)</td></tr>
+          <tr><td>No-show / lost contact</td></tr>
+          <tr><td>Medical / injury</td></tr>
+          <tr><td>Not currently working</td></tr>
+          <tr><td>Retired</td></tr>
+          <tr><td>Other</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Switch the view between <strong>Active</strong>, <strong>Archived</strong> and <strong>All</strong>. If someone comes back, hit <strong>↺ Restore</strong>.</p>
+
+    <h3>Two licence fields, on purpose</h3>
+    <p>
+      <strong>Quick Licences</strong> is free text for fast capture and searching.
+      <strong>Certifications</strong> is the real compliance record with expiry dates, and it's what
+      drives the dashboard alerts. Keep both. They do different jobs.
+    </p>
+
+    <h3>Share links</h3>
+    <p>
+      Each worker has two private links. <strong>Share profile</strong> gives a client a read-only
+      card — no pay rates, no address, no email. <strong>Onboarding link</strong> lets the worker fill
+      in their own details. Both are unguessable keys; treat them like passwords.
+    </p>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ ALLOCATIONS ═══ -->
+<section id="allocations">
+  <div class="wrap">
+    <div class="kicker">Main</div>
+    <h2>📋 Allocations</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>Booking a worker onto a client's site for a date or a stretch of dates.</dd>
+      <dt>Open it</dt><dd>Whenever you're scheduling. This is the "who's going where" page.</dd>
+      <dt>Watch for</dt><dd>The double-booking warning. It's telling you the truth.</dd>
+    </dl>
+
+    <p>An allocation says: <em>this worker goes to that client's site, from this date to that date, arriving at this time, reporting to this supervisor.</em></p>
+
+    <h3>What you fill in</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Field</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Worker</strong></td><td>Archived workers don't appear here.</td></tr>
+          <tr><td><strong>Client / Project / Site / Address</strong></td><td>Pick the project and the site details follow.</td></tr>
+          <tr><td><strong>Site supervisor + phone</strong></td><td>Who the worker reports to on the day. <strong>This matters more than it looks</strong> — see the note below.</td></tr>
+          <tr><td><strong>Start / End date</strong></td><td>One allocation can cover a run of days.</td></tr>
+          <tr><td><strong>Arrival / end time</strong></td><td>Time only. The date comes from the start date.</td></tr>
+          <tr><td><strong>Status</strong></td><td>Pending → Confirmed → Completed. Or Cancelled.</td></tr>
+          <tr><td><strong>Notes</strong></td><td>Anything the worker needs to know.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note warn">
+      <span class="tag">Fill in the site supervisor properly</span>
+      <p>
+        When the worker submits their timesheet, the portal texts and emails <strong>that supervisor</strong>
+        a link to approve it. No supervisor contact means no approval link, which means the timesheet
+        stalls and an admin has to chase it by hand. Thirty seconds here saves a phone call later.
+      </p>
+    </div>
+
+    <div class="note info">
+      <span class="tag">Double-booking check</span>
+      <p>
+        If the worker already has a pending or confirmed allocation overlapping those dates,
+        a yellow banner appears in the form before you save. You can still override it —
+        sometimes that's correct — but read it first.
+      </p>
+    </div>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ CALENDAR ═══ -->
+<section id="calendar">
+  <div class="wrap">
+    <div class="kicker">Main</div>
+    <h2>📅 Calendar</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>The same allocations, laid out as a week grid.</dd>
+      <dt>Open it</dt><dd>Planning the week, or spotting who's free.</dd>
+    </dl>
+
+    <p>
+      Click an empty cell to create an allocation for that worker on that day.
+      Click an existing bar to edit it. It's the Allocations page with a visual brain —
+      gaps and clashes jump out here in a way a table can't show you.
+    </p>
+    <p>The same double-booking check runs when you save from the calendar.</p>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ TIMESHEETS ═══ -->
+<section id="timesheets">
+  <div class="wrap">
+    <div class="kicker">Main</div>
+    <h2>🕐 Timesheets</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>Every shift worked — the hours, the scenario, the approval trail.</dd>
+      <dt>Open it</dt><dd>Daily. This is the busiest page in the portal.</dd>
+      <dt>Watch for</dt><dd>The scenario field. It decides what gets paid and what gets billed.</dd>
+    </dl>
+
+    <h3>How a timesheet gets approved — it's mostly automatic</h3>
+    <p>You usually don't have to do anything. The chain runs itself:</p>
+
+    <div class="recipe">
+      <h4>The automatic sign-off chain</h4>
+      <ol>
+        <li>The worker submits their daily timesheet from their phone.</li>
+        <li>The portal immediately emails <em>and</em> texts the <strong>site supervisor</strong> a private approval link.</li>
+        <li>The supervisor opens the link and accepts. No login needed.</li>
+        <li>That acceptance <strong>approves the timesheet and makes it billable in one step</strong>. No admin action required.</li>
+        <li>If nobody responds within <strong>7 days</strong>, the portal approves it automatically and rings the notification bell so you know it happened.</li>
+      </ol>
+    </div>
+
+    <p>You still have full override. In the timesheet's View panel you can:</p>
+    <ul>
+      <li><strong>Send / Resend to supervisor</strong> — if the first one didn't land.</li>
+      <li><strong>Mark accepted (verbal)</strong> — the supervisor okayed it on the phone. This also approves it.</li>
+      <li>Adjust or reject at any time, even after approval.</li>
+    </ul>
+
+    <div class="note danger">
+      <span class="tag">If the bell says "sign-off blocked"</span>
+      <p>
+        That means the portal couldn't reach a supervisor — usually no site contact on the project,
+        or a bad phone number. The timesheet is stuck until you either fix the contact and resend,
+        or mark it accepted verbally. Don't ignore it; the 7-day auto-approve will eventually
+        pass it through unchecked.
+      </p>
+    </div>
+
+    <h3>Scenarios — the most important field on the page</h3>
+    <p>
+      A scenario tells the portal what kind of day it was. It sets pay hours and charge hours
+      independently, which is exactly what you want on a rain day.
+    </p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Scenario</th><th class="num">Pay hrs</th><th class="num">Charge hrs</th><th>Use when</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Standard Shift</strong></td><td class="num">actual</td><td class="num">actual</td><td>A normal day.</td></tr>
+          <tr><td><strong>Late Start — Admin/Booking Delay</strong></td><td class="num">8.00</td><td class="num">actual</td><td>Your mistake. Worker isn't out of pocket; client pays only for real hours.</td></tr>
+          <tr><td><strong>Late Start — Worker Fault</strong></td><td class="num">actual</td><td class="num">actual</td><td>Worker turned up late. Both sides see the real hours.</td></tr>
+          <tr><td><strong>Rain-Off Partial</strong></td><td class="num">8.00</td><td class="num">4.00</td><td>Started, then rained off.</td></tr>
+          <tr><td><strong>Rain-Off Cancelled</strong></td><td class="num">8.00</td><td class="num">0.00</td><td>Turned up, sent straight home.</td></tr>
+          <tr><td><strong>No Available Work</strong></td><td class="num">8.00</td><td class="num">0.00</td><td>Nothing to do when they arrived.</td></tr>
+          <tr><td><strong>Training Day</strong></td><td class="num">8.00</td><td class="num">0.00</td><td>Your time, your cost.</td></tr>
+          <tr><td><strong>Annual Leave</strong></td><td class="num">8.00</td><td class="num">0.00</td><td>Booked leave.</td></tr>
+          <tr><td><strong>Personal Leave</strong></td><td class="num">8.00</td><td class="num">0.00</td><td>Sick day. Needs a reason.</td></tr>
+          <tr><td><strong>Leave Without Pay</strong></td><td class="num">0.00</td><td class="num">0.00</td><td>Unpaid absence.</td></tr>
+          <tr><td><strong>Public Holiday</strong></td><td class="num">8.00 <span class="chip dim">FT only</span></td><td class="num">0.00</td><td>Full-timers get 8h. Casuals get nothing unless they worked.</td></tr>
+          <tr><td><strong>Emergency Callout</strong></td><td class="num">actual</td><td class="num">actual</td><td>Casual called in at short notice. Still earns the travel allowance.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note info">
+      <span class="tag">Leave and rain days never attract penalty rates</span>
+      <p>
+        Anything that isn't a standard shift, an emergency callout or a public holiday is paid
+        as flat ordinary time. A rained-off Saturday pays 8 ordinary hours, not 8 hours at double time.
+      </p>
+    </div>
+
+    <h3>The two tabs</h3>
+    <ul>
+      <li><strong>Daily</strong> — the full daily timesheet: date, start, finish, break, normal and OT hours, allowances, wet hire, Take 5, signatures.</li>
+      <li><strong>Line</strong> — individual shift lines, with start and finish columns.</li>
+    </ul>
+
+    <h3>Buttons you'll use</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Button</th><th>Does</th></tr></thead>
+        <tbody>
+          <tr><td><strong>+ Add Daily Timesheet</strong></td><td>Enter a full day on a worker's behalf.</td></tr>
+          <tr><td><strong>+ Add Timesheet</strong></td><td>Quick single-line entry.</td></tr>
+          <tr><td><strong>✓ Approve All Pending</strong></td><td>Bulk approve. Fast, and easy to regret — check the list first.</td></tr>
+          <tr><td><strong>View</strong></td><td>Full detail, with a <strong>Print / Save PDF</strong> button. Hours only, no rates — safe to hand a client.</td></tr>
+          <tr><td><strong>↓ Export Xero CSV</strong></td><td>Downloads the raw timesheet data.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Adjustments are tracked</h3>
+    <p>
+      If an admin edits a worker's submitted times, the portal keeps the original start, finish
+      and break, and stamps who changed it and when. You'll see it on the edit form, the detail
+      view and the printed timesheet. A worker fixing their own pending sheet doesn't count as
+      an adjustment.
+    </p>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ CLIENTS ═══ -->
+<section id="clients">
+  <div class="wrap">
+    <div class="kicker">Finance</div>
+    <h2>🏗 Clients &amp; Rates</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>Who you supply to, their projects, and what they've agreed to pay.</dd>
+      <dt>Open it</dt><dd>New client, new site, or a rate change.</dd>
+      <dt>Watch for</dt><dd>Never create a second client record with the same name. See the warning below.</dd>
+    </dl>
+
+    <div class="note danger">
+      <span class="tag">One business = one client record. Always.</span>
+      <p>
+        Duplicate client records with the same name have already caused real mis-billing here —
+        one "Matt Civil" priced at $100/hr with a full rate card, another at $50/hr with none,
+        and the portal picking whichever it found first. If a client needs multiple sites,
+        add <strong>projects</strong> underneath them. Never a second client row.
+      </p>
+    </div>
+
+    <h3>Adding a client</h3>
+    <p><strong>+ Add Client</strong>, then:</p>
+    <ul>
+      <li><strong>Name</strong> — required.</li>
+      <li><strong>Contact</strong> — the billing and admin person, not the site supervisor.</li>
+      <li><strong>Default client rates</strong> — A, B and C in $/hr. These are the <em>fallback</em>, used when nothing on the Schedule of Rates matches the role on a timesheet.</li>
+      <li><strong>Email domains</strong> — e.g. <code>sydneywater.com.au</code>. Any email from that domain auto-tags to this client in the Inbox. Consumer domains like gmail.com are ignored on purpose.</li>
+    </ul>
+
+    <h3>Projects (the job sites)</h3>
+    <p>Click <strong>Projects</strong> on a client row. Each project carries its own:</p>
+    <ul>
+      <li>Name, site, address, start and end date, status</li>
+      <li><strong>Site contact</strong> — name, email, phone. This is the person who gets the timesheet approval link. A client with three sites can have three different site contacts.</li>
+      <li>Required roles, and notes</li>
+    </ul>
+
+    <h3>Schedule of Rates</h3>
+    <p>
+      This is the client's agreed price list, line by line. Each row is one billable item —
+      Labourer, Confined Space Entry, 8t Excavator, Tipping Fee, Travel per km — with its own
+      unit (hour, shift, day, ton, m³, m², lm, each, km, unit) and its own A/B/C prices.
+      Items group on screen by category: labour, plant, attachments, materials, allowances, other.
+    </p>
+
+    <p>Three ways to get rates in:</p>
+    <div class="cards">
+      <div class="card">
+        <div class="t">+ Add line item</div>
+        <div class="d">One row at a time. Fine for a single addition.</div>
+      </div>
+      <div class="card">
+        <div class="t">+ Add many</div>
+        <div class="d">A grid for typing 3–10 rows in one go.</div>
+      </div>
+      <div class="card">
+        <div class="t">📤 Upload rates</div>
+        <div class="d">Paste a whole rate card from a PDF or Excel, or upload a CSV. This is the one you want.</div>
+      </div>
+    </div>
+
+    <p>
+      The uploader works out the delimiter itself, matches your column headers however
+      they're spelled, normalises units (<code>Hour</code>, <code>hr</code>, <code>H</code> all become <code>hour</code>),
+      and treats POR, POA, TBA and blanks as "no price". You get a live preview of exactly what
+      will be saved — and what got skipped — before anything is committed.
+    </p>
+
+    <div class="note warn">
+      <span class="tag">Role names have to match, near enough</span>
+      <p>
+        When a timesheet is priced, the portal matches the <em>role on the timesheet</em> to a
+        <em>line on the rate card</em>. It's forgiving — it ignores punctuation, treats
+        "Labourer" and "Labour" as the same, and will match "Operator - Dozer" to a line
+        called just "Operator".
+      </p>
+      <p>
+        But if it finds nothing at all, it quietly falls back to the client's default A/B/C, and the
+        Payroll page marks that row <span class="chip warn">fallback</span>. <strong>Treat a fallback tag
+        as a job to do</strong> — it means you're billing a guess, not the agreed price.
+      </p>
+    </div>
+
+    <h3>Common Roles</h3>
+    <p>
+      A shared library of role names — Excavator Operator, Dogman, Skilled Labourer, Foreman.
+      It only powers the type-ahead suggestions when you're writing a rate card or a project.
+      Adding one here makes it suggestible everywhere, immediately.
+    </p>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ DEFAULT RATES ═══ -->
+<section id="default-rates">
+  <div class="wrap">
+    <div class="kicker">Finance</div>
+    <h2>💲 Default Rates</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>A master rate card you can stamp onto a new client in one click.</dd>
+      <dt>Open it</dt><dd>Onboarding a client who's taking your standard pricing.</dd>
+    </dl>
+
+    <p>
+      Build the line items once here — description, category, unit, A/B/C — then pick a client
+      and apply the whole card to them. Saves rebuilding a standard price list for every new
+      account. You can still edit any line on the client afterwards; applying the default is a
+      starting point, not a lock.
+    </p>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ PAYROLL ═══ -->
+<section id="payroll">
+  <div class="wrap">
+    <div class="kicker">Finance</div>
+    <h2>💰 Payroll</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>Working out what everyone is owed, and getting it into Xero.</dd>
+      <dt>Open it</dt><dd>Every pay run.</dd>
+      <dt>Watch for</dt><dd>The <span class="chip warn">fallback</span> and <span class="chip danger">⚠ no rates</span> tags in the Charge column.</dd>
+    </dl>
+
+    <p>
+      Only timesheets that are <strong>approved and signed off</strong> appear here. The four-step
+      guide across the top of the page turns green as you complete each stage.
+    </p>
+
+    <div class="recipe">
+      <h4>Running a pay period</h4>
+      <ol>
+        <li>Set <strong>Pay period from</strong> and <strong>to</strong>. Nothing can be pushed to Xero until you do.</li>
+        <li>Narrow down if you want — by worker type, or by <strong>Worker</strong> to check one person.</li>
+        <li>Read the tiles: normal hours, OT 1.5×, OT 2×, RDO, total pay, total charge — each with its dollars.</li>
+        <li>Scan the <strong>Pay summary by worker</strong> table at the bottom. One line per person, ending in what they're owed. This is the sheet to check before you pay anyone.</li>
+        <li>Click <strong>Select Unexported</strong> to pick every approved timesheet not yet sent.</li>
+        <li><strong>↑ Push to Xero</strong>, or export a CSV if you'd rather import by hand.</li>
+      </ol>
+    </div>
+
+    <h3>Reading the table</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Column</th><th>Means</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Pay Hrs</strong></td><td>Total hours being paid.</td></tr>
+          <tr><td><strong>Normal</strong></td><td>Hours at the base rate, with the dollars underneath. Hover for the rate.</td></tr>
+          <tr><td><strong>OT 1.5×</strong></td><td>Hours at time-and-a-half, with dollars.</td></tr>
+          <tr><td><strong>OT 2×</strong></td><td>Hours at double time, with dollars.</td></tr>
+          <tr><td><strong>Charge Hrs</strong></td><td>Hours the client is billed for. Often different from pay hours.</td></tr>
+          <tr><td><strong>Allowances</strong></td><td>T = travel, M = meal. Also shows RDO banked, min-day top-ups, GEO loading.</td></tr>
+          <tr><td><strong>Total Pay</strong></td><td>Base pay plus allowances. What the worker gets.</td></tr>
+          <tr><td><strong>Charge Amt</strong></td><td>What the client gets invoiced.</td></tr>
+          <tr><td><strong>Xero</strong></td><td><span class="chip ok">✓ sent</span> means it's already gone. It won't be sent twice.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>The three exports</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Export</th><th>Use it for</th></tr></thead>
+        <tbody>
+          <tr><td><strong>↓ Export Pay Breakdown CSV</strong></td><td><strong>Reading and checking.</strong> Every row with normal / 1.5× / 2× hours, the rate for each, the dollars for each, allowances and total pay. Respects your filters, so "one worker, one week" is two clicks.</td></tr>
+          <tr><td><strong>↓ Export Xero CSV (Staff)</strong></td><td>Importing into Xero by hand. Shaped for the machine, not for you.</td></tr>
+          <tr><td><strong>↓ Export Subcontractors CSV</strong></td><td>Subbies, who don't go through the staff pay run.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note warn">
+      <span class="tag">Two tags that mean "check me"</span>
+      <p>
+        <span class="chip warn">fallback</span> — no rate card line matched this role, so it's billing
+        the client's default A/B/C. Add the missing line on the client's Schedule of Rates.
+      </p>
+      <p>
+        <span class="chip danger">⚠ no rates</span> — this client has no rate bands at all. You're billing
+        an old single-rate column. Fix this before you invoice.
+      </p>
+    </div>
+
+    <div class="note info">
+      <span class="tag">Why a push gets skipped</span>
+      <p>
+        Xero matches on first and last name, exactly. If the push reports "skipped", it's almost
+        always that the worker's name doesn't match their Xero record, or they're not assigned to a
+        payroll calendar in Xero. Subcontractors are skipped by design.
+      </p>
+    </div>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ PAYMENTS ═══ -->
+<section id="payments">
+  <div class="wrap">
+    <div class="kicker">Finance</div>
+    <h2>💳 Payments</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>Invoicing a client and paying workers through Stripe, driven by approved timesheets.</dd>
+      <dt>Open it</dt><dd>Only when you're actually moving money.</dd>
+      <dt>Watch for</dt><dd>Every action is a dry run first. Read it before you confirm.</dd>
+    </dl>
+
+    <p>The page has four parts: connection status, invoice a client, pay workers, and history.</p>
+
+    <div class="note ok">
+      <span class="tag">Nothing moves without you saying so twice</span>
+      <p>
+        Every write runs as a <strong>dry run</strong> first and shows you exactly what would happen.
+        You then confirm explicitly to run it for real. The live Stripe key never touches your browser —
+        it's read server-side only.
+      </p>
+    </div>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ PAYROLL CONFIG ═══ -->
+<section id="payroll-config">
+  <div class="wrap">
+    <div class="kicker">Finance</div>
+    <h2>⚙ Payroll Config</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>The dials behind every pay calculation.</dd>
+      <dt>Open it</dt><dd>Rarely. An award change, or a new allowance amount.</dd>
+      <dt>Watch for</dt><dd>Everything here affects every future pay run. Change one value at a time.</dd>
+    </dl>
+
+    <p>These are the live settings. Edit a value and hit <strong>Save</strong>.</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Setting</th><th class="num">Now</th><th>Controls</th></tr></thead>
+        <tbody>
+          <tr><td><code>ot_threshold_daily</code></td><td class="num">7.6</td><td>Hours before a normal weekday goes to overtime.</td></tr>
+          <tr><td><code>ot_multiplier</code></td><td class="num">1.5</td><td>Default overtime multiplier.</td></tr>
+          <tr><td><code>saturday_threshold_hours</code></td><td class="num">2</td><td>Saturday day hours at 1.5× before it flips to 2×.</td></tr>
+          <tr><td><code>night_threshold_hours</code></td><td class="num">8</td><td>Weekday night hours at 1.5× before 2×.</td></tr>
+          <tr><td><code>meal_allowance_trigger</code></td><td class="num">9.5</td><td>Hours worked before a meal allowance is added.</td></tr>
+          <tr><td><code>meal_allowance_amount</code></td><td class="num">$18.70</td><td>The meal allowance itself.</td></tr>
+          <tr><td><code>travel_allowance_casual</code></td><td class="num">$15.00</td><td>Per shift, casuals only, worked shifts only.</td></tr>
+          <tr><td><code>geo_loading_pct</code></td><td class="num">0.10</td><td>Geographic loading, +10%. Applied by tick box on a timesheet.</td></tr>
+          <tr><td><code>subcontractor_night_loading</code></td><td class="num">$10.00</td><td>Flat add-on for a subbie on nights or weekends.</td></tr>
+          <tr><td><code>default_client_rate_a</code></td><td class="num">$60.15</td><td>Fallback charge rate — normal time.</td></tr>
+          <tr><td><code>default_client_rate_b</code></td><td class="num">$85.05</td><td>Fallback charge rate — 1.5×.</td></tr>
+          <tr><td><code>default_client_rate_c</code></td><td class="num">$103.50</td><td>Fallback charge rate — 2×.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ XERO ═══ -->
+<section id="xero">
+  <div class="wrap">
+    <div class="kicker">Finance</div>
+    <h2>🔄 Xero Data</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>A read-only window into your Xero account, without leaving the portal.</dd>
+      <dt>Open it</dt><dd>Checking a pay run landed, or syncing rates.</dd>
+    </dl>
+
+    <p>Tabs cover employees and their pay rates, pay run history with payslip drill-down, contacts, leave applications, and pay setup (calendars, earnings rates, leave types, deductions).</p>
+
+    <h3>💸 Sync Pay Rates → Workers</h3>
+    <p>
+      On the Employees tab. Pulls each Xero employee's hourly rate and updates the matching
+      portal worker, matched on full name. Use it after a rate rise in Xero so the portal's
+      margin figures stay honest.
+    </p>
+
+    <h3>Connecting Xero</h3>
+    <p>
+      One-time, from the Payroll page — <strong>Connect Xero</strong>. After that the portal keeps
+      itself connected. If it drops, hit <strong>Reconnect</strong> and sign in again.
+    </p>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ INBOX ═══ -->
+<section id="inbox">
+  <div class="wrap">
+    <div class="kicker">Tools</div>
+    <h2>📨 Inbox</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>A shared team email inbox, with every conversation threaded against the worker or client it belongs to.</dd>
+      <dt>Open it</dt><dd>Any conversation that needs a reply.</dd>
+      <dt>Watch for</dt><dd>Everyone sends from the same team address, not their own.</dd>
+    </dl>
+
+    <div class="note warn">
+      <span class="tag">Connect a shared mailbox, never a personal one</span>
+      <p>
+        Whoever connects the account, <strong>the whole team sees every email in it</strong>.
+        Use an ops address. Setting it up: Inbox → <strong>Connect team email</strong> → sign in
+        with Google → approve.
+      </p>
+    </div>
+
+    <h3>What actually gets pulled in</h3>
+    <p>
+      Only emails involving a <strong>known worker or known client</strong>. Personal mail and
+      newsletters stay in Gmail and never touch the portal. A thread matches if a participant's
+      email matches a worker, matches a client contact, or matches a domain listed on a client.
+    </p>
+
+    <h3>The controls</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Control</th><th>Does</th></tr></thead>
+        <tbody>
+          <tr><td><strong>✎ Compose</strong></td><td>New email. The To field autocompletes from workers and clients.</td></tr>
+          <tr><td><strong>↻ Sync</strong></td><td>Pull recent threads from Gmail.</td></tr>
+          <tr><td><strong>↔</strong></td><td>Switch team email account. Old cached threads are wiped automatically.</td></tr>
+          <tr><td><strong>⛔</strong></td><td>Disconnect entirely.</td></tr>
+          <tr><td>Filter chips</td><td>Inbox · Unread · Starred · Workers · Clients · Archived, each with a count.</td></tr>
+          <tr><td><strong>★ / ☆</strong></td><td>Star. Mirrors to Gmail.</td></tr>
+          <tr><td><strong>●</strong></td><td>Mark unread again.</td></tr>
+          <tr><td><strong>🗄 / ↺</strong></td><td>Archive, or bring it back.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Someone emails you who isn't in the system</h3>
+    <p>
+      The thread shows a banner with <strong>+ Add as worker</strong> and <strong>+ Add as client</strong>.
+      Pick one, give a name, save. The contact is created and the thread links to them. If you add
+      them as a client, their company domain is added automatically so their colleagues tag correctly
+      from then on.
+    </p>
+
+    <h3>Email history on worker and client cards</h3>
+    <p>
+      Open any worker or client and you'll see a <strong>Recent emails</strong> panel with the last
+      six threads. Click one to jump into the Inbox at that conversation. Quick way to answer
+      "what did we last tell them?"
+    </p>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ TEMPLATES ═══ -->
+<section id="templates">
+  <div class="wrap">
+    <div class="kicker">Tools</div>
+    <h2>📝 Email Templates</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>Canned messages you send over and over.</dd>
+      <dt>Open it</dt><dd>When you catch yourself typing the same email twice.</dd>
+    </dl>
+
+    <p>
+      Each template has a name, a subject and a body. Use <code>{{placeholders}}</code> and they fill
+      themselves in from whoever you're writing to. Changes are live immediately — no deploy.
+    </p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Placeholder</th><th>Becomes</th></tr></thead>
+        <tbody>
+          <tr><td><code>{{worker_name}}</code></td><td>The worker's name</td></tr>
+          <tr><td><code>{{worker_email}}</code></td><td>Their email</td></tr>
+          <tr><td><code>{{client_name}}</code></td><td>The client company</td></tr>
+          <tr><td><code>{{client_contact}}</code></td><td>Their contact person</td></tr>
+          <tr><td><code>{{week_ending}}</code></td><td>Week-ending date from the linked timesheet</td></tr>
+          <tr><td><code>{{date}}</code></td><td>The allocation work date</td></tr>
+          <tr><td><code>{{job}}</code> / <code>{{site}}</code></td><td>Project and site name</td></tr>
+          <tr><td><code>{{start_time}}</code></td><td>Allocation start time</td></tr>
+          <tr><td><code>{{onboard_link}}</code></td><td>That worker's private onboarding link</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Anything in <code>{{ }}</code> that isn't on this list is left alone, so a typo shows up as itself rather than vanishing.</p>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ BULK ═══ -->
+<section id="bulk">
+  <div class="wrap">
+    <div class="kicker">Tools</div>
+    <h2>📢 Bulk Messages</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>One-way announcements to lots of people at once.</dd>
+      <dt>Open it</dt><dd>Rate rise notice, holiday closure, induction reminder.</dd>
+      <dt>Don't use it for</dt><dd>Anything you want a reply to.</dd>
+    </dl>
+
+    <div class="note warn">
+      <span class="tag">Blasts don't thread back</span>
+      <p>
+        Bulk Messages goes out through a separate sending service. Replies won't land in your
+        Inbox. If the message needs a conversation, <strong>use the Inbox instead</strong>.
+      </p>
+    </div>
+
+    <p>
+      Every blast is logged, so you can always see who got what and when. Recipients show a green
+      <span class="chip ok">✓ recently emailed</span> pill on the Workers and Clients pages.
+      There's a <strong>Sent History</strong> tab for the full record.
+    </p>
+
+    <div class="note info">
+      <span class="tag">About text messages</span>
+      <p>
+        SMS is wired up and working, but <strong>texts are deliberately limited to one recipient
+        by owner decision</strong>. The notification bell and emails still reach all admins normally.
+        Don't change that without asking.
+      </p>
+    </div>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ LICENCES ═══ -->
+<section id="licences">
+  <div class="wrap">
+    <div class="kicker">Tools</div>
+    <h2>🪪 Licence Agent</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>Every ticket and certification, with expiry dates.</dd>
+      <dt>Open it</dt><dd>When the red badge appears, or when a worker gets a new ticket.</dd>
+      <dt>Watch for</dt><dd>An expired ticket can mean someone is illegally on site.</dd>
+    </dl>
+
+    <p><strong>+ Add Licence</strong> takes a worker, a licence name, an issuer and an expiry date. Once saved it shows up in three places:</p>
+    <ul>
+      <li>This page, with expiry warnings</li>
+      <li>The worker's own record</li>
+      <li>The Dashboard's alert card, once it's inside 30 days</li>
+    </ul>
+    <p>The sidebar badge counts anything expiring within 30 days. It's red for a reason.</p>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ APPLICATIONS ═══ -->
+<section id="applications">
+  <div class="wrap">
+    <div class="kicker">Tools</div>
+    <h2>📥 Applications</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>People who've applied through the public apply form.</dd>
+      <dt>Open it</dt><dd>When the orange badge shows new applicants.</dd>
+    </dl>
+
+    <p>
+      Applications arrive from the public form and land as <strong>new</strong>. Read the details,
+      add review notes, then <strong>Convert to Worker</strong> when you want them.
+      That creates a proper worker record and moves them into the onboarding flow —
+      you don't retype anything.
+    </p>
+    <p>Applications you don't convert stay on file with your notes attached.</p>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ PENDING ═══ -->
+<section id="pending">
+  <div class="wrap">
+    <div class="kicker">Tools</div>
+    <h2>📱 Pending Workers</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>Workers who exist in the system but can't use the app yet.</dd>
+      <dt>Open it</dt><dd>After adding a worker, and whenever someone says "I can't log in".</dd>
+    </dl>
+
+    <p>
+      A worker record on its own doesn't give app access. This page tracks who's been invited,
+      who's completing their profile, and who's fully active. Send or resend an invite from here.
+    </p>
+    <p>
+      Invites go out through the connected team Gmail when it's available, and fall back to a
+      backup sender if not. The yellow sidebar badge counts everyone not yet active.
+    </p>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ APP VIEWS ═══ -->
+<section id="appviews">
+  <div class="wrap">
+    <div class="kicker">Tools</div>
+    <h2>📲 App Views</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>Seeing, at a glance, which workers have app access and what state they're in.</dd>
+      <dt>Open it</dt><dd>Auditing who's actually set up on their phone.</dd>
+    </dl>
+
+    <p>
+      A compact grid of every active worker with their role, contact details and app status.
+      Useful before a big allocation push, to check the people you're about to book can
+      actually receive the job on their phone.
+    </p>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ REPORTS ═══ -->
+<section id="reports">
+  <div class="wrap">
+    <div class="kicker">Tools</div>
+    <h2>📁 Reports</h2>
+
+    <dl class="purpose">
+      <dt>For</dt><dd>Getting raw data out as CSV.</dd>
+      <dt>Open it</dt><dd>Anything the on-screen pages won't answer.</dd>
+    </dl>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Export</th><th>Contains</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Workers Export</strong></td><td>All worker records</td></tr>
+          <tr><td><strong>Timesheets Export</strong></td><td>All timesheets with worker names — takes a date filter</td></tr>
+          <tr><td><strong>Allocations Export</strong></td><td>All allocations with worker names</td></tr>
+          <tr><td><strong>Clients Export</strong></td><td>All clients with rates and contacts</td></tr>
+          <tr><td><strong>Certifications Export</strong></td><td>All tickets with worker names</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>For anything about <em>pay</em>, don't use these — use <strong>Export Pay Breakdown CSV</strong> on the Payroll page. It's the only export that shows the money.</p>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ WORKER APP ═══ -->
+<section id="worker-app">
+  <div class="wrap">
+    <div class="kicker">Worker app</div>
+    <h2>What workers see</h2>
+
+    <p class="lede">
+      Workers get a stripped-back phone view with eight tabs. They see their own data and
+      nothing else — no rates, no other workers, no clients.
+    </p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Tab</th><th>What they do there</th></tr></thead>
+        <tbody>
+          <tr><td><strong>📋 My Allocations</strong></td><td>Where they're going, when, and who to report to.</td></tr>
+          <tr><td><strong>🕐 My Timesheets</strong></td><td>Submit a timesheet, view past ones, print one.</td></tr>
+          <tr><td><strong>✋ Take 5</strong></td><td>Pre-start safety check: the task, 2–3 hazards, and a control for each.</td></tr>
+          <tr><td><strong>👤 My Profile</strong></td><td>Keep their own contact details current.</td></tr>
+          <tr><td><strong>🪪 Certificates / Tickets</strong></td><td>Their tickets and expiry dates.</td></tr>
+          <tr><td><strong>📜 My Certifications</strong></td><td>The formal compliance list.</td></tr>
+          <tr><td><strong>🗂 History</strong></td><td>Everything they've worked.</td></tr>
+          <tr><td><strong>⏱ Clock In/Out</strong></td><td>Start and finish a shift live.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      When a worker submits a timesheet, they only get two shift options — <strong>Standard</strong> or
+      <strong>Rain Day</strong>. The full scenario list is admin-only, so nobody accidentally books
+      themselves annual leave.
+    </p>
+
+    <div class="note ok">
+      <span class="tag">It installs like a real app</span>
+      <p>
+        The portal is installable on a phone home screen and works through patchy site reception.
+        Tell new workers to open the link and choose "Add to Home Screen" — it removes the
+        "I couldn't find the website" problem entirely.
+      </p>
+    </div>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ PAY RULES ═══ -->
+<section id="pay-rules">
+  <div class="wrap">
+    <div class="kicker">The rules</div>
+    <h2>How pay is worked out</h2>
+
+    <p class="lede">
+      Every shift gets split into three buckets — normal time, 1.5× and 2× — and each bucket is
+      paid at its own rate. The split happens once, when the timesheet is saved, so what's printed
+      on the timesheet and what's on the payslip can never disagree.
+    </p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>The shift</th><th>How the hours split</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Sunday · Public Holiday · Saturday night</strong></td><td class="num"><strong>Every hour at 2×</strong></td></tr>
+          <tr><td><strong>Saturday day</strong></td><td class="num">First <strong>2h at 1.5×</strong>, everything after at <strong>2×</strong></td></tr>
+          <tr><td><strong>Weekday night</strong></td><td class="num">First <strong>8h at 1.5×</strong>, everything after at <strong>2×</strong></td></tr>
+          <tr><td><strong>Weekday day — full-time</strong></td><td class="num">7.6h normal + 0.4h banked to RDO, then 1.5× to the 10th hour, then 2×</td></tr>
+          <tr><td><strong>Weekday day — casual / subbie</strong></td><td class="num">8h normal, then 1.5× to the 10th hour, then 2×</td></tr>
+          <tr><td><strong>Leave, rain-off, training, LWOP</strong></td><td class="num"><strong>All ordinary.</strong> Penalties never apply</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note info">
+      <span class="tag">The Saturday rule catches people out</span>
+      <p>
+        Saturday <strong>day</strong> is only 1.5× for the first <strong>two</strong> hours — then it's
+        double time. Saturday <strong>night</strong> is double time from the first minute. These are
+        different rules, and it's the most common thing to get wrong from memory.
+      </p>
+    </div>
+
+    <h3>Allowances</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Allowance</th><th class="num">Amount</th><th>When</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Travel</strong></td><td class="num">$15.00</td><td>Casuals, per shift actually worked. Not on leave, rain-off or training days.</td></tr>
+          <tr><td><strong>Meal</strong></td><td class="num">$18.70</td><td>Automatic once a shift hits 9.5 hours.</td></tr>
+          <tr><td><strong>Geo loading</strong></td><td class="num">+10%</td><td>Manual tick box. Multiplies the base pay.</td></tr>
+          <tr><td><strong>Subbie night/weekend</strong></td><td class="num">$10.00</td><td>Flat add-on for subcontractors on nights or weekends.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Full-time minimum day</h3>
+    <p>
+      A full-timer sent home early on a normal weekday is still paid a full 8 hours,
+      while the client is only charged the hours actually worked. Two 4-hour shifts on one day
+      already make the 8, so no top-up applies. It doesn't apply to weekends, public holidays,
+      or any non-standard scenario.
+    </p>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ CHARGE RULES ═══ -->
+<section id="charge-rules">
+  <div class="wrap">
+    <div class="kicker">The rules</div>
+    <h2>How clients are charged</h2>
+
+    <p class="lede">
+      Charging is a <strong>different set of rules</strong> from paying. Same shift, different maths.
+      This is deliberate, and it's the thing most worth understanding on this page.
+    </p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>The shift</th><th>Billed at</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Sunday · Public Holiday</strong> (day or night)</td><td>Every hour at <strong>C</strong></td></tr>
+          <tr><td><strong>Saturday night</strong></td><td>Every hour at <strong>C</strong></td></tr>
+          <tr><td><strong>Saturday day</strong></td><td>Every hour at <strong>B</strong> — no threshold</td></tr>
+          <tr><td><strong>Weekday night</strong></td><td>Every hour at <strong>B</strong></td></tr>
+          <tr><td><strong>Weekday day</strong></td><td>First <strong>8h at A</strong>, everything after at <strong>B</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Which price it uses</h3>
+    <p>The portal looks for a price in this order, and stops at the first one it finds:</p>
+    <ol>
+      <li>The <strong>Schedule of Rates line</strong> matching the role on the timesheet — the agreed price.</li>
+      <li>The <strong>client's default A/B/C</strong> — flagged <span class="chip warn">fallback</span> on the Payroll page.</li>
+      <li>The client's old single-rate columns — flagged <span class="chip danger">⚠ no rates</span>.</li>
+    </ol>
+
+    <div class="note danger">
+      <span class="tag">Known gap — pay can exceed charge</span>
+      <p>
+        Pay reaches 2× in places charging never does. A Saturday day shift is <strong>paid</strong> at
+        double time from hour three, but <strong>billed</strong> at B for its whole length. Weekday overtime
+        bills at B however long it runs and never reaches C.
+      </p>
+      <p>
+        This has not been confirmed as intended. If you're quoting a long Saturday or a heavy
+        overtime week, check the margin by hand before you commit to a price.
+      </p>
+    </div>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ RECIPES ═══ -->
+<section id="recipes">
+  <div class="wrap">
+    <div class="kicker">Reference</div>
+    <h2>Job recipes</h2>
+    <p class="lede">The things you'll actually do, start to finish.</p>
+
+    <div class="recipe">
+      <h4>Send a worker to a job tomorrow</h4>
+      <ol>
+        <li><strong>Workers</strong> — check they exist, are active, and their tickets aren't expired.</li>
+        <li><strong>Allocations → + Create Allocation</strong>.</li>
+        <li>Fill in worker, client, project, site, dates and arrival time.</li>
+        <li><strong>Fill in the site supervisor and phone.</strong> Without it, their timesheet can't be signed off.</li>
+        <li>Set status to <strong>Confirmed</strong> and save.</li>
+        <li>Read any double-booking warning before you override it.</li>
+      </ol>
+    </div>
+
+    <div class="recipe">
+      <h4>Approve a rain day</h4>
+      <ol>
+        <li><strong>Timesheets</strong> → filter to Pending.</li>
+        <li>Open the row.</li>
+        <li>Set the scenario: <strong>Rain-Off Cancelled</strong> if they were sent straight home, <strong>Rain-Off Partial</strong> if they got about half a day in.</li>
+        <li>Pay and charge hours fill in automatically — 8 paid, 0 or 4 charged.</li>
+        <li>Set status to Approved and save.</li>
+      </ol>
+    </div>
+
+    <div class="recipe">
+      <h4>Run last week's payroll</h4>
+      <ol>
+        <li><strong>Payroll</strong> → set the pay period dates.</li>
+        <li>Check the <strong>Pay summary by worker</strong> table at the bottom. Does each person's total look right?</li>
+        <li>Look for <span class="chip warn">fallback</span> or <span class="chip danger">⚠ no rates</span> tags and fix the rate cards behind them.</li>
+        <li><strong>Export Pay Breakdown CSV</strong> if you want a copy to check off screen.</li>
+        <li><strong>Select Unexported</strong>.</li>
+        <li><strong>↑ Push to Xero</strong> — or export the Xero CSV and import it by hand.</li>
+      </ol>
+    </div>
+
+    <div class="recipe">
+      <h4>Check exactly what one person is owed</h4>
+      <ol>
+        <li><strong>Payroll</strong> → set the date range.</li>
+        <li>Pick them in the <strong>Worker</strong> dropdown.</li>
+        <li>Read the Normal / OT 1.5× / OT 2× columns. Hover any cell to see the rate behind it.</li>
+        <li>The Pay summary table at the bottom now shows just them, ending in their total.</li>
+      </ol>
+    </div>
+
+    <div class="recipe">
+      <h4>Onboard a new client with their price list</h4>
+      <ol>
+        <li><strong>Clients &amp; Rates → + Add Client</strong>. Check first that they don't already exist.</li>
+        <li>Add contact details, default A/B/C rates, and their email domain.</li>
+        <li>Add their <strong>Projects</strong>, each with its own site contact.</li>
+        <li>Open <strong>Schedule of Rates</strong> → <strong>📤 Upload rates</strong>.</li>
+        <li>Paste the rate card straight from their PDF or Excel.</li>
+        <li>Read the preview. Fix anything it skipped, then save.</li>
+      </ol>
+    </div>
+
+    <div class="recipe">
+      <h4>Get a new worker onto the app</h4>
+      <ol>
+        <li><strong>Workers → + Add Worker</strong>. Name must match Xero exactly.</li>
+        <li>Save. They now exist, but can't log in.</li>
+        <li><strong>Pending Workers</strong> → find them → send the invite.</li>
+        <li>They open the link, complete their profile, and create their account.</li>
+        <li>Tell them to add it to their home screen.</li>
+        <li><strong>Licence Agent</strong> → add their tickets and expiry dates.</li>
+      </ol>
+    </div>
+
+    <div class="recipe">
+      <h4>Find everyone with a particular ticket</h4>
+      <ol>
+        <li><strong>Workers</strong> → open the <strong>🪪 All Licences</strong> dropdown.</li>
+        <li>Pick the licence — or type part of it, like <code>ewp</code>.</li>
+        <li>The list filters to only those workers.</li>
+      </ol>
+    </div>
+  </div>
+  <hr class="rule">
+</section>
+
+<!-- ═══ TROUBLE ═══ -->
+<section id="trouble">
+  <div class="wrap">
+    <div class="kicker">Reference</div>
+    <h2>When it goes wrong</h2>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>What you're seeing</th><th>What to do</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>A worker can't log in</strong></td>
+            <td>Pending Workers → check their app status → resend the invite. A worker record alone doesn't grant access.</td>
+          </tr>
+          <tr>
+            <td><strong>Xero push says "skipped"</strong></td>
+            <td>The name doesn't match Xero exactly, or they're not on a payroll calendar in Xero. Subcontractors are skipped on purpose.</td>
+          </tr>
+          <tr>
+            <td><strong>Xero connection lost</strong></td>
+            <td>Payroll → Reconnect Xero.</td>
+          </tr>
+          <tr>
+            <td><strong>A pay rate looks wrong</strong></td>
+            <td>Check the worker's base rate in Workers, <em>then check the date</em>. Saturdays, Sundays, public holidays and night shifts all pay differently. See <a href="#pay-rules">How pay is worked out</a>.</td>
+          </tr>
+          <tr>
+            <td><strong>Approved timesheet isn't in Payroll</strong></td>
+            <td>It needs approval <em>and</em> supervisor sign-off. Check the timesheet's View panel. If it's already been pushed it'll show <span class="chip ok">✓ sent</span>.</td>
+          </tr>
+          <tr>
+            <td><strong>A charge amount looks wrong</strong></td>
+            <td>Look for the <span class="chip warn">fallback</span> tag. It means no rate card line matched that role, so it's billing a default. Add the missing line.</td>
+          </tr>
+          <tr>
+            <td><strong>Bell says "sign-off blocked"</strong></td>
+            <td>No reachable site supervisor on that project. Add the contact and resend, or mark it accepted verbally.</td>
+          </tr>
+          <tr>
+            <td><strong>New emails aren't showing in the Inbox</strong></td>
+            <td>The sender must be a known worker or client, or on a client's domain. Add them, then hit ↻ Sync.</td>
+          </tr>
+          <tr>
+            <td><strong>Every Inbox thread shows the wrong name</strong></td>
+            <td>Someone added the team email address itself as a worker. Delete that worker row, then disconnect and reconnect the team email.</td>
+          </tr>
+          <tr>
+            <td><strong>Same client appears twice</strong></td>
+            <td>Stop and get it merged before invoicing. Duplicate clients have caused real mis-billing. Don't just pick one.</td>
+          </tr>
+          <tr>
+            <td><strong>Need to change an overtime threshold</strong></td>
+            <td>Payroll Config. Change one value at a time, and check the next pay run carefully.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="wrap">
+    <p>
+      <strong>CBD Plant &amp; Labour — Operations Portal.</strong>
+      The same build runs the MRA and Hecate portals; only branding and rates differ,
+      so everything in this handbook applies to all three.
+    </p>
+    <p>
+      Rates, thresholds and calculation rules in this document were read directly from the
+      live system on 21 August 2026. If a number here disagrees with the portal, the portal wins —
+      and tell someone, because this page needs fixing.
+    </p>
+  </div>
+</footer>
+
+</main>
+</div>
+
+<button class="totop" id="toTop" type="button">↑ Top</button>
+
+<script>
+(function () {
+  "use strict";
+
+  var sections = Array.prototype.slice.call(document.querySelectorAll("section[id]"));
+  var navLinks = Array.prototype.slice.call(document.querySelectorAll(".rail a.nav"));
+  var byHash = {};
+  navLinks.forEach(function (a) { byHash[a.getAttribute("href")] = a; });
+
+  // Highlight the section you're actually reading.
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        var link = byHash["#" + e.target.id];
+        if (!link) return;
+        navLinks.forEach(function (a) { a.classList.remove("on"); });
+        link.classList.add("on");
+      });
+    }, { rootMargin: "0px 0px -72% 0px", threshold: 0 });
+    sections.forEach(function (s) { io.observe(s); });
+  }
+
+  // Filter the rail. Group labels hide when nothing under them matches.
+  var filter = document.getElementById("navFilter");
+  if (filter) {
+    filter.addEventListener("input", function () {
+      var q = filter.value.trim().toLowerCase();
+      Array.prototype.forEach.call(document.querySelectorAll(".rail-group"), function (g) {
+        var hits = 0;
+        Array.prototype.forEach.call(g.querySelectorAll("a.nav"), function (a) {
+          var match = !q || a.textContent.toLowerCase().indexOf(q) !== -1;
+          a.classList.toggle("rail-hide", !match);
+          if (match) hits++;
+        });
+        g.classList.toggle("rail-hide", q && hits === 0);
+      });
+    });
+  }
+
+  // Back to top, once you're a screen down.
+  var toTop = document.getElementById("toTop");
+  if (toTop) {
+    toTop.addEventListener("click", function () {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+    var onScroll = function () {
+      toTop.classList.toggle("show", window.scrollY > window.innerHeight * 0.6);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+  }
+})();
+</script>
