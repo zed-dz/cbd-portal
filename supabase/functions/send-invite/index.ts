@@ -24,6 +24,73 @@ const GMAIL_CLIENT_SECRET  = Deno.env.get('GMAIL_CLIENT_SECRET') || '';
 const SENDER_DISPLAY_NAME  = Deno.env.get('GMAIL_SENDER_NAME') || 'CBD Plant & Labour';
 const PORTAL_URL           = Deno.env.get('PORTAL_URL')  || 'https://cbd-portal-gray.vercel.app';
 
+// ── One-way email delivery ──────────────────────────────────────────────────
+// Transactional mail (invites, blasts, digests, approval links) goes out from the
+// company domain via Resend: branded, and it survives the Gmail OAuth token
+// lapsing. reply_to points BACK at the connected team Gmail, so anyone who hits
+// reply still lands in the portal Inbox — branded outbound, Gmail inbound.
+//
+// Gmail is kept as an automatic fallback rather than being ripped out. If Resend
+// rejects a send — domain not verified yet, rate limit, provider outage — the
+// message goes out the old way instead of being silently dropped. That also means
+// this can be deployed before the domain finishes verifying with no outage.
+const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
+const MAIL_FROM      = Deno.env.get('MAIL_FROM') || '';
+const RESEND_ON      = !!(RESEND_API_KEY && MAIL_FROM);
+
+async function sendViaResend(opts: { to: string; subject: string; text: string; html?: string; replyTo?: string | null }) {
+  const payload: Record<string, unknown> = {
+    from: MAIL_FROM, to: [opts.to], subject: opts.subject, text: opts.text,
+  };
+  if (opts.html) payload.html = opts.html;
+  if (opts.replyTo) payload.reply_to = opts.replyTo;
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const ok = res.ok;
+    return { ok, detail: ok ? '' : (await res.text()).slice(0, 300) };
+  } catch (e) {
+    return { ok: false, detail: (e as Error).message };
+  }
+}
+
+async function sendGmailRaw(accessToken: string, mime: string) {
+  try {
+    const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ raw: b64url(mime) }),
+    });
+    const ok = res.ok;
+    return { ok, detail: ok ? '' : (await res.text()).slice(0, 300) };
+  } catch (e) {
+    return { ok: false, detail: (e as Error).message };
+  }
+}
+
+// Resend first, Gmail second. Returns which one actually carried it.
+async function deliverOneWay(opts: {
+  to: string; subject: string; text: string; html?: string;
+  replyTo?: string | null; gmailToken?: string; gmailMime?: () => string;
+}): Promise<{ ok: boolean; via: string; detail: string }> {
+  const canGmail = !!(opts.gmailToken && opts.gmailMime);
+  if (RESEND_ON) {
+    const r = await sendViaResend({ to: opts.to, subject: opts.subject, text: opts.text, html: opts.html, replyTo: opts.replyTo });
+    if (r.ok) return { ok: true, via: 'resend', detail: '' };
+    if (!canGmail) return { ok: false, via: 'resend', detail: r.detail };
+    const g = await sendGmailRaw(opts.gmailToken!, opts.gmailMime!());
+    return g.ok
+      ? { ok: true, via: 'gmail-fallback', detail: `resend failed: ${r.detail}` }
+      : { ok: false, via: 'both-failed', detail: `resend: ${r.detail} | gmail: ${g.detail}` };
+  }
+  if (!canGmail) return { ok: false, via: 'none', detail: 'no sender configured' };
+  const g = await sendGmailRaw(opts.gmailToken!, opts.gmailMime!());
+  return { ok: g.ok, via: 'gmail', detail: g.detail };
+}
+
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -153,20 +220,27 @@ serve(async (req) => {
     fromEmail   = t.emailAddress;
   } catch (e) {
     const msg = (e as Error).message;
-    return json({ ok: false, via: 'gmail', error: msg }, msg === 'gmail_not_connected' ? 412 : 500);
+    // With Resend configured, Gmail is only the fallback + the reply-to address,
+    // so a missing Gmail token is no longer fatal.
+    if (!RESEND_ON) return json({ ok: false, via: 'gmail', error: msg }, msg === 'gmail_not_connected' ? 412 : 500);
+    accessToken = ''; fromEmail = null;
   }
-  if (!fromEmail) return json({ ok: false, via: 'gmail', error: 'no_from_address' }, 500);
-  const fromHeader = formatFromHeader(SENDER_DISPLAY_NAME, fromEmail);
+  if (!fromEmail && !RESEND_ON) return json({ ok: false, via: 'gmail', error: 'no_from_address' }, 500);
+  const fromHeader = fromEmail ? formatFromHeader(SENDER_DISPLAY_NAME, fromEmail) : MAIL_FROM;
 
   // ── Probe mode: confirm the Gmail path without touching a real worker ──────
   if (body.test) {
     const to = (body.to || '').trim();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return json({ ok: false, error: 'test mode needs a valid `to`' }, 400);
-    const subject = 'CBD invite path — test send (via Gmail)';
-    const text = `This is a test of the worker invite email path. It was sent via Gmail (Google) — the only email sender.\n\n— ${SENDER_DISPLAY_NAME}`;
+    const subject = 'CBD invite path — test send';
+    const text = `This is a test of the worker invite email path.\n\n— ${SENDER_DISPLAY_NAME}`;
     const html = `<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14.5px;line-height:1.6;color:#1a1a1a">${escapeHtml(text).replace(/\n/g, '<br>')}</body></html>`;
-    const r = await sendViaGmail(accessToken, buildMime({ from: fromHeader, to, subject, text, html }));
-    return json({ ok: r.ok, via: 'gmail', to, detail: r.detail || undefined }, r.ok ? 200 : 502);
+    const r = await deliverOneWay({
+      to, subject, text, html, replyTo: fromEmail,
+      gmailToken: accessToken || undefined,
+      gmailMime: accessToken ? () => buildMime({ from: fromHeader, to, subject, text, html }) : undefined,
+    });
+    return json({ ok: r.ok, via: r.via, to, detail: r.detail || undefined }, r.ok ? 200 : 502);
   }
 
   const workerId = body.worker_id;
@@ -197,7 +271,11 @@ ABN 75 663 693 070`;
 
   const html = `<!doctype html><html><body style="margin:0;padding:0;background:#0d0f14;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0d0f14;padding:32px 16px;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#131620;border:1px solid #2a2f40;border-radius:14px;padding:32px;"><tr><td><div style="font-size:30px;font-weight:800;color:#f97316;letter-spacing:-0.5px;">CBD</div><div style="font-size:11px;color:#8b90a8;letter-spacing:2px;text-transform:uppercase;margin-top:2px;margin-bottom:24px;">Plant &amp; Labour</div><h1 style="color:#e8eaf2;font-size:22px;margin:0 0 12px 0;font-weight:700;">G'day ${escapeHtml(firstName)},</h1><p style="color:#e8eaf2;font-size:15px;line-height:1.55;margin:0 0 16px 0;">You've been added to the CBD Plant &amp; Labour worker portal. To get on a job, we just need a few details from you — mobile number, address, and your tickets/licences.</p><p style="color:#8b90a8;font-size:14px;line-height:1.55;margin:0 0 28px 0;">Tap the button below to fill out your profile. It takes about a minute.</p><table role="presentation" cellpadding="0" cellspacing="0"><tr><td><a href="${inviteUrl}" style="display:inline-block;background:#f97316;color:#fff;text-decoration:none;font-weight:600;font-size:15px;padding:14px 28px;border-radius:8px;">Complete my profile →</a></td></tr></table><p style="color:#8b90a8;font-size:12px;line-height:1.55;margin:28px 0 0 0;">Or copy this link into your browser:<br><a href="${inviteUrl}" style="color:#f97316;word-break:break-all;">${inviteUrl}</a></p><hr style="border:none;border-top:1px solid #2a2f40;margin:28px 0 16px 0;"><p style="color:#8b90a8;font-size:11px;line-height:1.5;margin:0;font-family:'SF Mono',Consolas,monospace;">CBD PLANT &amp; LABOUR · ABN 75 663 693 070<br>ROAD · RAIL · WATER</p></td></tr></table></td></tr></table></body></html>`;
 
-  const r = await sendViaGmail(accessToken, buildMime({ from: fromHeader, to: worker.email, subject, text: plainText, html }));
+  const r = await deliverOneWay({
+    to: worker.email, subject, text: plainText, html, replyTo: fromEmail,
+    gmailToken: accessToken || undefined,
+    gmailMime: accessToken ? () => buildMime({ from: fromHeader, to: worker.email, subject, text: plainText, html }) : undefined,
+  });
 
   // Log every attempt — success AND failure. Without this there was no record
   // that an invite had been sent at all, so "I clicked Send Email and nothing

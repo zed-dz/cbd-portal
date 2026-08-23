@@ -24,10 +24,11 @@ construction labour-hire — road / rail / water). It runs the entire workflow:
 | Payroll     | Computes pay + charge per timesheet. Push to Xero. CSV export. |
 | Xero Sync   | OAuth flow to Xero, push approved timesheets as payslip entries. |
 | Licence Agent | Worker certifications + expiry tracking. |
-| Pending Workers | Workers not yet active — send invites via Resend. |
-| Bulk Messages | Email blasts via Gmail (with Resend fallback). Sent History tab. SMS stubbed. |
+| Pending Workers | Workers not yet active — send invites (Resend, from the company domain). |
+| Bulk Messages | One-way email blasts via Resend (Gmail fallback). Sent History tab. SMS live via Twilio. |
 
-**Live URL:** https://cbd-portal-gray.vercel.app (NOT `zeta` — common confusion)
+**Live URL:** https://portal.cbdpnl.com.au — primary since 2026-08-23.
+Also still served at https://cbd-portal-gray.vercel.app (NOT `zeta` — common confusion).
 
 ---
 
@@ -41,20 +42,41 @@ construction labour-hire — road / rail / water). It runs the entire workflow:
   - `xero-callback` — Xero OAuth handler
   - `xero-push` — push approved timesheets to Xero
   - `xero-data` — read Xero org data
-  - `send-invite` — single worker invite email. **Routes through Gmail when `gmail_tokens` row exists** by forwarding the caller's JWT to `gmail-send`; falls back to Resend if Gmail fails or isn't connected.
-  - `send-bulk-email` — bulk email blast. **Same Gmail-first / Resend-fallback routing** as send-invite. Sends one email per recipient via `gmail-send` (4-way concurrency) when on Gmail; uses Resend's batch endpoint (100/call) on fallback. Logs every send to `message_log`.
+  - `send-invite` — single worker invite email. **Resend first, Gmail fallback** via the inlined `deliverOneWay()`. See the Email section below.
+  - `send-bulk-email` — bulk email blast. **Same Resend-first / Gmail-fallback routing** as send-invite, one message per recipient at 4-way concurrency. Also carries the supervisor timesheet-approval links (called by `utils/clientApproval.js`). Logs every send to `message_log`.
   - `gmail-start` / `gmail-callback` — Google OAuth flow for the in-app Inbox
   - `gmail-send` — send via the connected Gmail account, mirror into `email_threads`/`email_messages`
   - `gmail-sync` — pull recent threads from Gmail, match participants to workers/clients (exact email OR `clients.email_domains` match); skips threads with no match so personal mail never enters Supabase
   - `gmail-modify` — toggle read/unread, star/unstar, archive/unarchive on a thread; mirrors to Gmail labels and updates `email_threads`
   - `gmail-status` / `gmail-disconnect` — connection state + revoke
-- **Email:** **Gmail-first, Resend-fallback**. The connected Gmail account
-  (`theteamcbd@gmail.com`) is the primary sender for invites and blasts —
-  reaches any recipient and lets replies land in the in-app Inbox. Resend
-  (free 3k/month, `onboarding@resend.dev`) is the fallback path used only
-  when Gmail is disconnected; on the Resend free tier emails are restricted
-  to your Resend account email (`fsociety.2017@protonmail.com`) until a
-  domain is verified.
+- **Email (REWRITTEN 2026-08-23 — the old "Gmail-first / Resend-fallback" note
+  described a routing that had already been ripped out; this is measured):**
+  **One-way mail goes out via Resend on the company domain. Conversations stay
+  on Gmail.** The split is deliberate — see `deliverOneWay()`, which is inlined
+  in each of the three one-way functions.
+  - **Resend** sends invites, bulk blasts, daily digests and the supervisor
+    timesheet-approval links, from `noreply@send.cbdpnl.com.au`
+    (domain `send.cbdpnl.com.au`, Resend region `ap-northeast-1`).
+    Configured by two edge-function secrets: `RESEND_API_KEY` + `MAIL_FROM`.
+    **If either is unset, `RESEND_ON` is false and every function falls back to
+    the old Gmail sender unchanged** — so the code is safe to deploy anywhere,
+    including MRA/Hecate, before their own domains exist.
+  - **Every Resend message sets `reply_to` to the connected team Gmail**, so a
+    recipient hitting reply still threads into the portal Inbox. Branded
+    outbound, Gmail inbound. Don't remove that — it's what keeps Inbox working.
+  - **Gmail is also the automatic fallback.** If Resend rejects a send (domain
+    not verified, rate limit, outage) the message goes out via Gmail rather than
+    being dropped, and the response reports `via: 'gmail-fallback'`. `via` is
+    one of `resend` / `gmail` / `gmail-fallback` / `both-failed` — read it when
+    debugging rather than assuming which provider carried a message.
+  - **DNS lives at GoDaddy** and `cbdpnl.com.au` runs **GoDaddy-resold Microsoft
+    365** for real staff mail (MX → `*.mail.protection.outlook.com`, SPF
+    `include:secureserver.net`). That is why sending is on the `send.`
+    subdomain: the root's MX/SPF must never be touched. Verified delivered
+    2026-08-23 (Resend `last_event: delivered`).
+  - The portal itself is on **`https://portal.cbdpnl.com.au`** (CNAME →
+    `cname.vercel-dns.com`); `cbd-portal-gray.vercel.app` still serves too.
+    `PORTAL_URL` secret points at the custom domain, so email links use it.
 - **SMS:** wired via **Twilio** (`send-sms` edge function; creds in `integration_secrets`).
   The roster is every worker with `access_level='admin'` + per-event + SMS on (via the
   `get_admin_notification_recipients` RPC), but **`SMS_ALLOWLIST` in `utils/notify.js`
@@ -468,12 +490,11 @@ automatically. Everything is deployed; it just needs OAuth credentials.
 
 ## Pending follow-ups (your call)
 
-1. **Verify a Resend domain** so blast emails go to anyone (not just your
-   Resend account email). 10 min once you pick a domain — add SPF/DKIM/DMARC
-   records, then set `INVITE_FROM` secret in Supabase to your real sender.
-   *Note:* once Gmail Inbox is connected, the Inbox page is the better path
-   for client conversations because replies thread back in. Keep Resend for
-   one-way blasts.
+1. ~~Verify a Resend domain~~ **DONE 2026-08-23.** `send.cbdpnl.com.au` is
+   live and delivering. Remaining: give **MRA and Hecate** their own sending
+   domains. Their `send-*` functions are on older, materially different code
+   (460-640 differing lines vs CBD), so the CBD patch does not apply cleanly —
+   they need porting and testing, not copying.
 2. **SMS provider** — Twilio (~$0.01/AU SMS) when you're ready. The UI button
    is wired in but disabled with a "SOON" pill.
 3. **Photo upload from Scan modal → attach to worker cert** — currently the
@@ -488,10 +509,11 @@ automatically. Everything is deployed; it just needs OAuth credentials.
 
 ## Saved user-specific context
 
-- Live portal URL is **cbd-portal-gray.vercel.app** (the user has been
+- Live portal URL is **portal.cbdpnl.com.au** (primary, since 2026-08-23);
+  **cbd-portal-gray.vercel.app** still serves too (the user has been
   bitten by `zeta` autocomplete before — double-check before typing).
-- Resend account email: `fsociety.2017@protonmail.com` — the only address
-  that can currently receive emails (until a domain is verified).
+- Resend sends from `noreply@send.cbdpnl.com.au` — verified, unrestricted.
+  (The old `fsociety.2017@protonmail.com` free-tier restriction is GONE.)
 - User's primary email on file: `zed.dz1998@gmail.com`.
 - GitHub: `zed-dz/cbd-portal`, branch `main`.
 - Supabase project ref: `tsizneslellcqusjwtub`.

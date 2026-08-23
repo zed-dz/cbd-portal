@@ -25,6 +25,73 @@ const GMAIL_CLIENT_SECRET = Deno.env.get('GMAIL_CLIENT_SECRET') || '';
 const SENDER_DISPLAY_NAME = Deno.env.get('GMAIL_SENDER_NAME') || 'CBD Plant & Labour';
 const DIGEST_SECRET  = Deno.env.get('DIGEST_SECRET') || '';
 
+// ── One-way email delivery ──────────────────────────────────────────────────
+// Transactional mail (invites, blasts, digests, approval links) goes out from the
+// company domain via Resend: branded, and it survives the Gmail OAuth token
+// lapsing. reply_to points BACK at the connected team Gmail, so anyone who hits
+// reply still lands in the portal Inbox — branded outbound, Gmail inbound.
+//
+// Gmail is kept as an automatic fallback rather than being ripped out. If Resend
+// rejects a send — domain not verified yet, rate limit, provider outage — the
+// message goes out the old way instead of being silently dropped. That also means
+// this can be deployed before the domain finishes verifying with no outage.
+const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
+const MAIL_FROM      = Deno.env.get('MAIL_FROM') || '';
+const RESEND_ON      = !!(RESEND_API_KEY && MAIL_FROM);
+
+async function sendViaResend(opts: { to: string; subject: string; text: string; html?: string; replyTo?: string | null }) {
+  const payload: Record<string, unknown> = {
+    from: MAIL_FROM, to: [opts.to], subject: opts.subject, text: opts.text,
+  };
+  if (opts.html) payload.html = opts.html;
+  if (opts.replyTo) payload.reply_to = opts.replyTo;
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const ok = res.ok;
+    return { ok, detail: ok ? '' : (await res.text()).slice(0, 300) };
+  } catch (e) {
+    return { ok: false, detail: (e as Error).message };
+  }
+}
+
+async function sendGmailRaw(accessToken: string, mime: string) {
+  try {
+    const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ raw: b64url(mime) }),
+    });
+    const ok = res.ok;
+    return { ok, detail: ok ? '' : (await res.text()).slice(0, 300) };
+  } catch (e) {
+    return { ok: false, detail: (e as Error).message };
+  }
+}
+
+// Resend first, Gmail second. Returns which one actually carried it.
+async function deliverOneWay(opts: {
+  to: string; subject: string; text: string; html?: string;
+  replyTo?: string | null; gmailToken?: string; gmailMime?: () => string;
+}): Promise<{ ok: boolean; via: string; detail: string }> {
+  const canGmail = !!(opts.gmailToken && opts.gmailMime);
+  if (RESEND_ON) {
+    const r = await sendViaResend({ to: opts.to, subject: opts.subject, text: opts.text, html: opts.html, replyTo: opts.replyTo });
+    if (r.ok) return { ok: true, via: 'resend', detail: '' };
+    if (!canGmail) return { ok: false, via: 'resend', detail: r.detail };
+    const g = await sendGmailRaw(opts.gmailToken!, opts.gmailMime!());
+    return g.ok
+      ? { ok: true, via: 'gmail-fallback', detail: `resend failed: ${r.detail}` }
+      : { ok: false, via: 'both-failed', detail: `resend: ${r.detail} | gmail: ${g.detail}` };
+  }
+  if (!canGmail) return { ok: false, via: 'none', detail: 'no sender configured' };
+  const g = await sendGmailRaw(opts.gmailToken!, opts.gmailMime!());
+  return { ok: g.ok, via: 'gmail', detail: g.detail };
+}
+
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-digest-secret',
@@ -191,27 +258,26 @@ serve(async (req) => {
     fromEmail   = t.emailAddress;
   } catch (e) {
     const msg = (e as Error).message;
-    // Gmail not connected/configured — surface it, but never fall back off Google.
-    return json({ ok: false, via: 'gmail', error: msg, recipients: recipients.length }, msg === 'gmail_not_connected' ? 412 : 500);
+    if (!RESEND_ON) return json({ ok: false, via: 'gmail', error: msg, recipients: recipients.length }, msg === 'gmail_not_connected' ? 412 : 500);
+    accessToken = ''; fromEmail = null;
   }
-  if (!fromEmail) return json({ ok: false, via: 'gmail', error: 'no_from_address' }, 500);
+  if (!fromEmail && !RESEND_ON) return json({ ok: false, via: 'gmail', error: 'no_from_address' }, 500);
 
-  const fromHeader = formatFromHeader(SENDER_DISPLAY_NAME, fromEmail);
+  const fromHeader = fromEmail ? formatFromHeader(SENDER_DISPLAY_NAME, fromEmail) : MAIL_FROM;
   let sent = 0;
   const results: Array<{ email: string; ok: boolean; error?: string }> = [];
   const logRows: any[] = [];
   for (const r of recipients) {
     try {
-      const mime = buildMime({ from: fromHeader, to: r.email, subject, text });
-      const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ raw: b64url(mime) }),
+      const d = await deliverOneWay({
+        to: r.email, subject, text, replyTo: fromEmail,
+        gmailToken: accessToken || undefined,
+        gmailMime: accessToken ? () => buildMime({ from: fromHeader, to: r.email, subject, text }) : undefined,
       });
-      const ok = res.ok;
+      const ok = d.ok;
       if (ok) sent++;
       let err: string | undefined;
-      if (!ok) err = (await res.text()).slice(0, 200);
+      if (!ok) err = d.detail.slice(0, 200);
       results.push({ email: r.email, ok, error: err });
       logRows.push({
         batch_id: crypto.randomUUID(), channel: 'gmail', audience: null,

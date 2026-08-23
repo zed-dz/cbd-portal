@@ -1,0 +1,90 @@
+Item_Number,Category,Description,UOM,Rate_A_MonFri_under_8hrs,Rate_B_Over8hrs_Night_Sat_under8,Rate_C_Sat_over8_Night_Sun_PH,Notes
+1,LABOUR,General Labour,Hour,60.15,85.05,103.50,
+2,LABOUR,Skilled Labourer,Hour,73.05,95.00,110.25,
+3,LABOUR,Water Cart / Bogie Driver,Hour,77.70,96.40,112.80,
+4,LABOUR,Multi-Skilled Operator,Hour,84.25,104.05,119.25,
+5,LABOUR,Dogman,Hour,84.30,111.85,139.25,
+6,LABOUR,Civil Leading Hand,Hour,92.40,117.80,173.35,
+7,LABOUR,Tradesman (Concreter/Drainer/Electrician),Hour,96.10,122.45,140.80,
+8,LABOUR,Foreman / Site Supervisor,Hour,110.75,131.90,180.40,
+9,LABOUR,Supervisor Pipelayer,Hour,131.25,153.00,183.75,
+10,LABOUR,Fitter / Mechanic (inc. travel),Hour,117.70,151.25,159.75,
+11,LABOUR,Site Engineer,Hour,132.85,175.35,168.00,
+12,LABOUR,Project Manager,Hour,154.85,195.85,188.70,
+13,LABOUR,HSEQ Manager,Shift,1407.60,1548.35,1785.00,
+14,LABOUR,Site Vehicle,Shift,79.15,79.15,79.15,
+15,LABOUR,Travel Allowance to Site (Sydney Metro),Shift,47.00,47.00,47.00,
+16,LABOUR,LAFHA,Shift,300.00,300.00,300.00,
+17,PLANT & MACHINERY – WET HIRE,1T - 7T Excavator,Hour,119.00,164.75,176.20,
+18,PLANT & MACHINERY – WET HIRE,5-6T Rubber Duck / Skid Steer / Belly Dumper,Hour,143.00,188.75,200.20,
+19,PLANT & MACHINERY – WET HIRE,8T Excavator,Hour,121.80,167.35,178.75,
+20,PLANT & MACHINERY – WET HIRE,12T Excavator,Hour,130.95,176.45,187.85,
+21,PLANT & MACHINERY – WET HIRE,13T - 14T Excavator,Hour,137.75,183.30,194.70,
+22,PLANT & MACHINERY – WET HIRE,13-14T Knuckle Boom,Hour,142.30,187.85,199.25,
+23,PLANT & MACHINERY – WET HIRE,13-14T Rubber Duck (Wheeled Excavator),Hour,153.70,199.25,210.60,
+24,PLANT & MACHINERY – WET HIRE,20T Excavator,Hour,150.30,196.15,207.20,
+25,PLANT & MACHINERY – WET HIRE,24T Excavator,Hour,153.70,199.25,210.60,
+26,PLANT & MACHINERY – WET HIRE,23T Zero Swing Excavator,Hour,175.35,220.85,216.30,
+27,PLANT & MACHINERY – WET HIRE,30T Excavator,Hour,175.35,220.85,232.25,
+28,PLANT & MACHINERY – WET HIRE,30T Zero Swing Excavator,Hour,212.90,258.45,269.80,
+29,PLANT & MACHINERY – WET HIRE,36T Excavator,Hour,213.95,308.90,271.15,
+30,PLANT & MACHINERY – WET HIRE,50T Excavator,Hour,263.10,308.90,320.30,
+31,PLANT & MACHINERY – WET HIRE,70T Excavator,Hour,POR,POR,POR,Price on Request
+32,PLANT & MACHINERY – WET HIRE,Scraper,Hour,POR,POR,POR,Price on Request
+33,PLANT & MACHINERY – WET HIRE,D6 Dozer,Hour,POR,POR,POR,Price on Request
+34,PLANT & MACHINERY – WET HIRE,D8 Dozer,Hour,POR,POR,POR,Price on Request
+35,PLANT & MACHINERY – WET HIRE,Dumpers up to 40T,Hour,POR,POR,POR,Price on Request
+36,PLANT & MACHINERY – WET HIRE,Bolt on Rubber Pads / Slew & Height,Hour,11.40,11.40,11.40,
+37,PLANT & MACHINERY – WET HIRE,Trencher - Vermeer RT 95,Hour,228.80,274.55,286.00,
+38,PLANT & MACHINERY – WET HIRE,140M Grader,Hour,188.75,234.50,245.95,
+39,PLANT & MACHINERY – WET HIRE,GPS,Hour,45.30,45.30,45.30,
+40,PLANT & MACHINERY – WET HIRE,UTS,Hour,68.00,68.00,68.00,
+41,PLANT & MACHINERY – WET HIRE,GPS MM Control System,Hour,90.65,90.65,90.65,
+42,PLANT & MACHINERY – WET HIRE,Water Carts - 1200 Litres,Hour,98.30,129.40,170.75,
+43,PLANT & MACHINERY – WET HIRE,Water Carts - 6000 Litres,Hour,129.40,160.40,191.45,
+44,ADDITIONAL PLANT & ATTACHMENTS,Bolt on Rubber Pads / Slew & Height,Hour,37.55,37.55,37.55,All Shifts
+45,ADDITIONAL PLANT & ATTACHMENTS,1T - 4T Excavator Hammer,Hour,93.95,93.95,93.95,All Shifts
+46,ADDITIONAL PLANT & ATTACHMENTS,5T - 7T Excavator Hammer,Hour,112.70,112.70,112.70,All Shifts
+47,ADDITIONAL PLANT & ATTACHMENTS,8T - 12T Excavator Hammer,Hour,150.30,150.30,150.30,All Shifts
+48,ADDITIONAL PLANT & ATTACHMENTS,13T Excavator Hammer,Hour,200.40,200.40,200.40,All Shifts
+49,ADDITIONAL PLANT & ATTACHMENTS,20T Excavator Hammer,Hour,244.20,244.20,244.20,All Shifts
+50,ADDITIONAL PLANT & ATTACHMENTS,24T Excavator Hammer,Hour,244.20,244.20,244.20,All Shifts
+51,ADDITIONAL PLANT & ATTACHMENTS,30T Excavator Hammer,Hour,281.80,281.80,281.80,All Shifts
+52,ADDITIONAL PLANT & ATTACHMENTS,36T Excavator Hammer,Hour,281.80,281.80,281.80,All Shifts
+53,ADDITIONAL PLANT & ATTACHMENTS,48T Excavator Hammer,Hour,350.65,350.65,350.65,All Shifts
+54,ADDITIONAL PLANT & ATTACHMENTS,2T Tipper,Hour,258.75,258.75,258.75,All Shifts
+55,ADDITIONAL PLANT & ATTACHMENTS,8T Tipper,Hour,306.85,306.85,306.85,All Shifts
+56,ADDITIONAL PLANT & ATTACHMENTS,6T Dumper,Hour,181.60,181.60,181.60,All Shifts
+57,ADDITIONAL PLANT & ATTACHMENTS,9T Dumper,Hour,200.40,200.40,200.40,All Shifts
+58,ADDITIONAL PLANT & ATTACHMENTS,9T - 40T Dumper,Hour,688.80,688.80,688.80,All Shifts
+59,ADDITIONAL PLANT & ATTACHMENTS,Positrack,Hour,414.00,414.00,414.00,All Shifts
+60,ADDITIONAL PLANT & ATTACHMENTS,Bobcat,Hour,414.00,414.00,414.00,All Shifts
+61,ADDITIONAL PLANT & ATTACHMENTS,Broom Attachment,Hour,82.80,82.80,82.80,All Shifts
+62,ADDITIONAL PLANT & ATTACHMENTS,Confined Space Equipment,Hour,250.45,250.45,250.45,All Shifts
+63,ADDITIONAL PLANT & ATTACHMENTS,Power Saws,Hour,250.45,250.45,250.45,All Shifts
+64,ADDITIONAL PLANT & ATTACHMENTS,Tool Truck,Hour,155.25,155.25,155.25,All Shifts
+65,ADDITIONAL PLANT & ATTACHMENTS,Remote Control Trench Roller,Hour,288.05,288.05,288.05,All Shifts
+66,ADDITIONAL PLANT & ATTACHMENTS,400kg-600kg Plate Compactor,Hour,225.40,225.40,225.40,All Shifts
+67,ADDITIONAL PLANT & ATTACHMENTS,DN225 EF/Butt Welding Equipment,Hour,1308.70,1308.70,1308.70,All Shifts
+68,ADDITIONAL PLANT & ATTACHMENTS,DN630 EF/Butt Welding Equipment,Hour,1584.20,1584.20,1584.20,All Shifts
+69,MATERIALS & TIPPING,VENM,TON,28.85,,,T&D rates
+70,MATERIALS & TIPPING,ENM,TON,38.10,,,T&D rates
+71,MATERIALS & TIPPING,VENM,TON,57.70,,,Rigid Rates
+72,MATERIALS & TIPPING,ENM,TON,76.20,,,Rigid Rates
+73,MATERIALS & TIPPING,GSW (non-putrescible),TON,283.25,,,T&D rates
+74,MATERIALS & TIPPING,GSW (putrescible),TON,509.85,,,T&D rates
+75,MATERIALS & TIPPING,GSW (Restricted),TON,458.35,,,T&D rates
+76,MATERIALS & TIPPING,GSW (Hazardous),TON,695.25,,,T&D rates
+77,MATERIALS & TIPPING,GSW (Asbestos soils),TON,283.25,,,T&D rates
+78,MATERIALS & TIPPING,GSW (Asbestos Bonded),TON,324.45,,,T&D rates
+79,MATERIALS & TIPPING,GSW (Recyclable),TON,84.45,,,T&D rates
+F1,FLOATAGE / MOBILISATION,Floatage <6T Dumper (or equivalent),Each way,850.00,,,To/From Sydney Metro
+F2,FLOATAGE / MOBILISATION,Floatage >9T Dumper,Each way,1500.00,,,To/From Sydney Metro
+F3,FLOATAGE / MOBILISATION,Floatage <16T Excavator (or equivalent),Each way,850.00,,,To/From Sydney Metro
+F4,FLOATAGE / MOBILISATION,Floatage >16T Excavator (up to 30T),Each way,1250.00,,,To/From Sydney Metro
+F5,FLOATAGE / MOBILISATION,Floatage >30T Excavator,Each way,POA,,,To/From Sydney Metro
+F6,FLOATAGE / MOBILISATION,Floatage Scrapers & Dozers,Each way,POA,,,To/From Sydney Metro
+F7,FLOATAGE / MOBILISATION,Floatage Grader Hire,Each way,850.00,,,To/From Sydney Metro
+F8,FLOATAGE / MOBILISATION,Truck/Tippers travel time allowance,Hour,1 hour,,,Additional
+M1,FLOATAGE / MOBILISATION,Crew to Site (Mobilisation / Demobilisation),Each way,5500.00,,,Flat rate minimum
+S1,SURCHARGE,Regional & Travel surcharge (outside Sydney Metro >50km),%,10,,,On Labour and Wet Hire rates
