@@ -466,6 +466,8 @@ and when — and recipient rows in Workers / Clients show a green
 
 **"New emails aren't appearing in the Inbox"** → Make sure the sender's address (or domain) is registered against a worker/client. The Inbox only stores threads with a match. Click ↻ Sync after adding them. The toast now reports how many threads were fetched vs skipped, so you can tell the difference between "Gmail returned nothing" and "Gmail returned threads but none matched".
 
-**"All threads in the Inbox have the wrong person's name"** → Someone added the team email address itself (e.g. `theteamcbd@gmail.com`) as a worker. Remove that worker row, disconnect + reconnect the team email — the cache is wiped on reconnect and the next sync will match correctly.
+**"All threads in the Inbox have the wrong person's name"** → **FIXED IN CODE 2026-08-25 — this no longer happens, and the old advice below was wrong.** `gmail-sync` now drops the connected mailbox from the participant list before matching (`if (e && e !== myEmail)`), so the team address can never match itself onto every thread. **It is therefore safe to have the team mailbox also be a worker/admin account** — Hecate runs exactly that way (`hecatetraffic@gmail.com` is both the connected mailbox and an admin login). Verified present in all three portals.
+
+*Superseded advice, kept so nobody re-applies it:* ~~Someone added the team email address itself as a worker. Remove that worker row, disconnect + reconnect the team email.~~ Deleting that worker row is now unnecessary, and on Hecate it would delete a real admin.
 
 **"I want to switch to a different team email account"** → Inbox → ↔ Switch button. Confirm. Sign in with the new Google account. Cached threads from the old account are wiped automatically.
