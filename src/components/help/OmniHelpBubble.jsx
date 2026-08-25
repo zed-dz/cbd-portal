@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { C } from '../../theme';
+import { supabase } from '../../supabaseClient';
 
 // Omni Knowledge help bubble. Talks to Venture Command's ecosystem API:
 //  - /api/ecosystem/config  → is Omni Knowledge toggled on for this venture?
@@ -11,7 +12,10 @@ const VC_URL = process.env.REACT_APP_VC_URL || 'https://venture-command.vercel.a
 const ECO_KEY = process.env.REACT_APP_ECOSYSTEM_KEY || 'eco_ad33269dae0847c08ecb6f01b0d7ff9d';
 
 export function OmniHelpBubble() {
-  const [enabled, setEnabled] = useState(false);
+  // Always available: the answering path is this portal's own edge function now,
+  // not a remote asset toggle. The VC flag only decides whether a fallback exists
+  // for generic how-to questions.
+  const [vcFallback, setVcFallback] = useState(false);
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [msgs, setMsgs] = useState([]);
@@ -33,7 +37,7 @@ export function OmniHelpBubble() {
     fetch(`${VC_URL}/api/ecosystem/config?key=${encodeURIComponent(ECO_KEY)}`)
       .then((r) => r.json())
       .then((d) => {
-        if ((d.assets || []).some((a) => a.key === 'omni_knowledge')) setEnabled(true);
+        if ((d.assets || []).some((a) => a.key === 'omni_knowledge')) setVcFallback(true);
       })
       .catch(() => {});
   }, []);
@@ -42,7 +46,6 @@ export function OmniHelpBubble() {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [msgs, loading]);
 
-  if (!enabled) return null;
   // Never render over a modal — it covers the form's Save button.
   if (modalOpen) return null;
 
@@ -52,17 +55,33 @@ export function OmniHelpBubble() {
     setMsgs((m) => [...m, { role: 'user', text: question }]);
     setQ('');
     setLoading(true);
+    // This portal's own assistant first: it reads live data and is scoped to
+    // whoever is asking. The ecosystem endpoint is only a fallback and can only
+    // answer generic how-to questions.
+    let text = '';
     try {
-      const r = await fetch(`${VC_URL}/api/ecosystem/ask`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${ECO_KEY}` },
-        body: JSON.stringify({ question }),
-      });
-      const d = await r.json();
-      setMsgs((m) => [...m, { role: 'omni', text: d.answer || d.error || 'Sorry, I could not answer that.' }]);
-    } catch {
-      setMsgs((m) => [...m, { role: 'omni', text: 'Connection error — please try again.' }]);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        const { data, error } = await supabase.functions.invoke('portal-assistant', {
+          body: { question, page: window.__portalPage || '' },
+        });
+        if (!error && data?.answer) text = data.answer;
+      }
+    } catch { /* fall through to the ecosystem endpoint */ }
+
+    if (!text && vcFallback) {
+      try {
+        const r = await fetch(`${VC_URL}/api/ecosystem/ask`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${ECO_KEY}` },
+          body: JSON.stringify({ question }),
+        });
+        const d = await r.json();
+        text = d.answer || d.error || '';
+      } catch { /* handled below */ }
     }
+
+    setMsgs((m) => [...m, { role: 'omni', text: text || 'Sorry — I could not answer that just now. Please try again.' }]);
     setLoading(false);
   };
 
@@ -71,13 +90,13 @@ export function OmniHelpBubble() {
       {open && (
         <div style={{ position: 'fixed', bottom: 88, right: 20, width: 340, maxWidth: 'calc(100vw - 40px)', height: 460, maxHeight: 'calc(100vh - 140px)', background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: '0 16px 48px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', zIndex: 9999, overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ fontWeight: 700, color: C.text, fontSize: 14 }}>💬 Portal Help</div>
+            <div style={{ fontWeight: 700, color: C.text, fontSize: 14 }}>💬 Portal Assistant</div>
             <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', color: C.textMuted, cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>×</button>
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
             {msgs.length === 0 && (
               <div style={{ color: C.textMuted, fontSize: 13 }}>
-                Ask me anything about using the portal — timesheets, your next job, updating your details…
+                Ask me anything — I can see live data. Try "how many workers do we have?", "is anything waiting on me?" or "which clients have no rate card?".
               </div>
             )}
             {msgs.map((m, i) => (
@@ -85,7 +104,7 @@ export function OmniHelpBubble() {
                 {m.text}
               </div>
             ))}
-            {loading && <div style={{ alignSelf: 'flex-start', color: C.textMuted, fontSize: 13 }}>Omni is thinking…</div>}
+            {loading && <div style={{ alignSelf: 'flex-start', color: C.textMuted, fontSize: 13 }}>Checking the live data…</div>}
             <div ref={endRef} />
           </div>
           <div style={{ padding: 10, borderTop: `1px solid ${C.border}`, display: 'flex', gap: 8 }}>

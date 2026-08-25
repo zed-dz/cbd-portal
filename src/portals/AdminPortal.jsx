@@ -66,6 +66,10 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
 
   useEffect(() => { refreshBadge(); }, [refreshBadge]);
 
+  // The help bubble mounts at App level, outside this tree, so publish the
+  // active page on window rather than prop-drilling it down.
+  useEffect(() => { window.__portalPage = activePage; }, [activePage]);
+
   // Cross-page navigation event: components nested deep (e.g. an email-history
   // panel inside a worker/client modal) dispatch `cbd:navigate` to jump to a
   // page without prop-drilling. Currently used by EmailHistoryPanel → Inbox.
