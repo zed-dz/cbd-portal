@@ -55,7 +55,7 @@ async function buildSnapshot(sb: ReturnType<typeof createClient>, isStaff: boole
         .eq('worker_id', workerId).gte('end_date', todayISO()).order('start_date').limit(20),
       sb.from('timesheets').select('date, client, role, pay_hours, status, scenario')
         .eq('worker_id', workerId).order('date', { ascending: false }).limit(20),
-      sb.from('certifications').select('name, expiry').eq('worker_id', workerId).order('expiry').limit(20),
+      sb.from('certifications').select('cert_name, expiry').eq('worker_id', workerId).order('expiry').limit(20),
     ]);
     snap.my_upcoming_allocations = alloc.data ?? [];
     snap.my_recent_timesheets    = ts.data ?? [];
@@ -74,7 +74,7 @@ async function buildSnapshot(sb: ReturnType<typeof createClient>, isStaff: boole
       .eq('status', 'pending').order('date').limit(50),
     sb.from('timesheets').select('id, date, pay_hours, charge_hours, xero_exported, status')
       .eq('status', 'approved').order('date', { ascending: false }).limit(400),
-    sb.from('certifications').select('worker_id, name, expiry').lte('expiry', daysFromNow(30)).order('expiry').limit(50),
+    sb.from('certifications').select('worker_id, cert_name, expiry').lte('expiry', daysFromNow(30)).order('expiry').limit(50),
     sb.from('notifications').select('type, title, created_at, read').order('created_at', { ascending: false }).limit(15),
     sb.from('client_jobs').select('client_id, name, status'),
   ]);
@@ -124,7 +124,7 @@ async function buildSnapshot(sb: ReturnType<typeof createClient>, isStaff: boole
   };
 
   snap.licences_expiring_within_30_days = (certsSoon.data ?? []).map((c: any) => ({
-    worker: byId[c.worker_id] ?? 'unknown', licence: c.name, expiry: c.expiry,
+    worker: byId[c.worker_id] ?? 'unknown', licence: c.cert_name, expiry: c.expiry,
     already_expired: c.expiry < todayISO(),
   }));
 

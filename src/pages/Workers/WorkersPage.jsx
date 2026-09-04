@@ -522,7 +522,9 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <button onClick={() => openEdit(w)} style={btnSmall}>Edit</button>
                     {w.qualified && !w.archived_at && (
-                      <button onClick={() => copyShareLink(w, 'profile')} style={{ ...btnSmall, background: 'rgba(34,197,94,0.12)', color: C.success, border: 'none' }} title="Copy shareable profile link">🔗 Profile</button>
+                      {/* Client-facing profile link parked 2026-08-25 (team decision: the info it
+                          shares — casual, availability — is not for clients). The /p/<token> route
+                          and copyShareLink('profile') stay intact for when it comes back. */}
                     )}
                     {w.archived_at
                       ? <button onClick={() => handleUnarchive(w)} style={{ ...btnSmall, background: 'rgba(34,197,94,0.12)', color: C.success, border: 'none' }}>↺ Restore</button>
@@ -731,9 +733,7 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
               <button onClick={() => copyShareLink(modal, 'onboard')} style={btnSmall} type="button">
                 📋 Copy Onboarding Link
               </button>
-              <button onClick={() => copyShareLink(modal, 'profile')} style={btnSmall} type="button">
-                🔗 Copy Shareable Profile Link
-              </button>
+{/* profile share button parked 2026-08-25 — see note in the row actions */}
             </div>
           )}
 

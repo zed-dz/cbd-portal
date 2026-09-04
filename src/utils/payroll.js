@@ -88,6 +88,24 @@ export function computeLineTotalHours(startTime, endTime, breakHours) {
   return roundTo15Min(Math.max(0, hrs));
 }
 
+// "7:00am–5:00pm" from the stored shift timestamps, in the viewer's timezone.
+// The team asked to see actual worked times on the Payroll page without opening
+// each timesheet; every payroll row now carries this pre-formatted.
+export function fmtShiftTimes(start, end) {
+  const f = (v) => {
+    if (!v) return '';
+    const d = new Date(v);
+    if (isNaN(d)) return '';
+    let h = d.getHours();
+    const m = d.getMinutes();
+    const ap = h >= 12 ? 'pm' : 'am';
+    h = h % 12 || 12;
+    return `${h}:${String(m).padStart(2, '0')}${ap}`;
+  };
+  const a = f(start), b = f(end);
+  return a && b ? `${a}–${b}` : '';
+}
+
 // Regular Hours — reuse the existing daily OT threshold if present, else = total.
 export function computeLineRegularHours(totalHours, config = {}) {
   const OT_THRESHOLD = config.ot_threshold_daily != null ? parseFloat(config.ot_threshold_daily) : null;
@@ -350,6 +368,9 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
   return {
     worker_name: worker.name, worker_type: worker.worker_type,
     date: ts.date, scenario: ts.scenario, site: ts.site, client: ts.client, role: ts.role,
+    day_name: dayFromDate(ts.date),
+    shift_times: fmtShiftTimes(ts.start_time, ts.end_time),
+    break_minutes: ts.break_minutes || 0,
     pay_hours: ts.pay_hours, charge_hours: ts.charge_hours, overtime_hours: ts.overtime_hours,
     // The three pay buckets - always present, on every row, whatever the branch.
     ordinary_hours: +ordH.toFixed(2),

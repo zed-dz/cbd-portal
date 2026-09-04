@@ -448,7 +448,15 @@ export function PayrollTrackerPage({ showToast }) {
                 </Td>
                 <Td><strong>{r.worker_name}</strong></Td>
                 <Td><span style={{ fontSize: 11, color: C.textMuted, fontFamily: '"DM Mono", monospace' }}>{r.worker_type}</span></Td>
-                <Td>{fmtDate(r.date)}</Td>
+                <Td>
+                  <div style={{ whiteSpace: 'nowrap' }}>{r.day_name ? `${r.day_name.slice(0, 3)} ` : ''}{fmtDate(r.date)}</div>
+                  {r.shift_times && (
+                    <div style={{ fontSize: 10.5, color: C.textMuted, whiteSpace: 'nowrap' }}
+                      title={r.break_minutes ? `${r.break_minutes} min break` : 'no break recorded'}>
+                      {r.shift_times}{r.break_minutes ? ` · ${r.break_minutes}m` : ''}
+                    </div>
+                  )}
+                </Td>
                 <Td><span style={{ fontSize: 11, color: C.textMuted }}>{r.scenario}</span></Td>
                 <Td><span style={{ fontWeight: 700 }}>{r.pay_hours}</span></Td>
                 <Td title={`Normal time @ $${r.pay_rate}/hr`}>
