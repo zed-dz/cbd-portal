@@ -92,15 +92,21 @@ export function computeLineTotalHours(startTime, endTime, breakHours) {
 // The team asked to see actual worked times on the Payroll page without opening
 // each timesheet; every payroll row now carries this pre-formatted.
 export function fmtShiftTimes(start, end) {
+  // Pinned to Australia/Sydney, NOT the viewer's clock. A timesheet records
+  // when someone stood on an NSW site; an admin reading it from overseas must
+  // see the same 7:00am the worker clocked, not that instant shifted into
+  // their own timezone (caught in verification: a 7am AEST shift rendered as
+  // "10:00pm–8:00am" on a UTC+1 machine).
   const f = (v) => {
     if (!v) return '';
     const d = new Date(v);
     if (isNaN(d)) return '';
-    let h = d.getHours();
-    const m = d.getMinutes();
-    const ap = h >= 12 ? 'pm' : 'am';
-    h = h % 12 || 12;
-    return `${h}:${String(m).padStart(2, '0')}${ap}`;
+    try {
+      return d.toLocaleTimeString('en-AU', { timeZone: 'Australia/Sydney', hour: 'numeric', minute: '2-digit', hour12: true })
+        .replace(/\s/g, '').toLowerCase();
+    } catch {
+      return '';
+    }
   };
   const a = f(start), b = f(end);
   return a && b ? `${a}–${b}` : '';

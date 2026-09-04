@@ -33,7 +33,7 @@ export function PayrollTrackerPage({ showToast }) {
   }, []);
 
   const checkXeroConnection = async () => {
-    const { data } = await supabase.from('xero_tokens').select('id, expires_at').eq('id', 1).single();
+    const { data } = await supabase.from('xero_tokens').select('id, expires_at').eq('id', 1).maybeSingle();  // maybeSingle: zero rows is the normal not-connected state, not a 406
     setXeroConnected(!!data?.id);
   };
 
