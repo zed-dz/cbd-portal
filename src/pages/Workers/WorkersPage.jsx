@@ -521,11 +521,11 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
                 <Td onClick={e => e.stopPropagation()}>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <button onClick={() => openEdit(w)} style={btnSmall}>Edit</button>
-                    {w.qualified && !w.archived_at && (
-                      {/* Client-facing profile link parked 2026-08-25 (team decision: the info it
-                          shares — casual, availability — is not for clients). The /p/<token> route
-                          and copyShareLink('profile') stay intact for when it comes back. */}
-                    )}
+                    {/* Client-facing profile link parked 2026-08-25. NOTE: the first
+                        version of this removal left `qualified && ({comment})` — that
+                        parses as an EMPTY OBJECT, and React throws rendering an object
+                        child, white-screening Workers for the first qualified worker
+                        (found 2026-09-11). A bare comment in children position is safe. */}
                     {w.archived_at
                       ? <button onClick={() => handleUnarchive(w)} style={{ ...btnSmall, background: 'rgba(34,197,94,0.12)', color: C.success, border: 'none' }}>↺ Restore</button>
                       : <button onClick={() => setArchiveModal(w)} style={btnDanger}>Archive</button>}
@@ -977,18 +977,45 @@ function SensitivePanel({ title, subtitle, fields, data, setData, extraChildren 
 function WorkerTicketsSection({ workerId, certs, setCerts, showToast }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState({ cert_name: '', issuer: '', expiry: '' });
+  const [form, setForm] = useState({ cert_name: '', issuer: '', expiry: '', doc_url: '' });
   const [saving, setSaving] = useState(false);
 
-  const resetForm = () => setForm({ cert_name: '', issuer: '', expiry: '' });
+  const resetForm = () => setForm({ cert_name: '', issuer: '', expiry: '', doc_url: '' });
 
   const startAdd = () => { resetForm(); setEditingId(null); setAdding(true); };
   const startEdit = (c) => {
-    setForm({ cert_name: c.cert_name || '', issuer: c.issuer || '', expiry: c.expiry || '' });
+    setForm({ cert_name: c.cert_name || '', issuer: c.issuer || '', expiry: c.expiry || '', doc_url: c.doc_url || '' });
     setEditingId(c.id);
     setAdding(true);
   };
   const cancel = () => { setAdding(false); setEditingId(null); resetForm(); };
+  const [uploading, setUploading] = useState(false);
+
+  // Same storage scheme as the Licence Agent page: private cert-photos bucket,
+  // path kept in doc_url, viewing mints a 1-hour signed URL so licence photos
+  // never sit on a public address.
+  const uploadPhoto = async (file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+      showToast('Attach a photo or a PDF.', 'error'); return;
+    }
+    if (file.size > 10 * 1024 * 1024) { showToast('Max file size is 10 MB.', 'error'); return; }
+    setUploading(true);
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    const path = `${workerId || 'unassigned'}/${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from('cert-photos').upload(path, file);
+    if (error) showToast(error.message, 'error');
+    else { setForm(f => ({ ...f, doc_url: path })); showToast('Photo attached — hit Add/Update to keep it', 'success'); }
+    setUploading(false);
+  };
+
+  const viewPhoto = async (docUrl) => {
+    if (!docUrl) return;
+    if (/^https?:\/\//.test(docUrl)) { window.open(docUrl, '_blank'); return; }
+    const { data, error } = await supabase.storage.from('cert-photos').createSignedUrl(docUrl, 3600);
+    if (error || !data?.signedUrl) { showToast(error?.message || 'Could not open the photo.', 'error'); return; }
+    window.open(data.signedUrl, '_blank');
+  };
 
   const save = async () => {
     if (!form.cert_name.trim()) { showToast('Ticket name is required.', 'error'); return; }
@@ -998,6 +1025,7 @@ function WorkerTicketsSection({ workerId, certs, setCerts, showToast }) {
       cert_name: form.cert_name.trim(),
       issuer:    form.issuer.trim() || null,
       expiry:    form.expiry || null,
+      doc_url:   form.doc_url || null,
     };
     if (editingId) {
       const { data, error } = await supabase.from('certifications').update(payload).eq('id', editingId).select().single();
@@ -1048,6 +1076,7 @@ function WorkerTicketsSection({ workerId, certs, setCerts, showToast }) {
                   {c.expiry ? fmtDate(c.expiry) : 'No expiry'}
                 </span>
                 {certBadge(c.expiry)}
+                {c.doc_url && <button onClick={() => viewPhoto(c.doc_url)} type="button" style={{ ...btnSmall, padding: '3px 8px', fontSize: 11 }} title="View ticket photo">📷</button>}
                 <button onClick={() => startEdit(c)} type="button" style={{ ...btnSmall, padding: '3px 8px', fontSize: 11 }}>Edit</button>
                 <button onClick={() => remove(c)} type="button" style={{ ...btnDanger, padding: '3px 8px', fontSize: 11 }}>×</button>
               </div>
@@ -1072,6 +1101,14 @@ function WorkerTicketsSection({ workerId, certs, setCerts, showToast }) {
               <input style={inputStyle} type="date" value={form.expiry} onChange={e => setForm(f => ({ ...f, expiry: e.target.value }))} />
             </Field>
           </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', margin: '4px 0 10px' }}>
+            <span style={{ fontSize: 11.5, color: C.textMuted }}>Ticket photo (image or PDF, max 10 MB):</span>
+            <input type="file" accept="image/*,application/pdf" onChange={e => uploadPhoto(e.target.files && e.target.files[0])} style={{ color: C.textMuted, fontSize: 12, maxWidth: 240 }} />
+            {uploading && <span style={{ fontSize: 12, color: C.textMuted }}>Uploading…</span>}
+            {form.doc_url && !uploading && (
+              <button type="button" onClick={() => viewPhoto(form.doc_url)} style={{ ...btnSmall, padding: '3px 8px', fontSize: 11 }}>📷 View attached</button>
+            )}
+          </div>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button onClick={cancel} type="button" style={btnSecondary}>Cancel</button>
             <button onClick={save} type="button" disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : editingId ? 'Update' : 'Add Ticket'}</button>
@@ -1080,7 +1117,7 @@ function WorkerTicketsSection({ workerId, certs, setCerts, showToast }) {
       )}
 
       <div style={{ fontSize: 10.5, color: C.textDim, marginTop: 8 }}>
-        Tip: workers can also self-add their tickets from the onboarding link. Photo uploads coming soon — for now manage them here or on the <strong>Licence Agent</strong> page.
+        Tip: workers can also self-add their tickets from the onboarding link. Attach a photo of the ticket with the file picker when adding or editing — it is stored privately and viewable via the 📷 button here and on the <strong>Licence Agent</strong> page.
       </div>
     </div>
   );
