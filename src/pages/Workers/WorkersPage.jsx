@@ -48,11 +48,26 @@ function dedupeLicences(s) {
     .join(', ');
 }
 
+// Statutory casual loading. Single source - if the award percentage ever
+// changes, change it here; each worker row records the pct that applied when
+// they were saved, so history stays accurate.
+const CASUAL_LOADING_PCT = 0.25;
+
+// Recompute A from the base whenever the base or the toggle changes. Typing A
+// directly still works for workers entered as an all-in loaded rate.
+function applyCasualLoading(f) {
+  const base = parseFloat(f.pay_rate_base);
+  if (f.worker_type !== 'casual' || isNaN(base)) return f;
+  const a = f.casual_loading ? base * (1 + CASUAL_LOADING_PCT) : base;
+  return { ...f, pay_rate_a: a.toFixed(2) };
+}
+
 const workerDefaults = {
   name: '', email: '', mobile: '', role: 'worker', job_title: '', licences: '',
   address: '', access_level: 'employee', status: 'available', app_status: 'Active',
   site: '', client: '', worker_type: 'casual',
   pay_rate_a: '', pay_rate_b: '', pay_rate_c: '',
+  pay_rate_base: '', casual_loading: true,
   subcontractor_abn: '', qualified: false,
   is_allocator: false,
   send_invite: true,
@@ -137,6 +152,8 @@ export function WorkersPage({ showToast }) {
       app_status: w.app_status || 'Active', site: w.site || '', client: w.client || '',
       worker_type: w.worker_type || 'casual',
       pay_rate_a: w.pay_rate_a ?? w.pay_rate_regular ?? '',
+      pay_rate_base: w.pay_rate_base ?? '',
+      casual_loading: w.pay_rate_base != null ? w.casual_loading_pct != null : true,
       pay_rate_b: w.pay_rate_b ?? w.pay_rate_overtime ?? '',
       pay_rate_c: w.pay_rate_c ?? '',
       subcontractor_abn: w.subcontractor_abn || '',
@@ -169,12 +186,15 @@ export function WorkersPage({ showToast }) {
     setSaving(true);
     const n = v => v === '' ? null : parseFloat(v);
     const A = n(form.pay_rate_a);
-    const { send_invite, ...rest } = form;
+    const { send_invite, casual_loading, ...rest } = form;
+    const base = n(form.pay_rate_base);
     const payload = {
       ...rest,
       pay_rate_a: A,
       pay_rate_b: n(form.pay_rate_b) ?? (A != null ? +(A * 1.5).toFixed(2) : null),
       pay_rate_c: n(form.pay_rate_c) ?? (A != null ? +(A * 2).toFixed(2)   : null),
+      pay_rate_base: base,
+      casual_loading_pct: (form.worker_type === 'casual' && casual_loading && base != null) ? CASUAL_LOADING_PCT : null,
       // Keep legacy columns in sync until they're dropped, so existing payroll
       // calculations relying on them keep working during the transition.
       pay_rate_regular:  A,
@@ -647,6 +667,33 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, letterSpacing: 1, marginBottom: 8 }}>
                   💰 PAY RATE BANDS ($/hr)
                 </div>
+                {form.worker_type === 'casual' && (
+                  <div style={{ marginBottom: 10, background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: 8, padding: '10px 12px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: C.text, cursor: 'pointer', fontWeight: 600 }}>
+                      <input type="checkbox" checked={form.casual_loading}
+                        onChange={e => setForm(f => applyCasualLoading({ ...f, casual_loading: e.target.checked }))} />
+                      Casual loading +25% — A auto-fills from the base rate
+                    </label>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12, color: C.textMuted }}>Base rate ($/hr, before loading):</span>
+                      <input style={{ ...inputStyle, maxWidth: 130 }} type="number" step="0.01" min="0"
+                        value={form.pay_rate_base}
+                        onChange={e => setForm(f => applyCasualLoading({ ...f, pay_rate_base: e.target.value }))}
+                        onBlur={() => setForm(f => autoCalcBC(f))}
+                        placeholder="e.g. 35.00" />
+                      {form.pay_rate_base !== '' && !isNaN(parseFloat(form.pay_rate_base)) && (
+                        <span style={{ fontSize: 12, color: C.success, fontFamily: '"DM Mono", monospace' }}>
+                          {form.casual_loading
+                            ? `→ A = ${form.pay_rate_base} × 1.25 = ${(parseFloat(form.pay_rate_base) * (1 + CASUAL_LOADING_PCT)).toFixed(2)}`
+                            : '→ loading off — A = base rate'}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: C.textDim, marginTop: 6 }}>
+                      Both numbers are saved, so the base/loading split is on record for the accounting system. Overtime still calculates off A.
+                    </div>
+                  </div>
+                )}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
                   <Field label="A — Normal (Mon–Fri ≤8h)">
                     <input style={inputStyle} type="number" step="0.01" min="0"
