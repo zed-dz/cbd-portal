@@ -139,6 +139,15 @@ A/B/C columns — and derives penalty rates as multiples of `pay_rate_regular`. 
 is why the legacy mirror writes in
 [WorkersPage.jsx](src/pages/Workers/WorkersPage.jsx) must stay alive.
 
+**Casual loading (added 2026-09-15, all 3 portals).** The worker form for a
+casual shows a base-rate input + "Casual loading +25%" checkbox: A auto-fills
+as **base × 1.25** (`CASUAL_LOADING_PCT` / `applyCasualLoading` in
+WorkersPage.jsx). `workers.pay_rate_base` + `workers.casual_loading_pct` store
+the split **for the future MYOB/accounting payslip hand-off only** — payroll
+still pays entirely off A (the legacy mirrors get the LOADED rate). Typing A
+directly with no base still works for all-in entries; the pct is stored
+per-worker so an award change never rewrites history.
+
 ### Charge — what the client is billed
 
 Single source: `computeChargeAmount` in [payroll.js](src/utils/payroll.js). Bands
