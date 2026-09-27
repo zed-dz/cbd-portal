@@ -41,6 +41,15 @@ const CORS = {
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
+// LIKE/ILIKE treat % and _ as wildcards — a client literally named "100% Civil"
+// must not match every client. Backslash is Postgres's default LIKE escape.
+const escLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
+
+// USER-entered text (comments, names, client/project strings) must never kill
+// the send: strip "$" from it before drawing. The throw in text() stays as the
+// money-leak tripwire for anything WE compose (layout strings, computed cells).
+const stripUser = (s: unknown) => String(s ?? '').replace(/\$/g, '');
+
 // ── PDF ─────────────────────────────────────────────────────────────────────
 const fmtTime = (iso: string | null) => iso
   ? new Date(iso).toLocaleTimeString('en-AU', { timeZone: 'Australia/Sydney', hour: 'numeric', minute: '2-digit' })
@@ -97,10 +106,10 @@ async function buildPdf(header: any, lines: any[], workerName: string) {
   text('Approved Timesheet', M, 13, bold); y -= 24;
 
   const meta: Array<[string, string]> = [
-    ['Worker',  workerName || '—'],
-    ['Client',  header.client || '—'],
-    ['Project', header.project || '—'],
-    ['Role',    header.role || '—'],
+    ['Worker',  stripUser(workerName) || '—'],
+    ['Client',  stripUser(header.client) || '—'],
+    ['Project', stripUser(header.project) || '—'],
+    ['Role',    stripUser(header.role) || '—'],
     ['Wet hire', header.wet_hire ? 'Yes' : 'No'],
   ];
   for (const [k, v] of meta) {
@@ -150,7 +159,7 @@ async function buildPdf(header: any, lines: any[], workerName: string) {
   if (header.comments) {
     newPageIfNeeded(40);
     text('TASKS COMPLETED', M, 8, bold, muted); y -= 14;
-    for (const ln of wrap(header.comments, 10, A4[0] - 2 * M)) {
+    for (const ln of wrap(stripUser(header.comments), 10, A4[0] - 2 * M)) {
       newPageIfNeeded(14);
       text(ln, M, 10); y -= 13;
     }
@@ -159,7 +168,7 @@ async function buildPdf(header: any, lines: any[], workerName: string) {
 
   newPageIfNeeded(50);
   const approvedNote = header.client_approved
-    ? `Accepted by ${header.client_approved_by || 'the site representative'} on ${header.client_approved_at ? new Date(header.client_approved_at).toLocaleDateString('en-AU', { timeZone: 'Australia/Sydney' }) : '—'}`
+    ? `Accepted by ${stripUser(header.client_approved_by) || 'the site representative'} on ${header.client_approved_at ? new Date(header.client_approved_at).toLocaleDateString('en-AU', { timeZone: 'Australia/Sydney' }) : '—'}`
     : 'Approved by the office';
   text('APPROVAL', M, 8, bold, muted); y -= 14;
   text(approvedNote, M, 10); y -= 20;
@@ -268,11 +277,11 @@ serve(async (req) => {
   const to = new Set<string>();
   const cc = new Set<string>();
   const { data: clientRows } = await sb.from('clients')
-    .select('id, contact_email').ilike('name', (h.client || '').trim()).limit(1);
+    .select('id, contact_email').ilike('name', escLike((h.client || '').trim())).limit(1);
   const client = clientRows?.[0];
   if (client && h.project) {
     const { data: jobs } = await sb.from('client_jobs')
-      .select('site_contact_email').eq('client_id', client.id).ilike('name', h.project.trim()).limit(1);
+      .select('site_contact_email').eq('client_id', client.id).ilike('name', escLike(h.project.trim())).limit(1);
     const e = (jobs?.[0]?.site_contact_email || '').trim();
     if (e) to.add(e.toLowerCase());
   }
@@ -298,7 +307,6 @@ serve(async (req) => {
     return json({ error: 'no client email on file' }, 422);
   }
 
-  const pdf = await buildPdf(h, lines || [], workerName);
   const dates = (lines || []).map((l: any) => l.date).filter(Boolean).sort();
   const label = `${workerName} — ${h.project || h.client}${h.total_hours ? ` (${Number(h.total_hours).toFixed(2)}h)` : ''}`;
   const filename = `timesheet-${workerName.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${dates[0] || 'sheet'}.pdf`;
@@ -328,9 +336,33 @@ serve(async (req) => {
     slug(workerName),
     h.id,
   ].join('-') + '.pdf';
-  const shaBuf = await crypto.subtle.digest('SHA-256', pdf);
-  const pdfSha256 = [...new Uint8Array(shaBuf)].map(b => b.toString(16).padStart(2, '0')).join('');
   const version = (h as any).version || 1;
+
+  // Nothing about a failed build may be silent: ledger row + admin bell + 500.
+  // (User text can no longer trip the "$" guard — stripUser handles it — so a
+  // throw here means a layout string leaked money, or pdf-lib itself failed.)
+  let pdf: Uint8Array;
+  let pdfSha256 = '';
+  try {
+    pdf = await buildPdf(h, lines || [], workerName);
+    const shaBuf = await crypto.subtle.digest('SHA-256', pdf);
+    pdfSha256 = [...new Uint8Array(shaBuf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (eBuild) {
+    const reason = `pdf build failed: ${String((eBuild as Error).message).slice(0, 300)}`;
+    await sb.from('timesheet_sends').insert([{
+      header_id: h.id, client_id: client?.id ?? null,
+      to_emails: toArr, cc_emails: ccArr,
+      from_email: RESEND_ON ? MAIL_FROM : null,
+      subject, status: 'failed', error: reason,
+      idempotency_key: `approve:${h.id}:v${version}:builderr${Date.now()}`,
+    }]);
+    await sb.from('notifications').insert([{
+      type: 'timesheet_pdf_blocked',
+      title: `Timesheet PDF FAILED to build — ${workerName} / ${h.client || 'client'}`,
+      body: `${reason}. Nothing was emailed. Fix the timesheet, then resend from Timesheets.`,
+    }]);
+    return json({ error: 'pdf build failed', detail: String((eBuild as Error).message) }, 500);
+  }
   // A force resend gets its OWN ledger row — the canonical key stays with the
   // first send, so the unique index keeps double-taps out without blocking
   // deliberate resends.
@@ -359,10 +391,21 @@ serve(async (req) => {
     if (sendId) await sb.from('timesheet_sends').update(patch).eq('id', sendId);
   };
 
-  let uploadErr = '';
+  // Upload failure is fatal too — the ledger must always point at the exact
+  // PDF the client received, so no stored copy means no send. Bell + 500;
+  // resend (force:true) from Timesheets once storage is back.
   const up = await sb.storage.from('timesheet-pdfs')
     .upload(pdfPath, pdf, { contentType: 'application/pdf', upsert: true });
-  if (up.error) uploadErr = `pdf upload failed: ${up.error.message}`;
+  if (up.error) {
+    const reason = `pdf upload failed: ${String(up.error.message).slice(0, 300)}`;
+    await markSend({ status: 'failed', error: reason });
+    await sb.from('notifications').insert([{
+      type: 'timesheet_pdf_blocked',
+      title: `Timesheet PDF NOT emailed — ${workerName} / ${h.client || 'client'}`,
+      body: `${reason}. Nothing was emailed. Resend from Timesheets once storage is back up.`,
+    }]);
+    return json({ error: 'pdf upload failed', detail: up.error.message }, 500);
+  }
 
   let via = '';
   let providerMessageId: string | null = null;
@@ -380,7 +423,7 @@ serve(async (req) => {
     } catch (e2) {
       await markSend({
         status: 'failed',
-        error: [uploadErr, String((e2 as Error).message).slice(0, 300)].filter(Boolean).join(' | '),
+        error: String((e2 as Error).message).slice(0, 300),
       });
       await sb.from('notifications').insert([{
         type: 'timesheet_pdf_blocked',
@@ -397,7 +440,7 @@ serve(async (req) => {
     provider_message_id: providerMessageId,
     from_email: fromUsed,
     sent_at: new Date().toISOString(),
-    error: uploadErr || null,
+    error: null,
   });
 
   await sb.from('timesheet_headers').update({

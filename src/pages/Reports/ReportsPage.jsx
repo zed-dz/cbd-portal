@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
 import { WORKER_SAFE_COLS } from '../../utils/workerCols';
-import { C, inputStyle, btnPrimary, btnSecondary } from '../../theme';
+import { C, btnPrimary, btnSecondary } from '../../theme';
 import { todayISO } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
+import { DateField } from '../../components';
 
 export function ReportsPage({ showToast }) {
   const [counts, setCounts] = useState({});
@@ -81,11 +82,11 @@ export function ReportsPage({ showToast }) {
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <div>
             <label style={{ color: C.textMuted, fontSize: 13, display: 'block', marginBottom: 4 }}>From</label>
-            <input style={{ ...inputStyle, width: 160 }} type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+            <div style={{ width: 190 }}><DateField value={dateFrom} onChange={setDateFrom} placeholder="Start date…" /></div>
           </div>
           <div>
             <label style={{ color: C.textMuted, fontSize: 13, display: 'block', marginBottom: 4 }}>To</label>
-            <input style={{ ...inputStyle, width: 160 }} type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+            <div style={{ width: 190 }}><DateField value={dateTo} onChange={setDateTo} placeholder="End date…" /></div>
           </div>
           <button onClick={() => { setDateFrom(''); setDateTo(''); }} style={{ ...btnSecondary, alignSelf: 'flex-end' }}>Clear</button>
         </div>

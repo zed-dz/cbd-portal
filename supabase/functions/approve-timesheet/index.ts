@@ -40,6 +40,10 @@ const num = (v: unknown) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+// LIKE/ILIKE treat % and _ as wildcards — a client literally named "100% Civil"
+// must not match every client. Backslash is Postgres's default LIKE escape.
+const escLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST')    return json({ error: 'Method not allowed' }, 405);
@@ -83,7 +87,7 @@ serve(async (req) => {
   // Same profile lookup as save_daily_timesheet: the CLIENT's award_profile.
   const { data: clientRows } = await sb.from('clients')
     .select('id, award_profile')
-    .ilike('name', (h.client || '').trim())
+    .ilike('name', escLike((h.client || '').trim()))
     .order('created_at')
     .limit(1);
   const client = clientRows?.[0];
@@ -123,7 +127,7 @@ serve(async (req) => {
   }
   if (mismatches.length) {
     return json({
-      error: `Approval refused — stored hours do not match the server recomputation. ${mismatches.join('; ')}. Open Edit and re-save the timesheet (that recomputes the split), then approve again.`,
+      error: "Stored hours don't match the client's current rules (saved before the rules changed?). Open the timesheet and press Save to recalculate, then approve.",
       mismatches,
     }, 409);
   }
@@ -147,6 +151,26 @@ serve(async (req) => {
     before: { status: h.status, locked: !!h.locked },
     after:  { status: 'approved', locked: true, version: h.version ?? 1 },
   }]);
+
+  // Tell the WORKER too — the bell + the worker status line read these rows.
+  // Never let a notification hiccup un-approve anything: fire and continue.
+  try {
+    const workerName = (h as any).workers?.name || 'Worker';
+    const fmtAU = (d: string) =>
+      new Date(d + 'T12:00:00').toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const shiftDates = lines.map((l: any) => l.date).filter(Boolean).sort();
+    const dateLabel = shiftDates.length
+      ? (shiftDates[0] === shiftDates[shiftDates.length - 1]
+          ? fmtAU(shiftDates[0])
+          : `${fmtAU(shiftDates[0])} – ${fmtAU(shiftDates[shiftDates.length - 1])}`)
+      : 'the period';
+    await sb.from('notifications').insert([{
+      type: 'timesheet_approved',
+      title: `${workerName}: timesheet approved`,
+      body: `Your ${h.client || 'client'} timesheet for ${dateLabel} was approved.`,
+      worker_id: h.worker_id ?? null,
+    }]);
+  } catch (_e) { /* worker-facing email can wait; the bell row is best-effort */ }
 
   // ── PDF to the client, via the existing send function (service role) ─────
   let pdf: unknown = null;

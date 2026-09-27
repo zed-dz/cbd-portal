@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, R, inputStyle, btnSmall } from '../../theme';
-import { Spinner, TableWrap, Th, Td, EmptyState } from '../../components';
+import { Spinner, TableWrap, Th, Td, EmptyState, DateField } from '../../components';
 
 // Sent Timesheets — the admin ledger of every client-PDF email attempt
 // (Dashpivot parity prompt 2.3). One row per attempt from timesheet_sends:
@@ -135,9 +135,9 @@ export function SentTimesheetsPage({ showToast }) {
           <option value="queued">Queued</option>
         </select>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input style={{ ...inputStyle, maxWidth: 150 }} type="date" value={from} onChange={e => setFrom(e.target.value)} title="From date" />
+          <div style={{ width: 175 }}><DateField value={from} onChange={setFrom} placeholder="From date…" /></div>
           <span style={{ color: C.textMuted, fontSize: 12 }}>→</span>
-          <input style={{ ...inputStyle, maxWidth: 150 }} type="date" value={to} onChange={e => setTo(e.target.value)} title="To date" />
+          <div style={{ width: 175 }}><DateField value={to} onChange={setTo} placeholder="To date…" /></div>
         </div>
         {(filterClient || filterStatus || from || to) && (
           <button style={btnSmall} onClick={() => { setFilterClient(''); setFilterStatus(''); setFrom(''); setTo(''); }}>Clear</button>
@@ -148,7 +148,7 @@ export function SentTimesheetsPage({ showToast }) {
       </div>
 
       {filtered.length === 0 ? (
-        <EmptyState message="No timesheet sends match — PDFs land here as timesheets are approved." icon="📤" />
+        <EmptyState message="No timesheet sends match — PDFs land here as timesheets are approved. Sends before 28 Sep 2026 aren't listed — the ledger started then." icon="📤" />
       ) : (
         <TableWrap>
           <thead><tr><Th>Date</Th><Th>Client</Th><Th>Worker / Subject</Th><Th>To</Th><Th>Status</Th><Th>Actions</Th></tr></thead>

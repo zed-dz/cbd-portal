@@ -1,16 +1,22 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, R, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
-import { todayISO, fmtDate } from '../../utils/dates';
+import { todayISO, fmtDate, sydneyTime, sydneyDateTimeInput, sydneyInstant } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
 import { computeTimesheetHours, buildXeroCSV } from '../../utils/payroll';
 import { SCENARIOS } from '../../constants/scenarios';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, timesheetBadge, DailyTimesheetForm, dailyFromHeader, blankDaily, TimesheetDetailView, DateRangeFilter, printTimesheetBatch } from '../../components';
 import { sendTimesheetForClientApproval, markClientApprovedManually } from '../../utils/clientApproval';
+import { approveTimesheet } from '../../utils/approve';
 
-const fmtTime = (iso) => iso
-  ? new Date(iso).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
-  : '—';
+// Sticky filters: every access is try/catch'd because localStorage throws in
+// private windows and when site data is blocked — the page must still work.
+const readStore = (key) => { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; } };
+const writeStore = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* storage unavailable — filters just won't stick */ } };
+
+// Sydney-pinned: rendering in the viewer's browser zone put the same shift
+// 9 hours apart between Timesheets and Payroll for an overseas viewer (QA #1).
+const fmtTime = (iso) => sydneyTime(iso);
 
 // Approve goes through the approve-timesheet edge function, never a direct
 // status update: the server recomputes the hours split, locks the sheet and
@@ -29,17 +35,12 @@ async function invokeApprove(headerId) {
 // datetime-local <-> instant conversion for the Line-tab editor. Times are
 // edited as local wall-clock but stored as true UTC instants — same contract
 // as the daily form (naive strings used to shift every display +10h).
-const toLocalInput = (iso) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d)) return '';
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
+const toLocalInput = (iso) => sydneyDateTimeInput(iso);
 const toInstant = (local) => {
   if (!local) return null;
-  const d = new Date(local);
-  return isNaN(d) ? null : d.toISOString();
+  const [d, t] = String(local).split('T');
+  const iso = sydneyInstant(d, t);
+  return iso || null;
 };
 
 // Date-range filter. The preset list now lives in the DateRangeFilter component;
@@ -92,17 +93,24 @@ export function TimesheetsPage({ showToast, refreshBadge, isMobile }) {
   );
 }
 
+const LINE_FILTER_KEY = 'cbd_ts_line_filters';
+
 function LineTimesheetsPage({ showToast, refreshBadge }) {
   const [timesheets, setTimesheets] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [configMap, setConfigMap] = useState({});
   const [loading, setLoading] = useState(true);
-  const [filterStatus, setFilterStatus] = useState('');
-  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState(() => readStore(LINE_FILTER_KEY)?.status || '');
+  const [search, setSearch] = useState(() => readStore(LINE_FILTER_KEY)?.search || '');
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(tsDefaults);
   const [saving, setSaving] = useState(false);
-  const [range, setRange] = useState({ preset: 'all', from: '', to: '' });
+  // Default to the current pay week; a stored choice (incl. "all") wins.
+  const [range, setRange] = useState(() => readStore(LINE_FILTER_KEY)?.range || { preset: 'this_week', from: '', to: '' });
+
+  useEffect(() => {
+    writeStore(LINE_FILTER_KEY, { status: filterStatus, search, range });
+  }, [filterStatus, search, range]);
 
   const [clients, setClients] = useState([]);
 
@@ -285,8 +293,8 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
             <option value="rejected">Rejected</option>
           </select>
           <DateRangeFilter
-            from={range.preset === 'custom' ? range.from : null}
-            to={range.preset === 'custom' ? range.to : null}
+            from={range.preset === 'all' ? null : lineLo}
+            to={range.preset === 'all' ? null : lineHi}
             onApply={({ from, to }) => setRange({ preset: (from || to) ? 'custom' : 'all', from: from || '', to: to || '' })}
           />
         </div>
@@ -464,27 +472,42 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
   );
 }
 
+// The supervisor chase queue: the link went out, nobody has accepted, and the
+// sheet isn't dead. Cuts across status (a sheet can be admin-approved yet
+// still waiting on the client), so it's a derived bucket, not a status value.
+const withSupervisor = (h) =>
+  !!h.client_approval_sent_at && !h.client_approved && h.status !== 'rejected';
+const daysWaiting = (iso) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000));
+const autoApproveDate = (iso) => new Date(new Date(iso).getTime() + 7 * 86400000);
+
 // X3 — kanban columns. "PDF sent" is derived from pdf_emailed_at, not a
 // status of its own: an approved sheet whose PDF has gone out lives there.
+// "With supervisor" claims its cards first so every card lives in ONE column.
 const KANBAN_COLS = [
-  { id: 'pending',  label: 'Pending',  color: '#eab308', match: h => h.status === 'pending' },
-  { id: 'approved', label: 'Approved', color: '#4ade80', match: h => h.status === 'approved' && !h.pdf_emailed_at },
-  { id: 'rejected', label: 'Rejected', color: '#f87171', match: h => h.status === 'rejected' },
-  { id: 'sent',     label: 'PDF sent', color: '#93c5fd', match: h => h.status === 'approved' && !!h.pdf_emailed_at },
+  { id: 'pending',         label: 'Pending',         color: '#eab308', match: h => h.status === 'pending' && !withSupervisor(h) },
+  { id: 'with_supervisor', label: 'With supervisor', color: '#38bdf8', match: withSupervisor },
+  { id: 'approved',        label: 'Approved',        color: '#4ade80', match: h => h.status === 'approved' && !h.pdf_emailed_at && !withSupervisor(h) },
+  { id: 'rejected',        label: 'Rejected',        color: '#f87171', match: h => h.status === 'rejected' },
+  { id: 'sent',            label: 'PDF sent',        color: '#93c5fd', match: h => h.status === 'approved' && !!h.pdf_emailed_at && !withSupervisor(h) },
 ];
 
 // ---- Daily Timesheets (detailed) admin: list + full edit of submitted ones ----
+const DAILY_FILTER_KEY = 'cbd_ts_daily_filters';
+
 function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
   const [headers, setHeaders] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filterStatus, setFilterStatus] = useState('');
-  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState(() => readStore(DAILY_FILTER_KEY)?.status || '');
+  const [search, setSearch] = useState(() => readStore(DAILY_FILTER_KEY)?.search || '');
   const [layout, setLayout] = useState('table'); // 'table' | 'kanban' (X3)
   const [approving, setApproving] = useState(false);
   const [modal, setModal] = useState(null);      // 'add' | header object | null
   const [viewing, setViewing] = useState(null);  // header (with embedded lines) shown in the full view
   const [selected, setSelected] = useState(() => new Set()); // header ids ticked for bulk download
+  const [bulkApprove, setBulkApprove] = useState(null);   // { done, total } while the loop runs
+  const [bulkFailures, setBulkFailures] = useState([]);   // [{ worker, date, error }]
+  const [resendingId, setResendingId] = useState(null);
 
   const toggleOne = (id) => setSelected(prev => {
     const next = new Set(prev);
@@ -494,7 +517,12 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
   const [editInitial, setEditInitial] = useState(null);
   const [editWorkerId, setEditWorkerId] = useState('');
   const [loadingForm, setLoadingForm] = useState(false);
-  const [range, setRange] = useState({ preset: 'all', from: '', to: '' });
+  // Default to the current pay week; a stored choice (incl. "all") wins.
+  const [range, setRange] = useState(() => readStore(DAILY_FILTER_KEY)?.range || { preset: 'this_week', from: '', to: '' });
+
+  useEffect(() => {
+    writeStore(DAILY_FILTER_KEY, { status: filterStatus, search, range });
+  }, [filterStatus, search, range]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -550,7 +578,8 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
 
   const [rangeLo, rangeHi] = rangeBounds(range.preset, range.from, range.to);
   const filtered = headers.filter(h => {
-    const matchStatus = !filterStatus || h.status === filterStatus;
+    const matchStatus = !filterStatus
+      || (filterStatus === 'with_supervisor' ? withSupervisor(h) : h.status === filterStatus);
     const q = search.toLowerCase();
     const matchSearch = !search || (h.workers?.name || '').toLowerCase().includes(q)
       || (h.client || '').toLowerCase().includes(q) || (h.project || '').toLowerCase().includes(q);
@@ -577,6 +606,48 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
     else filtered.forEach(h => next.add(h.id));
     return next;
   });
+
+  // Bulk approve: PENDING selections only, one at a time through the
+  // approveTimesheet util (server recompute + lock + PDF) — never a direct
+  // status update, and sequential so one failure can't hide the others.
+  const selectedPending = selectedSheets.filter(h => h.status === 'pending');
+  const handleBulkApprove = async () => {
+    const targets = selectedPending;
+    if (!targets.length) return;
+    if (!window.confirm(`Approve ${targets.length} pending timesheet${targets.length === 1 ? '' : 's'}? Each is re-checked and locked on the server, and the client PDF is emailed.`)) return;
+    setBulkFailures([]);
+    showToast(`Approving ${targets.length} timesheet${targets.length === 1 ? '' : 's'}…`, 'info');
+    let ok = 0;
+    const fails = [];
+    for (let i = 0; i < targets.length; i++) {
+      const h = targets[i];
+      setBulkApprove({ done: i, total: targets.length });
+      const r = await approveTimesheet(h.id);
+      if (r.ok) ok++;
+      else {
+        const info = lineInfo(h);
+        fails.push({
+          id: h.id,
+          worker: h.workers?.name || '—',
+          date: info.lines.length ? fmtDate(info.lines[0].date) : fmtDate(h.created_at),
+          error: r.error,
+        });
+      }
+    }
+    setBulkApprove(null);
+    setBulkFailures(fails);
+    showToast(`${ok} approved, ${fails.length} failed`, fails.length ? (ok ? 'info' : 'error') : 'success');
+    setSelected(new Set());
+    load(); refreshBadge?.();
+  };
+
+  const handleResendLink = async (h) => {
+    setResendingId(h.id);
+    const r = await sendTimesheetForClientApproval(h.id, { force: true });
+    setResendingId(null);
+    if (r.ok) { showToast(`Approval link resent — ${r.sentTo}`, 'success'); load(); }
+    else showToast(r.error || 'Resend failed', 'error');
+  };
 
   // One row per shift line so the CSV can be pivoted in Excel.
   const downloadSelectedCSV = () => {
@@ -676,12 +747,13 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
           <select style={{ ...inputStyle, maxWidth: 180 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
             <option value="">All Statuses</option>
             <option value="pending">Pending</option>
+            <option value="with_supervisor">With supervisor</option>
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
           </select>
           <DateRangeFilter
-            from={range.preset === 'custom' ? range.from : null}
-            to={range.preset === 'custom' ? range.to : null}
+            from={range.preset === 'all' ? null : rangeLo}
+            to={range.preset === 'all' ? null : rangeHi}
             onApply={({ from, to }) => setRange({ preset: (from || to) ? 'custom' : 'all', from: from || '', to: to || '' })}
           />
         </div>
@@ -718,10 +790,41 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
             {selectedTotalHours.toFixed(2)} hrs
           </span>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {selectedPending.length > 0 && (
+              <button onClick={handleBulkApprove} disabled={!!bulkApprove}
+                style={{ ...btnSmall, color: '#4ade80', borderColor: '#16653a', fontWeight: 700 }}>
+                {bulkApprove
+                  ? `Approving ${bulkApprove.done + 1}/${bulkApprove.total}…`
+                  : `✓ Approve selected (${selectedPending.length})`}
+              </button>
+            )}
             <button onClick={downloadSelectedCSV} style={{ ...btnSmall, color: '#4ade80', borderColor: '#16653a' }}>📄 Download CSV</button>
             <button onClick={downloadSelectedPDF} style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }}>🖨 Download PDF</button>
             <button onClick={() => setSelected(new Set())} style={btnSmall}>Clear</button>
           </div>
+        </div>
+      )}
+
+      {/* Failures from the last bulk approve stay visible until dismissed — a
+          toast alone disappears before anyone can act on which sheets failed. */}
+      {bulkFailures.length > 0 && (
+        <div style={{
+          background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.25)',
+          borderRadius: R.md, padding: '10px 14px', marginBottom: 12,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+            <strong style={{ color: '#f87171', fontSize: 13 }}>
+              {bulkFailures.length} approval{bulkFailures.length === 1 ? '' : 's'} failed
+            </strong>
+            <button onClick={() => setBulkFailures([])} style={{ ...btnSmall, marginLeft: 'auto' }}>Dismiss</button>
+          </div>
+          {bulkFailures.map(f => (
+            <div key={f.id} style={{ fontSize: 12, color: C.text, padding: '2px 0' }}>
+              <strong>{f.worker}</strong>
+              <span style={{ color: C.textMuted, fontFamily: '"DM Mono", monospace', margin: '0 6px' }}>{f.date}</span>
+              <span style={{ color: '#fca5a5' }}>{f.error}</span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -731,7 +834,7 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
         /* X3 — kanban view. Cards move between columns via the Approve/Reject
            actions only (drag deliberately disabled); click opens the View
            modal. Columns stack to one per row on phones. */
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(4, minmax(0, 1fr))', gap: 12, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${KANBAN_COLS.length}, minmax(0, 1fr))`, gap: 12, alignItems: 'start' }}>
           {KANBAN_COLS.map(col => {
             const cards = filtered.filter(col.match);
             return (
@@ -806,11 +909,24 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
                       {h.client_approved ? '✓ client accepted' : h.client_approval_sent_at ? '⏳ with supervisor' : '⚠ not sent to client'}
                     </div>
                   )}
+                  {withSupervisor(h) && (
+                    <div style={{ fontSize: 10, marginTop: 3, color: '#38bdf8', fontFamily: '"DM Mono", monospace' }}
+                      title={`Sent to ${h.client_approval_sent_to || 'site contact'} on ${fmtDate(h.client_approval_sent_at)} — auto-approves after 7 days with no response`}>
+                      {daysWaiting(h.client_approval_sent_at)}d waiting · auto ✓ {fmtDate(autoApproveDate(h.client_approval_sent_at))}
+                    </div>
+                  )}
                 </Td>
                 <Td>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <button onClick={() => setViewing(h)} style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }}>View</button>
                     <button onClick={() => openEdit(h)} style={{ ...btnSmall, color: '#4ade80', borderColor: '#16653a' }}>Edit / Approve</button>
+                    {withSupervisor(h) && (
+                      <button onClick={() => handleResendLink(h)} disabled={resendingId === h.id}
+                        style={{ ...btnSmall, color: '#38bdf8', borderColor: '#1e3a5f' }}
+                        title="Resend the approval link to the site supervisor">
+                        {resendingId === h.id ? 'Sending…' : '↻ Resend link'}
+                      </button>
+                    )}
                     <button onClick={() => handleDelete(h)} style={btnDanger}>Delete</button>
                   </div>
                 </Td>
@@ -844,6 +960,32 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
                   setViewing(null); load(); refreshBadge?.();
                 } else showToast(r.error, 'error');
               }}>{approving ? 'Approving…' : '✓ Approve, lock & email PDF'}</button>
+            </div>
+          )}
+          {viewing.locked && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 14,
+              background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.25)',
+              borderRadius: 8, padding: '10px 14px',
+            }}>
+              <span style={{ fontSize: 12.5, color: C.textMuted }}>
+                🔒 This sheet is locked. Resetting reopens the workflow so it can be edited and re-approved — the reason is logged.
+              </span>
+              <button style={{ ...btnSmall, color: '#fbbf24', borderColor: '#78350f', marginLeft: 'auto' }} onClick={async () => {
+                const reason = window.prompt('Reset this locked timesheet — enter the reason (required, it is logged):');
+                if (reason == null) return;
+                if (!reason.trim()) { showToast('A reason is required to reset the workflow.', 'error'); return; }
+                const { error } = await supabase.rpc('reset_timesheet_workflow', {
+                  p_header_id: viewing.id, p_reason: reason.trim(),
+                });
+                if (error) showToast(error.message, 'error');
+                else {
+                  showToast('Workflow reset — the sheet is editable again', 'success');
+                  setViewing(null); load(); refreshBadge?.();
+                }
+              }}>
+                🔓 Reset workflow (admin)
+              </button>
             </div>
           )}
           {viewing.status !== 'rejected' && (

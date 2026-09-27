@@ -71,7 +71,10 @@ function StatusBadge({ status }) {
   );
 }
 
-export function ClientsPage({ showToast }) {
+export function ClientsPage({ showToast, currentWorker }) {
+  // Charge rates are Admin-only (owner, 2026-09-27). Managers keep clients,
+  // sites and contacts; every dollar figure on this page is gated on this.
+  const canSeeRates = !currentWorker || currentWorker.access_level === 'admin';
   const [tab, setTab] = useState('clients');
 
   return (
@@ -87,7 +90,7 @@ export function ClientsPage({ showToast }) {
           </button>
         ))}
       </div>
-      {tab === 'clients'    && <ClientsList showToast={showToast} />}
+      {tab === 'clients'    && <ClientsList showToast={showToast} canSeeRates={canSeeRates} />}
       {tab === 'job_roles'  && <JobRolesList showToast={showToast} />}
     </div>
   );
@@ -121,7 +124,7 @@ function useIsNarrow(px = 700) {
   return narrow;
 }
 
-function ClientsList({ showToast }) {
+function ClientsList({ showToast, canSeeRates = true }) {
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -197,6 +200,13 @@ function ClientsList({ showToast }) {
         .map(d => (d || '').toLowerCase().trim().replace(/^@/, ''))
         .filter(Boolean),
     };
+    if (!canSeeRates) {
+      // A manager's save must never blank the charge rates accounts entered.
+      delete payload.rate_a; delete payload.rate_b; delete payload.rate_c;
+      delete payload.rate_regular; delete payload.rate_overtime;
+      delete payload.rate_night; delete payload.rate_weekend;
+      delete payload.charge_travel; delete payload.charge_meal;
+    }
     if (modal === 'add') {
       const { data: created, error } = await supabase.from('clients').insert([payload]).select('id').single();
       if (error) showToast(error.message, 'error');
@@ -280,6 +290,7 @@ function ClientsList({ showToast }) {
 
   const detail = selected ? (
     <ClientDetail
+      canSeeRates={canSeeRates}
       client={selected}
       detailTab={detailTab}
       setDetailTab={setDetailTab}
@@ -363,7 +374,7 @@ function ClientsList({ showToast }) {
             <Field label="Hour rules" hint="How this client's timesheet hours split into Normal / 1.5× / 2×. Dashpivot Standard is what clients have signed ~4,700 timesheets on. Legacy = the old 7.6h + RDO model, kept restorable.">
               <select style={inputStyle} value={form.award_profile}
                 onChange={e => setForm(f => ({ ...f, award_profile: e.target.value }))}>
-                <option value="">Project default</option>
+                {modal === 'add' && <option value="">Project default</option>}
                 <option value="B">Dashpivot Standard (B)</option>
                 <option value="A">Dashpivot A — no public-holiday type</option>
                 <option value="C">Dashpivot C — after-midnight night starts</option>
@@ -384,6 +395,7 @@ function ClientsList({ showToast }) {
               </Field>
             </div>
 
+            {canSeeRates && (
             <div style={{ gridColumn: '1 / -1', marginTop: 4 }}>
               <div style={{ background: 'rgba(249,115,22,0.06)', border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 14px' }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, letterSpacing: 1, marginBottom: 8 }}>
@@ -414,9 +426,10 @@ function ClientsList({ showToast }) {
                 </div>
               </div>
             </div>
+            )}
 
-            <Field label="Travel Charge ($)"><input style={inputStyle} type="number" step="0.01" min="0" value={form.charge_travel} onChange={e => setForm(f => ({ ...f, charge_travel: e.target.value }))} /></Field>
-            <Field label="Meal Charge ($)"><input style={inputStyle} type="number" step="0.01" min="0" value={form.charge_meal} onChange={e => setForm(f => ({ ...f, charge_meal: e.target.value }))} /></Field>
+            {canSeeRates && <Field label="Travel Charge ($)"><input style={inputStyle} type="number" step="0.01" min="0" value={form.charge_travel} onChange={e => setForm(f => ({ ...f, charge_travel: e.target.value }))} /></Field>}
+            {canSeeRates && <Field label="Meal Charge ($)"><input style={inputStyle} type="number" step="0.01" min="0" value={form.charge_meal} onChange={e => setForm(f => ({ ...f, charge_meal: e.target.value }))} /></Field>}
             <div style={{ gridColumn: '1 / -1' }}>
               <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Field>
             </div>
@@ -463,10 +476,10 @@ function ClientsList({ showToast }) {
 
 // ── Right-hand client detail: header + Sites/Rates/Timesheets/Activity ──────
 
-function ClientDetail({ client, detailTab, setDetailTab, refreshKey, onEdit, onOpenRates, onOpenProjects, onOpenSites, onArchive, onDelete }) {
+function ClientDetail({ client, detailTab, setDetailTab, refreshKey, onEdit, onOpenRates, onOpenProjects, onOpenSites, onArchive, onDelete, canSeeRates = true }) {
   const rateCount = client.client_rate_cards?.length || 0;
   const projCount = client.client_jobs?.length || 0;
-  const abc = (client.rate_a ?? client.rate_regular) != null
+  const abc = canSeeRates && (client.rate_a ?? client.rate_regular) != null
     ? `$${parseFloat(client.rate_a ?? client.rate_regular).toFixed(0)} · $${parseFloat(client.rate_b ?? client.rate_overtime ?? 0).toFixed(0)} · $${parseFloat(client.rate_c ?? client.rate_weekend ?? 0).toFixed(0)}`
     : null;
   const TABS = [

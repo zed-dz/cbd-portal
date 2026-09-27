@@ -8,6 +8,7 @@ const certDefaultsLA = { worker_id: '', cert_name: '', issuer: '', expiry: '', d
 
 export function LicenceAgentPage({ showToast }) {
   const [certs, setCerts] = useState([]);
+  const [uploads, setUploads] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -19,12 +20,19 @@ export function LicenceAgentPage({ showToast }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [c, w] = await Promise.all([
+    // Two cert stores exist: `certifications` (office-tracked, this page's
+    // CRUD) and `worker_certificates` (worker self-uploads from the worker
+    // portal, bucket worker-certificates). Both are listed here so an
+    // expiring worker-uploaded ticket is never invisible to the office.
+    const [c, w, u] = await Promise.all([
       supabase.from('certifications').select('*, workers(name)').order('expiry', { ascending: true }),
       supabase.from('workers').select('id, name').is('archived_at', null).order('name'),
+      supabase.from('worker_certificates').select('*, workers(name)').order('expiry_date', { ascending: true }),
     ]);
     if (c.error) showToast(c.error.message, 'error');
     else setCerts(c.data || []);
+    if (u.error) showToast(`Worker uploads not loaded: ${u.error.message}`, 'error');
+    else setUploads(u.data || []);
     if (w.data) setWorkers(w.data);
     setLoading(false);
   }, [showToast]);
@@ -69,10 +77,10 @@ export function LicenceAgentPage({ showToast }) {
     setUploading(false);
   };
 
-  const viewPhoto = async (docUrl) => {
+  const viewPhoto = async (docUrl, bucket = 'cert-photos') => {
     if (!docUrl) return;
     if (/^https?:\/\//.test(docUrl)) { window.open(docUrl, '_blank'); return; }
-    const { data, error } = await supabase.storage.from('cert-photos').createSignedUrl(docUrl, 3600);
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(docUrl, 3600);
     if (error || !data?.signedUrl) { showToast(error?.message || 'Could not open the photo.', 'error'); return; }
     window.open(data.signedUrl, '_blank');
   };
@@ -88,8 +96,25 @@ export function LicenceAgentPage({ showToast }) {
   const in30 = new Date(Date.now() + 30 * 86400000);
   const today = new Date(todayISO());
 
-  const filtered = certs.filter(c => {
-    const matchSearch = !search || c.cert_name.toLowerCase().includes(search.toLowerCase()) || (c.workers?.name || '').toLowerCase().includes(search.toLowerCase());
+  // One merged list: office-tracked certifications + worker self-uploads,
+  // mapped to the same shape. Worker uploads are read-only here (the worker
+  // owns those rows) — add a tracked certification to manage one properly.
+  const merged = [
+    ...certs.map(c => ({ ...c, source: 'office' })),
+    ...uploads.map(u => ({
+      id: `wc-${u.id}`,
+      source: 'worker_upload',
+      worker_id: u.worker_id,
+      workers: u.workers,
+      cert_name: u.name || 'Untitled ticket',
+      issuer: null,
+      expiry: u.expiry_date || null,
+      doc_url: u.file_path || null,
+    })),
+  ].sort((a, b) => String(a.expiry || '9999-12-31').localeCompare(String(b.expiry || '9999-12-31')));
+
+  const filtered = merged.filter(c => {
+    const matchSearch = !search || (c.cert_name || '').toLowerCase().includes(search.toLowerCase()) || (c.workers?.name || '').toLowerCase().includes(search.toLowerCase());
     if (!matchSearch) return false;
     if (!filterStatus) return true;
     if (!c.expiry) return filterStatus === 'valid';
@@ -101,8 +126,8 @@ export function LicenceAgentPage({ showToast }) {
     return true;
   });
 
-  const expiredCount = certs.filter(c => c.expiry && new Date(c.expiry) < today).length;
-  const expiringCount = certs.filter(c => c.expiry && new Date(c.expiry) >= today && new Date(c.expiry) <= in30).length;
+  const expiredCount = merged.filter(c => c.expiry && new Date(c.expiry) < today).length;
+  const expiringCount = merged.filter(c => c.expiry && new Date(c.expiry) >= today && new Date(c.expiry) <= in30).length;
 
   return (
     <div>
@@ -135,15 +160,31 @@ export function LicenceAgentPage({ showToast }) {
             {filtered.map(c => (
               <tr key={c.id}>
                 <Td>{c.workers?.name || '—'}</Td>
-                <Td><strong>{c.cert_name}</strong></Td>
+                <Td>
+                  <strong>{c.cert_name}</strong>
+                  {c.source === 'worker_upload' && (
+                    <span
+                      title="Uploaded by the worker from their portal. To manage expiry reminders for it, add it as a tracked licence here."
+                      style={{ marginLeft: 8, fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', color: '#93c5fd', whiteSpace: 'nowrap' }}
+                    >
+                      worker upload
+                    </span>
+                  )}
+                </Td>
                 <Td>{c.issuer || '—'}</Td>
                 <Td>{fmtDate(c.expiry)}</Td>
                 <Td>{certBadge(c.expiry)}</Td>
                 <Td>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    {c.doc_url && <button onClick={() => viewPhoto(c.doc_url)} style={btnSmall} title="View ticket photo">📷</button>}
-                    <button onClick={() => openEdit(c)} style={btnSmall}>Edit</button>
-                    <button onClick={() => handleDelete(c)} style={btnDanger}>Delete</button>
+                    {c.doc_url && (
+                      <button
+                        onClick={() => viewPhoto(c.doc_url, c.source === 'worker_upload' ? 'worker-certificates' : 'cert-photos')}
+                        style={btnSmall}
+                        title="View ticket photo"
+                      >📷</button>
+                    )}
+                    {c.source !== 'worker_upload' && <button onClick={() => openEdit(c)} style={btnSmall}>Edit</button>}
+                    {c.source !== 'worker_upload' && <button onClick={() => handleDelete(c)} style={btnDanger}>Delete</button>}
                   </div>
                 </Td>
               </tr>

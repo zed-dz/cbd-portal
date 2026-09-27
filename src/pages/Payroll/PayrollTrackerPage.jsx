@@ -3,13 +3,19 @@ import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnSecondary, btnSmall } from '../../theme';
 import { fmtDate } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
-import { computePayrollRow, buildXeroCSV, buildPayBreakdownCSV, applyFullTimeMinDay, findRateLine } from '../../utils/payroll';
-import { Spinner, TableWrap, Th, Td, EmptyState } from '../../components';
+import { computePayrollRow, buildXeroCSV, buildPayBreakdownCSV, buildInvoiceCSV, applyFullTimeMinDay, findRateLine } from '../../utils/payroll';
+import { Spinner, TableWrap, Th, Td, EmptyState, presetBounds } from '../../components';
 
 const XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize';
 const XERO_CLIENT_ID = process.env.REACT_APP_XERO_CLIENT_ID || '';
 const REDIRECT_URI = 'https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-callback';
 const XERO_SCOPES = 'openid profile email offline_access payroll.employees payroll.payruns payroll.payslip accounting.contacts.read';
+
+// Sticky filters: every access is try/catch'd because localStorage throws in
+// private windows and when site data is blocked — the page must still work.
+const PAYROLL_FILTER_KEY = 'cbd_payroll_filters';
+const readStore = (key) => { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; } };
+const writeStore = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* storage unavailable — filters just won't stick */ } };
 
 export function PayrollTrackerPage({ showToast }) {
   const [timesheets, setTimesheets] = useState([]);
@@ -18,13 +24,21 @@ export function PayrollTrackerPage({ showToast }) {
   const [rateCards, setRateCards] = useState([]);
   const [configMap, setConfigMap] = useState({});
   const [loading, setLoading] = useState(true);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [filterType, setFilterType] = useState('all');
-  const [filterWorker, setFilterWorker] = useState('all');
+  // First visit defaults to the current pay week; afterwards the stored choice
+  // wins — including a deliberately cleared range.
+  const [dateFrom, setDateFrom] = useState(() => { const s = readStore(PAYROLL_FILTER_KEY); return s ? (s.dateFrom || '') : presetBounds('this_week')[0]; });
+  const [dateTo, setDateTo] = useState(() => { const s = readStore(PAYROLL_FILTER_KEY); return s ? (s.dateTo || '') : presetBounds('this_week')[1]; });
+  const [filterType, setFilterType] = useState(() => readStore(PAYROLL_FILTER_KEY)?.type || 'all');
+  const [filterWorker, setFilterWorker] = useState(() => readStore(PAYROLL_FILTER_KEY)?.worker || 'all');
+  const [hideProcessed, setHideProcessed] = useState(() => { const s = readStore(PAYROLL_FILTER_KEY); return s?.hideProcessed !== undefined ? !!s.hideProcessed : true; });
   const [xeroConnected, setXeroConnected] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [pushing, setPushing] = useState(false);
+  const [processing, setProcessing] = useState(false);
+
+  useEffect(() => {
+    writeStore(PAYROLL_FILTER_KEY, { dateFrom, dateTo, type: filterType, worker: filterWorker, hideProcessed });
+  }, [dateFrom, dateTo, filterType, filterWorker, hideProcessed]);
 
   // Check Xero connection status on mount
   useEffect(() => {
@@ -101,17 +115,19 @@ export function PayrollTrackerPage({ showToast }) {
     const { line: rateLine, match: rateMatch } = client
       ? findRateLine(rateCards.filter(r => r.client_id === client.id), ts.role)
       : { line: null, match: 'none' };
-    return { ...computePayrollRow(ts, { ...worker, name: ts.workers?.name || worker.name }, client, configMap, rateLine, rateMatch), _id: ts.id, _worker_id: ts.worker_id, _xero_exported: ts.xero_exported };
+    return { ...computePayrollRow(ts, { ...worker, name: ts.workers?.name || worker.name }, client, configMap, rateLine, rateMatch), _id: ts.id, _worker_id: ts.worker_id, _xero_exported: ts.xero_exported, _processed_at: ts.processed_at, _processed_by: ts.processed_by };
   });
 
   // Only offer workers who actually have rows in the current range. A dropdown of
   // every worker ever hired is unusable during a pay run.
   const workersInRange = workers.filter(w => payrollRows.some(r => r._worker_id === w.id));
 
-  const filtered = payrollRows.filter(r =>
+  const typeWorkerFiltered = payrollRows.filter(r =>
     (filterType === 'all' || r.worker_type === filterType) &&
     (filterWorker === 'all' || r._worker_id === filterWorker)
   );
+  const processedCount = typeWorkerFiltered.filter(r => r._processed_at).length;
+  const filtered = typeWorkerFiltered.filter(r => !hideProcessed || !r._processed_at);
 
   const num = (v) => parseFloat(v) || 0;
 
@@ -163,6 +179,35 @@ export function PayrollTrackerPage({ showToast }) {
     if (!filtered.length) { showToast('Nothing to export in this range.', 'info'); return; }
     buildPayBreakdownCSV(filtered, dateFrom || 'all', dateTo || 'dates', downloadCSV);
     showToast(`Pay breakdown exported (${filtered.length} rows)`, 'success');
+  };
+
+  // Invoice-ready lines for whatever the filters currently show — the builder
+  // itself drops $0 and training-day rows so they can never be invoiced.
+  const handleInvoiceExport = () => {
+    const exported = buildInvoiceCSV(filtered, dateFrom || 'all', dateTo || 'dates', downloadCSV);
+    if (!exported) { showToast('No billable rows in this range (rows with $0 charge and training days are excluded).', 'info'); return; }
+    showToast(`Invoice CSV exported (${exported} billable rows grouped per client)`, 'success');
+  };
+
+  // Pay-run close-off: stamp WHO closed these rows off and WHEN. Deliberately
+  // independent of xero_exported — Xero push is a transport, processed is the
+  // office's own "this run is done" ledger.
+  const handleMarkProcessed = async () => {
+    if (!selectedIds.size) { showToast('Select at least one timesheet first.', 'info'); return; }
+    const n = selectedIds.size;
+    if (!window.confirm(`Mark ${n} timesheet${n === 1 ? '' : 's'} as processed? They get a ✓ chip and are hidden while "Hide processed" is on.`)) return;
+    setProcessing(true);
+    // No currentWorker prop reaches this page, so the session email is the
+    // stamp — it identifies the admin without another lookup.
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from('timesheets')
+      .update({ processed_at: new Date().toISOString(), processed_by: user?.email || 'admin' })
+      .in('id', [...selectedIds]);
+    setProcessing(false);
+    if (error) { showToast(error.message, 'error'); return; }
+    showToast(`${n} timesheet${n === 1 ? '' : 's'} marked as processed`, 'success');
+    setSelectedIds(new Set());
+    load();
   };
 
   const handleSubExport = () => {
@@ -328,8 +373,18 @@ export function PayrollTrackerPage({ showToast }) {
             <select style={{ ...inputStyle, width: 200 }} value={filterWorker} onChange={e => setFilterWorker(e.target.value)}>
               <option value="all">All workers ({workersInRange.length})</option>
               {workersInRange.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+              {/* A remembered worker with no rows in this range still needs an
+                  option, or the select renders blank with a silent filter on. */}
+              {filterWorker !== 'all' && !workersInRange.some(w => w.id === filterWorker) && (() => {
+                const w = workers.find(x => x.id === filterWorker);
+                return w ? <option value={w.id}>{w.name} (no rows in range)</option> : null;
+              })()}
             </select>
           </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 7, color: C.textMuted, fontSize: 12.5, cursor: 'pointer', paddingBottom: 10 }}>
+            <input type="checkbox" checked={hideProcessed} onChange={e => setHideProcessed(e.target.checked)} style={{ accentColor: C.success, cursor: 'pointer' }} />
+            Hide processed{processedCount > 0 ? ` (${processedCount})` : ''}
+          </label>
           <button onClick={() => { setDateFrom(''); setDateTo(''); setFilterType('all'); setFilterWorker('all'); }} style={btnSecondary}>Clear</button>
           <div style={{ marginLeft: 'auto', background: C.bg, borderRadius: 8, padding: '10px 18px', border: `1px solid ${C.border}` }}>
             <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{totals.ordinary_hours.toFixed(1)}h</div>
@@ -360,6 +415,7 @@ export function PayrollTrackerPage({ showToast }) {
           <button onClick={handleXeroExport} style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }}>↓ Export Xero CSV (Staff)</button>
           <button onClick={handleBreakdownExport} style={{ ...btnSmall, color: '#86efac', borderColor: '#14532d' }}>↓ Export Pay Breakdown CSV</button>
           <button onClick={handleSubExport} style={{ ...btnSmall, color: '#fde047', borderColor: '#713f12' }}>↓ Export Subcontractors CSV</button>
+          <button onClick={handleInvoiceExport} style={{ ...btnSmall, color: '#fdba74', borderColor: '#7c2d12' }}>↓ Export Invoice CSV (per client)</button>
         </div>
       </div>
 
@@ -389,6 +445,11 @@ export function PayrollTrackerPage({ showToast }) {
               {pushing ? 'Pushing to Xero…' : `↑ Push ${selectedIds.size} to Xero`}
             </button>
           )}
+          <button onClick={handleMarkProcessed} disabled={processing}
+            style={{ ...btnSmall, color: '#4ade80', borderColor: '#16653a' }}
+            title="Pay-run close-off: stamps who processed these rows and when (separate from the Xero push)">
+            {processing ? 'Marking…' : '✓ Mark selected as processed'}
+          </button>
           <button onClick={() => setSelectedIds(new Set())} style={{ ...btnSmall, fontSize: 11 }}>Clear selection</button>
         </div>
       )}
@@ -510,6 +571,13 @@ export function PayrollTrackerPage({ showToast }) {
                   {r._xero_exported
                     ? <span style={{ fontSize: 11, color: C.success }}>✓ sent</span>
                     : <span style={{ fontSize: 11, color: C.textMuted }}>—</span>}
+                  {r._processed_at && (
+                    <div title={`Processed ${fmtDate(r._processed_at)}${r._processed_by ? ` by ${r._processed_by}` : ''}`} style={{
+                      display: 'inline-block', marginLeft: 6, padding: '1px 7px', borderRadius: 999,
+                      fontSize: 10, fontWeight: 700, fontFamily: '"DM Mono", monospace',
+                      color: '#4ade80', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.35)',
+                    }}>✓ processed</div>
+                  )}
                 </Td>
               </tr>
             ))}

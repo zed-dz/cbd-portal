@@ -43,6 +43,11 @@ export function AllocationsPage({ showToast }) {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(allocDefaults);
   const [saving, setSaving] = useState(false);
+  // Create-mode crew picker: whole crews go out to a site in one hit, so add
+  // mode is a multi-select checklist (one allocation row per ticked worker).
+  // Edit mode keeps the single select — an existing row has exactly one worker.
+  const [selectedWorkerIds, setSelectedWorkerIds] = useState([]);
+  const [workerSearch, setWorkerSearch] = useState('');
   // Quick-add for a brand-new site while allocating — clients text new sites in
   // monthly, and leaving the modal to add one loses the half-filled allocation.
   const [quickSite, setQuickSite] = useState(null);
@@ -91,7 +96,25 @@ export function AllocationsPage({ showToast }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const openAdd = () => { setForm(allocDefaults); setModal('add'); };
+  const openAdd = () => { setForm(allocDefaults); setSelectedWorkerIds([]); setWorkerSearch(''); setModal('add'); };
+
+  // ⧉ Duplicate: same job details, dates + arrival CLEARED — the whole point is
+  // re-sending the same job on a new day, so stale dates must not survive the
+  // copy. Opens as a fresh Create (status pending, worker pre-ticked).
+  const openDuplicate = (a) => {
+    setForm({
+      worker_id: a.worker_id || '', role: a.role || '', site: a.site || '', client: a.client || '',
+      project: a.project || '', address: a.address || '',
+      site_supervisor: a.site_manager || a.site_supervisor || '',
+      manager_phone: a.manager_phone || '',
+      status: 'pending', start_date: '', end_date: '', arrival_time: '',
+      notes: a.notes || '', map_link: a.map_link || '',
+    });
+    setSelectedWorkerIds(a.worker_id ? [a.worker_id] : []);
+    setWorkerSearch('');
+    setModal('add');
+  };
+
   const openEdit = (a) => {
     setForm({
       worker_id: a.worker_id || '', role: a.role || '', site: a.site || '', client: a.client || '',
@@ -110,33 +133,42 @@ export function AllocationsPage({ showToast }) {
     });
     setModal(a);
   };
-  const closeModal = () => { setModal(null); setForm(allocDefaults); };
+  const closeModal = () => { setModal(null); setForm(allocDefaults); setSelectedWorkerIds([]); setWorkerSearch(''); };
 
-  const conflicts = useMemo(() => {
+  // One group per worker with clashes — add mode checks every ticked worker,
+  // edit mode just the form's single worker (same shape either way).
+  const conflictGroups = useMemo(() => {
     if (!modal) return [];
-    return findConflicts(
-      allocations,
-      form.worker_id,
-      form.start_date,
-      form.end_date,
-      modal === 'add' ? null : modal.id
-    );
-  }, [allocations, form.worker_id, form.start_date, form.end_date, modal]);
+    const ids = modal === 'add' ? selectedWorkerIds : (form.worker_id ? [form.worker_id] : []);
+    return ids
+      .map(wid => ({
+        workerId: wid,
+        name: workers.find(w => w.id === wid)?.name || 'This worker',
+        conflicts: findConflicts(allocations, wid, form.start_date, form.end_date, modal === 'add' ? null : modal.id),
+      }))
+      .filter(gr => gr.conflicts.length > 0);
+  }, [allocations, selectedWorkerIds, form.worker_id, form.start_date, form.end_date, modal, workers]);
 
-  const workerName = useMemo(
-    () => workers.find(w => w.id === form.worker_id)?.name || 'This worker',
-    [workers, form.worker_id]
+  const visibleWorkers = useMemo(
+    () => workers.filter(w => (w.name || '').toLowerCase().includes(workerSearch.trim().toLowerCase())),
+    [workers, workerSearch]
   );
 
   const handleSave = async () => {
-    if (!form.worker_id) { showToast('Please select a worker.', 'error'); return; }
-    if (conflicts.length > 0) {
-      const summary = conflicts.slice(0, 3).map(c =>
-        `• ${c.client || c.site || 'Allocated'} (${c.start_date}${c.end_date && c.end_date !== c.start_date ? ` → ${c.end_date}` : ''}, ${c.status})`
-      ).join('\n');
-      const extra = conflicts.length > 3 ? `\n…and ${conflicts.length - 3} more.` : '';
+    const ids = modal === 'add' ? selectedWorkerIds : (form.worker_id ? [form.worker_id] : []);
+    if (!ids.length) { showToast(modal === 'add' ? 'Please tick at least one worker.' : 'Please select a worker.', 'error'); return; }
+    const totalConflicts = conflictGroups.reduce((s, gr) => s + gr.conflicts.length, 0);
+    if (totalConflicts > 0) {
+      const lines = [];
+      conflictGroups.forEach(gr => gr.conflicts.slice(0, 3).forEach(c => lines.push(
+        `• ${conflictGroups.length > 1 ? `${gr.name}: ` : ''}${c.client || c.site || 'Allocated'} (${c.start_date}${c.end_date && c.end_date !== c.start_date ? ` → ${c.end_date}` : ''}, ${c.status})`
+      )));
+      const extra = totalConflicts > lines.length ? `\n…and ${totalConflicts - lines.length} more.` : '';
+      const who = conflictGroups.length === 1
+        ? `${conflictGroups[0].name} is`
+        : `${conflictGroups.length} of these workers are`;
       const ok = window.confirm(
-        `⚠ ${workerName} is already allocated during this period:\n\n${summary}${extra}\n\nContinue and create a clashing allocation anyway?`
+        `⚠ ${who} already allocated during this period:\n\n${lines.join('\n')}${extra}\n\nContinue and create ${ids.length === 1 ? 'a clashing allocation' : 'clashing allocations'} anyway?`
       );
       if (!ok) return;
     }
@@ -172,13 +204,26 @@ export function AllocationsPage({ showToast }) {
       map_link: form.map_link || null,
     };
     if (modal === 'add') {
-      const { data: inserted, error } = await supabase.from('allocations').insert([payload]).select().single();
-      if (error) showToast(error.message, 'error');
-      else {
-        showToast('Allocation created successfully', 'success');
-        notifyOnCreate(inserted);   // fire-and-forget SMS + admin notification
-        closeModal();
-        load();
+      if (ids.length === 1) {
+        const { data: inserted, error } = await supabase.from('allocations').insert([{ ...payload, worker_id: ids[0] }]).select().single();
+        if (error) showToast(error.message, 'error');
+        else {
+          showToast('Allocation created successfully', 'success');
+          notifyOnCreate(inserted, ids[0]);   // fire-and-forget SMS + admin notification
+          closeModal();
+          load();
+        }
+      } else {
+        // Crew allocation: one row per ticked worker, identical details.
+        const { data: insertedRows, error } = await supabase.from('allocations')
+          .insert(ids.map(wid => ({ ...payload, worker_id: wid }))).select();
+        if (error) showToast(error.message, 'error');
+        else {
+          showToast(`${(insertedRows || []).length} allocations created — one per worker`, 'success');
+          (insertedRows || []).forEach(r => notifyOnCreate(r, r.worker_id));
+          closeModal();
+          load();
+        }
       }
     } else {
       const { error } = await supabase.from('allocations').update(payload).eq('id', modal.id);
@@ -189,9 +234,11 @@ export function AllocationsPage({ showToast }) {
   };
 
   // After an allocation is created: text the worker + drop an admin notification.
-  // Fire-and-forget — never blocks the UI. `inserted` is the new allocation row.
-  const notifyOnCreate = (inserted) => {
-    const worker = workers.find(w => w.id === form.worker_id);
+  // Fire-and-forget — never blocks the UI. `inserted` is the new allocation row;
+  // `workerIdArg` pins the subject worker (crew saves call this once per worker).
+  const notifyOnCreate = (inserted, workerIdArg) => {
+    const wid = workerIdArg || inserted?.worker_id || form.worker_id;
+    const worker = workers.find(w => w.id === wid);
     const name = worker?.name || 'Worker';
     const client = inserted?.client || form.client || '';
     const site = inserted?.site || form.site || '';
@@ -226,7 +273,7 @@ export function AllocationsPage({ showToast }) {
       title: `Allocation sent to ${name}`,
       body: `${client || site || 'New job'}${role ? ` · ${role}` : ''}${startDate ? ` — starts ${startDate}` : ''}`,
       allocation_id: inserted?.id || null,
-      worker_id: form.worker_id || null,
+      worker_id: wid || null,
     }).then(() => window.dispatchEvent(new CustomEvent('cbd:notify')));
 
     // (c) Broadcast the same event to every admin by SMS + email.
@@ -282,7 +329,7 @@ export function AllocationsPage({ showToast }) {
                 <Td>{a.client || '—'}</Td>
                 <Td>
                   <div>{a.project || a.site || '—'}</div>
-                  {a.project && a.site && <div style={{ fontSize: 12, color: C.textMuted }}>{a.site}</div>}
+                  {a.project && a.site && a.project !== a.site && <div style={{ fontSize: 12, color: C.textMuted }}>{a.site}</div>}
                 </Td>
                 <Td>
                   <div>{a.site_manager || '—'}</div>
@@ -294,6 +341,8 @@ export function AllocationsPage({ showToast }) {
                 <Td>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button onClick={() => openEdit(a)} style={btnSmall}>Edit</button>
+                    <button onClick={() => openDuplicate(a)} style={btnSmall}
+                      title="Duplicate — same job details, pick a new date">⧉</button>
                     <button onClick={() => handleDelete(a)} style={btnDanger}>Delete</button>
                   </div>
                 </Td>
@@ -305,45 +354,74 @@ export function AllocationsPage({ showToast }) {
 
       {modal && (
         <Modal title={modal === 'add' ? 'Create Allocation' : 'Edit Allocation'} onClose={closeModal} width={560}>
-          {conflicts.length > 0 && (
-            <div style={{
-              background: 'rgba(234,179,8,0.10)',
-              border: '1px solid rgba(234,179,8,0.45)',
-              borderRadius: 8, padding: '10px 14px', marginBottom: 14,
-              fontSize: 12.5, color: '#fde68a',
-            }}>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>
-                ⚠ {workerName} is already allocated during this date range
+          {conflictGroups.length > 0 && (() => {
+            const flat = conflictGroups.flatMap(gr => gr.conflicts.map(c => ({ gr, c })));
+            return (
+              <div style={{
+                background: 'rgba(234,179,8,0.10)',
+                border: '1px solid rgba(234,179,8,0.45)',
+                borderRadius: 8, padding: '10px 14px', marginBottom: 14,
+                fontSize: 12.5, color: '#fde68a',
+              }}>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                  ⚠ {conflictGroups.length === 1
+                    ? `${conflictGroups[0].name} is already allocated during this date range`
+                    : `${conflictGroups.length} of the ticked workers are already allocated during this date range`}
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.55 }}>
+                  {flat.slice(0, 4).map(({ gr, c }) => (
+                    <li key={`${gr.workerId}-${c.id}`} style={{ fontSize: 12 }}>
+                      {conflictGroups.length > 1 && <strong>{gr.name} · </strong>}
+                      <strong>{c.client || c.site || 'Allocated'}</strong>
+                      {' · '}
+                      <span style={{ fontFamily: '"DM Mono", monospace' }}>
+                        {c.start_date}{c.end_date && c.end_date !== c.start_date ? ` → ${c.end_date}` : ''}
+                      </span>
+                      {' · '}
+                      <span style={{ textTransform: 'capitalize' }}>{c.status}</span>
+                    </li>
+                  ))}
+                </ul>
+                {flat.length > 4 && (
+                  <div style={{ marginTop: 4, fontSize: 11, opacity: 0.8 }}>…and {flat.length - 4} more.</div>
+                )}
+                <div style={{ marginTop: 8, fontSize: 11, color: '#fde68a', opacity: 0.85 }}>
+                  You can still save — you'll get a confirm prompt first.
+                </div>
               </div>
-              <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.55 }}>
-                {conflicts.slice(0, 4).map(c => (
-                  <li key={c.id} style={{ fontSize: 12 }}>
-                    <strong>{c.client || c.site || 'Allocated'}</strong>
-                    {' · '}
-                    <span style={{ fontFamily: '"DM Mono", monospace' }}>
-                      {c.start_date}{c.end_date && c.end_date !== c.start_date ? ` → ${c.end_date}` : ''}
-                    </span>
-                    {' · '}
-                    <span style={{ textTransform: 'capitalize' }}>{c.status}</span>
-                  </li>
-                ))}
-              </ul>
-              {conflicts.length > 4 && (
-                <div style={{ marginTop: 4, fontSize: 11, opacity: 0.8 }}>…and {conflicts.length - 4} more.</div>
-              )}
-              <div style={{ marginTop: 8, fontSize: 11, color: '#fde68a', opacity: 0.85 }}>
-                You can still save — you'll get a confirm prompt first.
-              </div>
-            </div>
-          )}
+            );
+          })()}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
             <div style={{ gridColumn: '1 / -1' }}>
-              <Field label="Worker *">
-                <select style={inputStyle} value={form.worker_id} onChange={e => setForm(f => ({ ...f, worker_id: e.target.value }))}>
-                  <option value="">Select a worker…</option>
-                  {workers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                </select>
-              </Field>
+              {modal === 'add' ? (
+                <Field label={`Workers * (${selectedWorkerIds.length} selected)`}
+                  hint="Tick everyone going to this job — one allocation is created per worker.">
+                  <>
+                    <input style={{ ...inputStyle, marginBottom: 6 }} value={workerSearch}
+                      placeholder="Search workers…" onChange={e => setWorkerSearch(e.target.value)} />
+                    <div style={{ maxHeight: 170, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8, padding: '4px 10px', background: C.bg }}>
+                      {visibleWorkers.map(w => (
+                        <label key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: C.text, fontSize: 13, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={selectedWorkerIds.includes(w.id)}
+                            onChange={() => setSelectedWorkerIds(prev =>
+                              prev.includes(w.id) ? prev.filter(x => x !== w.id) : [...prev, w.id])} />
+                          {w.name}
+                        </label>
+                      ))}
+                      {visibleWorkers.length === 0 && (
+                        <div style={{ color: C.textMuted, fontSize: 12, padding: '6px 0' }}>No workers match "{workerSearch}".</div>
+                      )}
+                    </div>
+                  </>
+                </Field>
+              ) : (
+                <Field label="Worker *">
+                  <select style={inputStyle} value={form.worker_id} onChange={e => setForm(f => ({ ...f, worker_id: e.target.value }))}>
+                    <option value="">Select a worker…</option>
+                    {workers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                </Field>
+              )}
             </div>
             <div style={{ gridColumn: '1 / -1' }}>
               <Field label="Role to be performed">

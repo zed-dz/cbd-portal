@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
-import { C, R, MONO, btnPrimary, btnSecondary } from '../../theme';
+import { C, R, MONO, btnPrimary, btnSecondary, btnSmall } from '../../theme';
 import { todayISO, localISO, fmtDate } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
 import { Spinner, allocationBadge, timesheetBadge } from '../../components';
 import { ActivityFeed } from '../../components/activity/ActivityFeed';
+import { sendWorkerSms, normaliseAUMobile, addAdminNotification } from '../../utils/notify';
 
 export function DashboardPage({ showToast, currentWorker, onNavigate }) {
   const [stats, setStats] = useState(null);
@@ -13,6 +14,9 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
   const [todayAllocs, setTodayAllocs] = useState([]);
   const [dismissedAlerts, setDismissedAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [missingTs, setMissingTs] = useState([]);
+  const [nudged, setNudged] = useState(() => new Set());
+  const [nudgingKey, setNudgingKey] = useState(null);
 
   useEffect(() => {
     let mounted = true;
@@ -21,7 +25,11 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
         const today = todayISO();
         const in30 = localISO(new Date(Date.now() + 30 * 86400000));
         const weekAgo = localISO(new Date(Date.now() - 7 * 86400000));
-        const [onSite, available, pendingTs, licAlerts, weekHours, pendingList, expired, allocs, payrollReady] = await Promise.all([
+        // Missing-timesheet radar window: the last 3 days, excluding today
+        // (today's sheets legitimately aren't in yet).
+        const radarLo = localISO(new Date(Date.now() - 3 * 86400000));
+        const radarHi = localISO(new Date(Date.now() - 1 * 86400000));
+        const [onSite, available, pendingTs, licAlerts, weekHours, pendingList, expired, allocs, payrollReady, radarAllocs, radarTs] = await Promise.all([
           supabase.from('workers').select('id', { count: 'exact' }).eq('status', 'on_site').is('archived_at', null),
           supabase.from('workers').select('id', { count: 'exact' }).eq('status', 'available').is('archived_at', null),
           supabase.from('timesheets').select('id', { count: 'exact' }).eq('status', 'pending'),
@@ -34,8 +42,35 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
           // that the previous `start_date = today` test missed.
           supabase.from('allocations').select('*, workers(name, job_title)').lte('start_date', today).or(`end_date.is.null,end_date.gte.${today}`).order('created_at', { ascending: false }),
           supabase.from('timesheets').select('id', { count: 'exact' }).eq('status', 'approved').eq('xero_exported', false),
+          supabase.from('allocations').select('id, worker_id, client, site, status, start_date, end_date, workers(name, mobile)')
+            .in('status', ['pending', 'confirmed']).lte('start_date', radarHi).or(`end_date.is.null,end_date.gte.${radarLo}`),
+          supabase.from('timesheets').select('worker_id, date').gte('date', radarLo).lte('date', radarHi),
         ]);
         if (!mounted) return;
+        // A worker+date is "missing" when an active allocation covered that
+        // day and NO timesheets row exists for it — deduped so two overlapping
+        // allocations don't nag the same worker twice for one day.
+        const haveTs = new Set((radarTs.data || []).map(r => `${r.worker_id}|${r.date}`));
+        const radarDays = [];
+        for (let d = new Date(radarLo + 'T12:00:00'); localISO(d) <= radarHi; d.setDate(d.getDate() + 1)) radarDays.push(localISO(d));
+        const seen = new Set();
+        const missing = [];
+        for (const a of (radarAllocs.data || [])) {
+          if (!a.worker_id) continue;
+          for (const day of radarDays) {
+            if (a.start_date > day) continue;
+            if (a.end_date ? a.end_date < day : a.start_date !== day) continue;
+            const key = `${a.worker_id}|${day}`;
+            if (haveTs.has(key) || seen.has(key)) continue;
+            seen.add(key);
+            missing.push({
+              key, worker_id: a.worker_id, name: a.workers?.name || '—',
+              mobile: a.workers?.mobile || '', client: a.client || '', site: a.site || '', date: day,
+            });
+          }
+        }
+        missing.sort((x, y) => y.date.localeCompare(x.date) || x.name.localeCompare(y.name));
+        setMissingTs(missing);
         const totalWeekHrs = (weekHours.data || []).reduce((s, r) => s + (r.hours || 0), 0);
         setStats({
           onSite: onSite.count || 0,
@@ -56,6 +91,27 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
     })();
     return () => { mounted = false; };
   }, [showToast]);
+
+  const nudge = async (m) => {
+    const to = normaliseAUMobile(m.mobile);
+    if (!to) { showToast(`${m.name} has no mobile on file — can't SMS.`, 'error'); return; }
+    setNudgingKey(m.key);
+    const r = await sendWorkerSms(to, `Reminder: please submit your timesheet for ${m.client || m.site || 'your site'} — ${fmtDate(m.date)}. — CBD`);
+    if (r.ok) {
+      // The bell record is what tells the rest of the office it was chased.
+      addAdminNotification({
+        type: 'timesheet_nudge',
+        title: `Timesheet nudge sent — ${m.name}`,
+        body: `SMS reminder for ${m.client || m.site || 'site'} on ${fmtDate(m.date)} sent to ${to}.`,
+        worker_id: m.worker_id,
+      });
+      setNudged(prev => new Set(prev).add(m.key));
+      showToast(`Nudge sent to ${m.name}`, 'success');
+    } else {
+      showToast(r.error || 'SMS failed', 'error');
+    }
+    setNudgingKey(null);
+  };
 
   if (loading) return <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 60 }}><Spinner size={36} /></div>;
 
@@ -106,6 +162,47 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
             {sc.sub && <div style={{ fontSize: 11, color: C.textDim, marginTop: 3 }}>{sc.sub}</div>}
           </div>
         ))}
+      </div>
+
+      {/* Missing-timesheet radar: allocated shifts in the last 3 days with no
+          timesheet — the chase list before payroll day. */}
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 11, padding: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 13, gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 14, fontWeight: 700, color: C.text }}>⏰ Missing timesheets</div>
+          <span style={{
+            background: missingTs.length > 0 ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.12)',
+            color: missingTs.length > 0 ? '#f87171' : C.success,
+            padding: '2px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600, fontFamily: '"DM Mono", monospace',
+          }}>{missingTs.length}</span>
+        </div>
+        {missingTs.length === 0 ? (
+          <div style={{ color: C.success, fontSize: 12.5, padding: '8px 0' }}>Every allocated shift has a timesheet ✓</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+            {missingTs.slice(0, 10).map(m => (
+              <div key={m.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, background: 'rgba(239,68,68,0.06)', borderRadius: 7, padding: '8px 10px', flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 0 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{m.name}</span>
+                  <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 6 }}>{m.client || m.site || '—'}</span>
+                  <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 6, fontFamily: '"DM Mono", monospace' }}>{fmtDate(m.date)}</span>
+                </div>
+                {nudged.has(m.key) ? (
+                  <span style={{ fontSize: 11, color: C.success, fontFamily: '"DM Mono", monospace' }}>✓ nudged</span>
+                ) : (
+                  <button onClick={() => nudge(m)} disabled={nudgingKey === m.key}
+                    style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }}>
+                    {nudgingKey === m.key ? 'Sending…' : '📱 Nudge by SMS'}
+                  </button>
+                )}
+              </div>
+            ))}
+            {missingTs.length > 10 && (
+              <div style={{ fontSize: 11.5, color: C.textMuted, paddingTop: 2 }}>
+                +{missingTs.length - 10} more — open Timesheets to chase the rest.
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>

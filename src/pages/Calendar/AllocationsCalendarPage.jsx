@@ -4,6 +4,7 @@ import { C, R, MONO, inputStyle, btnPrimary, btnSecondary, btnSmall } from '../.
 import { Modal, Field, Spinner, EmptyState, DateField } from '../../components';
 import { PUBLIC_HOLIDAYS } from '../../utils/payroll';
 import { localISO } from '../../utils/dates';
+import { logActivity } from '../../utils/activity';
 
 // Calendar entry types — RDO / leave days get their own colours instead of the
 // per-worker colour, so the roster reads at a glance.
@@ -114,6 +115,7 @@ export function AllocationsCalendarPage({ showToast }) {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(allocDefaults);
   const [saving, setSaving] = useState(false);
+  const [copyingDay, setCopyingDay] = useState(null);   // dayISO currently being copied to tomorrow
 
   const weekDays = getWeekDays(weekStart);
   const weekEnd = weekDays[6];
@@ -208,6 +210,81 @@ export function AllocationsCalendarPage({ showToast }) {
       else { showToast('Allocation updated', 'success'); closeModal(); load(); }
     }
     setSaving(false);
+  };
+
+  const addDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return localISO(d); };
+
+  // ⧉ Copy a whole day forward: every live (pending/confirmed) allocation that
+  // renders on `dayISO` is recreated with its dates shifted +1 day, as PENDING
+  // so each worker re-accepts. Workers who ALREADY have a live allocation
+  // covering tomorrow are skipped and reported, not double-booked — that also
+  // covers multi-day spans, which already reach into tomorrow by themselves.
+  const copyDayToTomorrow = async (dayISO) => {
+    if (copyingDay) return;
+    const next = addDays(dayISO, 1);
+    const dayList = allocations.filter(a => ['pending', 'confirmed'].includes(a.status) && isAllocOnDay(a, dayISO));
+    if (!dayList.length) { showToast('No live allocations on this day to copy.', 'info'); return; }
+    const summary = dayList.slice(0, 8).map(a =>
+      `• ${a.workers?.name || 'Worker'} — ${(a.allocation_type || 'work') === 'work' ? (a.client || a.site || 'Allocated') : typeMeta(a).label}`
+    ).join('\n');
+    const extra = dayList.length > 8 ? `\n…and ${dayList.length - 8} more.` : '';
+    const ok = window.confirm(
+      `⧉ Copy ${dayList.length} allocation${dayList.length === 1 ? '' : 's'} from ${dayISO} to ${next}?\n\n${summary}${extra}\n\nEach copy is created as PENDING so the worker re-accepts. Anyone already allocated on ${next} will be skipped.`
+    );
+    if (!ok) return;
+
+    setCopyingDay(dayISO);
+    try {
+      // JIT DB check — the in-memory list is range-filtered to the visible
+      // window, so tomorrow's clashes may not be loaded.
+      const workerIds = [...new Set(dayList.map(a => a.worker_id).filter(Boolean))];
+      const { data: existing, error: exErr } = await supabase.from('allocations')
+        .select('id, worker_id, start_date, end_date, status')
+        .in('worker_id', workerIds)
+        .in('status', ['pending', 'confirmed'])
+        .lte('start_date', next);
+      if (exErr) { showToast(exErr.message, 'error'); return; }
+      const busy = new Set((existing || [])
+        .filter(a => (a.end_date || a.start_date) >= next)
+        .map(a => a.worker_id));
+
+      const toCreate = dayList.filter(a => !busy.has(a.worker_id));
+      const skipped  = dayList.filter(a => busy.has(a.worker_id));
+      if (!toCreate.length) {
+        showToast(`Nothing copied — ${skipped.length === 1 ? 'that worker is' : `all ${skipped.length} workers are`} already allocated on ${next}.`, 'info');
+        return;
+      }
+
+      const rows = toCreate.map(a => ({
+        worker_id: a.worker_id,
+        role: a.role || null, site: a.site || null, client: a.client || null, project: a.project || null,
+        address: a.address || null, site_manager: a.site_manager || null, manager_phone: a.manager_phone || null,
+        site_id: a.site_id || null, client_id: a.client_id || null,
+        status: 'pending',
+        start_date: addDays(a.start_date, 1),
+        end_date: a.end_date ? addDays(a.end_date, 1) : null,
+        start_time: a.start_time ? new Date(new Date(a.start_time).getTime() + 86400000).toISOString() : null,
+        end_time: null,
+        notes: a.notes || null, map_link: a.map_link || null,
+        allocation_type: a.allocation_type || 'work',
+      }));
+      const { data: inserted, error } = await supabase.from('allocations').insert(rows).select();
+      if (error) { showToast(error.message, 'error'); return; }
+      (inserted || []).forEach(r => logActivity({
+        verb: 'created', object_type: 'allocation', object_id: r.id,
+        after: {
+          worker: allWorkers.find(w => w.id === r.worker_id)?.name || null,
+          client: r.client, site: r.site, start_date: r.start_date, copied_from: dayISO,
+        },
+      }));
+      const skipNote = skipped.length
+        ? ` Skipped ${skipped.length}: ${[...new Set(skipped.map(a => a.workers?.name || 'Worker'))].join(', ')} — already allocated on ${next}.`
+        : '';
+      showToast(`Copied ${(inserted || rows).length} allocation${rows.length === 1 ? '' : 's'} to ${next}.${skipNote}`, skipped.length ? 'info' : 'success');
+      load();
+    } finally {
+      setCopyingDay(null);
+    }
   };
 
   const prevWeek  = () => { const d = new Date(weekStart); d.setDate(d.getDate() - 7); setWeekStart(d); };
@@ -320,6 +397,18 @@ export function AllocationsCalendarPage({ showToast }) {
                 fontFamily: MONO,
               }}>
                 {formatDayHeader(day)}
+                {allocations.some(a => ['pending', 'confirmed'].includes(a.status) && isAllocOnDay(a, day)) && (
+                  <button onClick={() => copyDayToTomorrow(day)} disabled={copyingDay === day}
+                    title="Duplicate all of this day's pending/confirmed allocations onto the next day (as pending)"
+                    style={{
+                      display: 'block', margin: '5px auto 0', background: 'none',
+                      border: `1px solid ${C.border}`, borderRadius: 5, color: C.textMuted,
+                      fontSize: 9, padding: '2px 5px', cursor: 'pointer', whiteSpace: 'nowrap',
+                      opacity: copyingDay === day ? 0.5 : 1,
+                    }}>
+                    {copyingDay === day ? 'Copying…' : '⧉ Copy to tomorrow'}
+                  </button>
+                )}
               </div>
             ))}
 

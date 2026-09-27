@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary } from '../theme';
-import { todayISO, fmtDate, fmtDateTime } from '../utils/dates';
+import { todayISO, localISO, fmtDate, fmtDateTime } from '../utils/dates';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, timesheetBadge, DailyTimesheetForm, TimesheetDetailView } from '../components';
 import { WorkerCertificateUploads } from '../components/certificates/WorkerCertificateUploads';
+import { Take5Form } from '../components/take5/Take5Form';
 import { addAdminNotification, broadcastAdminSms, adminAcceptSmsBody, adminDeclineSmsBody, sendAdminEmail } from '../utils/notify';
 import { roleChipStyle } from '../constants/roles';
 
@@ -59,6 +60,7 @@ function WorkerAllocations({ currentWorker, showToast }) {
   const [allocations, setAllocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(null);   // allocation id currently being accepted/declined
+  const [showPast, setShowPast] = useState(false);
 
   const load = useCallback(async () => {
     const { data, error } = await supabase.from('allocations').select('*').eq('worker_id', currentWorker.id).order('created_at', { ascending: false });
@@ -108,12 +110,34 @@ function WorkerAllocations({ currentWorker, showToast }) {
     setActing(null);
   };
 
+  // Group by day so "where am I today / tomorrow?" answers itself. Buckets by
+  // the allocation's covered span, not created_at — a multi-day job covering
+  // today belongs under Today even if it started last week.
+  const groups = useMemo(() => {
+    const today = todayISO();
+    const tmr = (() => { const d = new Date(today + 'T12:00:00'); d.setDate(d.getDate() + 1); return localISO(d); })();
+    const g = { today: [], tomorrow: [], upcoming: [], past: [] };
+    const sorted = [...allocations].sort((a, b) => (a.start_date || '9999').localeCompare(b.start_date || '9999'));
+    for (const a of sorted) {
+      if (!a.start_date) { g.upcoming.push(a); continue; }
+      const end = a.end_date || a.start_date;
+      if (end < today) g.past.push(a);
+      else if (a.start_date <= today) g.today.push(a);
+      else if (a.start_date === tmr) g.tomorrow.push(a);
+      else g.upcoming.push(a);
+    }
+    g.past.reverse();   // most recent past job first once expanded
+    return g;
+  }, [allocations]);
+
+  const niceDay = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' });
+  const todayStr = todayISO();
+  const tomorrowStr = (() => { const d = new Date(todayStr + 'T12:00:00'); d.setDate(d.getDate() + 1); return localISO(d); })();
+
   if (loading) return <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>;
   if (!allocations.length) return <EmptyState message="No allocations found." />;
 
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>
-      {allocations.map(a => (
+  const renderCard = (a) => (
         <div key={a.id} style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
             <div style={{ fontWeight: 700, color: C.text, fontSize: 15 }}>{a.site || 'No site'}</div>
@@ -171,9 +195,60 @@ function WorkerAllocations({ currentWorker, showToast }) {
             <div style={{ marginTop: 12, fontSize: 12, color: '#fca5a5', fontWeight: 600 }}>✕ You declined this allocation</div>
           )}
         </div>
-      ))}
+  );
+
+  const sectionHeader = (label, sub, count) => (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
+      <span style={{ fontSize: 19, fontWeight: 800, color: C.text }}>{label}</span>
+      {sub && <span style={{ fontSize: 13, color: C.textMuted }}>{sub}</span>}
+      <span style={{ fontSize: 12, fontWeight: 600, color: C.textMuted }}>({count})</span>
     </div>
   );
+  const cardGrid = (items) => (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>
+      {items.map(renderCard)}
+    </div>
+  );
+
+  return (
+    <div style={{ display: 'grid', gap: 24 }}>
+      {groups.today.length > 0 && (
+        <div>{sectionHeader('Today', niceDay(todayStr), groups.today.length)}{cardGrid(groups.today)}</div>
+      )}
+      {groups.tomorrow.length > 0 && (
+        <div>{sectionHeader('Tomorrow', niceDay(tomorrowStr), groups.tomorrow.length)}{cardGrid(groups.tomorrow)}</div>
+      )}
+      {groups.upcoming.length > 0 && (
+        <div>{sectionHeader('Upcoming', null, groups.upcoming.length)}{cardGrid(groups.upcoming)}</div>
+      )}
+      {!groups.today.length && !groups.tomorrow.length && !groups.upcoming.length && (
+        <EmptyState message="Nothing coming up — your past allocations are below." />
+      )}
+      {groups.past.length > 0 && (
+        <div>
+          <button onClick={() => setShowPast(s => !s)}
+            style={{ ...btnSecondary, padding: '8px 16px', fontSize: 13, marginBottom: showPast ? 10 : 0 }}>
+            {showPast ? '▾ Hide past' : `▸ Show past (${groups.past.length})`}
+          </button>
+          {showPast && cardGrid(groups.past)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Plain-words answer to "what happened to my sheet?" — the badge alone kept
+// generating calls to the office. Reads the sign-off-chain columns on the header.
+function timesheetStatusLine(h) {
+  if (h.status === 'approved') {
+    return h.client_approved_by
+      ? `Accepted by ${h.client_approved_by}${h.client_approved_at ? ` ${fmtDate(h.client_approved_at)}` : ''}`
+      : 'Approved by the office';
+  }
+  if (h.status === 'rejected') return `Rejected — ${h.rejection_reason || 'ask the office'}`;
+  return h.client_approval_sent_at
+    ? `With the site supervisor since ${fmtDate(h.client_approval_sent_at)}`
+    : `With the office since ${fmtDate(h.created_at)}`;
 }
 
 function WorkerTimesheets({ currentWorker, showToast, onGoToTake5 }) {
@@ -252,7 +327,12 @@ function WorkerTimesheets({ currentWorker, showToast, onGoToTake5 }) {
                   <Td>{h.project || '—'}</Td>
                   <Td>{h.role || '—'}</Td>
                   <Td>{Number(h.total_hours || 0).toFixed(2)}</Td>
-                  <Td>{timesheetBadge(h.status)}</Td>
+                  <Td>
+                    {timesheetBadge(h.status)}
+                    <div style={{ fontSize: 11, color: h.status === 'rejected' ? '#fca5a5' : C.textMuted, marginTop: 3, maxWidth: 230, whiteSpace: 'normal' }}>
+                      {timesheetStatusLine(h)}
+                    </div>
+                  </Td>
                   <Td><button onClick={() => openView(h)} style={{ ...btnSecondary, padding: '5px 12px', fontSize: 12 }}>View</button></Td>
                 </tr>
               ))}
@@ -494,29 +574,10 @@ function WorkerClockIn({ currentWorker, showToast }) {
   );
 }
 
-const PPE_ITEMS = ['Hard hat', 'Hi-vis clothing', 'Steel-cap boots', 'Safety glasses', 'Gloves', 'Hearing protection', 'Dust mask / respirator', 'Sunscreen'];
-
-const HAZARD_SUGGESTIONS = [
-  'Moving plant / machinery', 'Live traffic', 'Working at heights', 'Manual handling',
-  'Overhead powerlines', 'Underground services', 'Noise', 'Dust / silica',
-  'Sun / UV exposure', 'Slips, trips and falls', 'Crush / pinch points', 'Fatigue',
-  'Hot works', 'Confined space', 'Weather (wind / rain / lightning)', 'Public / pedestrians',
-];
-
-const emptyTaskHazard = () => ({ hazard: '', control: '' });
-const blankTake5 = () => ({
-  work_date: todayISO(), site: '', task: '',
-  task_hazards: [emptyTaskHazard(), emptyTaskHazard()],
-  ppe: [], acknowledged: false,
-});
-
 // Pre-start Take 5 safety check. Required on Tue/Thu before a timesheet can be
-// submitted (the gate lives in DailyTimesheetForm; this writes the take5 row).
-// The worker states the TASK they're doing, then picks 2–3 hazards specific to
-// that task, each with its control measure.
+// submitted (the gate lives in DailyTimesheetForm; the shared Take5Form writes
+// the take5 row — the same form also opens inline from the timesheet gate).
 function WorkerTake5({ currentWorker, showToast }) {
-  const [f, setF] = useState(blankTake5());
-  const [saving, setSaving] = useState(false);
   const [recent, setRecent] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -527,42 +588,6 @@ function WorkerTake5({ currentWorker, showToast }) {
     setLoading(false);
   }, [currentWorker.id]);
   useEffect(() => { load(); }, [load]);
-
-  const set = (k) => (e) => setF(s => ({ ...s, [k]: e.target.value }));
-  const togglePpe = (item) => setF(s => ({ ...s, ppe: s.ppe.includes(item) ? s.ppe.filter(x => x !== item) : [...s.ppe, item] }));
-  const setHazard = (idx, key, value) => setF(s => ({
-    ...s, task_hazards: s.task_hazards.map((h, i) => i === idx ? { ...h, [key]: value } : h),
-  }));
-  const addHazard = () => setF(s => s.task_hazards.length >= 3 ? s : ({ ...s, task_hazards: [...s.task_hazards, emptyTaskHazard()] }));
-  const removeHazard = (idx) => setF(s => ({
-    ...s, task_hazards: s.task_hazards.length > 1 ? s.task_hazards.filter((_, i) => i !== idx) : s.task_hazards,
-  }));
-
-  const submit = async () => {
-    if (!String(f.task).trim()) { showToast('Describe the task you are about to do.', 'error'); return; }
-    const filled = f.task_hazards.filter(h => String(h.hazard).trim());
-    if (filled.length < 2) { showToast('Pick at least 2 hazards for this task (add a third if it applies).', 'error'); return; }
-    if (filled.some(h => !String(h.control).trim())) { showToast('Add a control measure for each hazard.', 'error'); return; }
-    if (!f.acknowledged) { showToast('Please tick the acknowledgement to submit your Take 5.', 'error'); return; }
-    setSaving(true);
-    const { error } = await supabase.from('take5').insert([{
-      worker_id: currentWorker.id,
-      work_date: f.work_date,
-      site: f.site || null,
-      task: f.task,
-      task_hazards: filled,
-      // legacy text columns stay populated so older views/reports keep working
-      hazards: filled.map(h => h.hazard).join('; '),
-      controls: filled.map(h => h.control).join('; '),
-      ppe: f.ppe,
-      acknowledged: f.acknowledged,
-    }]);
-    setSaving(false);
-    if (error) { showToast(error.message, 'error'); return; }
-    showToast('Take 5 submitted — you can now submit your timesheet for this day.', 'success');
-    setF(blankTake5());
-    load();
-  };
 
   const steps = [
     ['1 · Stop & Think', 'Pause before you start. Are you fit, focused and clear on the task?'],
@@ -585,55 +610,7 @@ function WorkerTake5({ currentWorker, showToast }) {
             </div>
           ))}
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
-          <Field label="Date"><input type="date" style={inputStyle} value={f.work_date} onChange={set('work_date')} /></Field>
-          <Field label="Client / site"><input style={inputStyle} value={f.site} onChange={set('site')} placeholder="Where are you working?" /></Field>
-        </div>
-        <Field label="What task are you doing? *" hint="The specific job you're about to start — e.g. operating the roller on the access road.">
-          <input style={inputStyle} value={f.task} onChange={set('task')} placeholder="e.g. Operating dozer for bulk earthworks" />
-        </Field>
-        <Field label="Hazards for this task * (pick 2–3, with your control for each)">
-          <div style={{ display: 'grid', gap: 8 }}>
-            {f.task_hazards.map((h, i) => (
-              <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                <div style={{ flex: '1 1 180px', minWidth: 160 }}>
-                  <input style={inputStyle} list="take5-hazards" value={h.hazard}
-                    onChange={e => setHazard(i, 'hazard', e.target.value)}
-                    placeholder={`Hazard ${i + 1} — pick or type`} />
-                </div>
-                <div style={{ flex: '1 1 220px', minWidth: 180 }}>
-                  <input style={inputStyle} value={h.control}
-                    onChange={e => setHazard(i, 'control', e.target.value)}
-                    placeholder="Control measure — how you'll manage it" />
-                </div>
-                {f.task_hazards.length > 1 && (
-                  <button type="button" onClick={() => removeHazard(i)}
-                    style={{ ...btnSecondary, padding: '9px 12px', color: '#fca5a5', borderColor: 'rgba(239,68,68,0.32)' }}>×</button>
-                )}
-              </div>
-            ))}
-            <datalist id="take5-hazards">{HAZARD_SUGGESTIONS.map(h => <option key={h} value={h} />)}</datalist>
-            {f.task_hazards.length < 3 && (
-              <button type="button" onClick={addHazard} style={{ ...btnSecondary, padding: '7px 14px', fontSize: 12, justifySelf: 'start', width: 'fit-content' }}>+ Add another hazard</button>
-            )}
-          </div>
-        </Field>
-        <Field label="PPE for this task">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-            {PPE_ITEMS.map(item => (
-              <label key={item} style={{ display: 'flex', alignItems: 'center', gap: 6, color: C.text, fontSize: 13, cursor: 'pointer' }}>
-                <input type="checkbox" checked={f.ppe.includes(item)} onChange={() => togglePpe(item)} /> {item}
-              </label>
-            ))}
-          </div>
-        </Field>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.text, fontSize: 14, cursor: 'pointer', margin: '12px 0' }}>
-          <input type="checkbox" checked={f.acknowledged} onChange={e => setF(s => ({ ...s, acknowledged: e.target.checked }))} />
-          I've completed this Take 5 and it's safe to proceed.
-        </label>
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <button onClick={submit} disabled={saving} style={btnPrimary}>{saving ? 'Submitting…' : 'Submit Take 5'}</button>
-        </div>
+        <Take5Form workerId={currentWorker.id} showToast={showToast} onSubmitted={load} />
       </div>
 
       <div>

@@ -341,7 +341,8 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
   // casuals and subcontractors attend unpaid — every pay bucket stays at zero,
   // whatever hours were recorded. The client is never billed (computeChargeAmount).
   const unpaidTraining = (ts.scenario || 'standard') === 'training_day'
-                      && worker.worker_type !== 'full-time';
+                      && worker.worker_type !== 'full-time'
+                      && worker.worker_type !== 'part-time';
 
   if (unpaidTraining) {
     // all buckets stay 0
@@ -382,7 +383,8 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
   const loading_pay  = loading * geo;
   const basePay      = ordinary_pay + ot15_pay + ot2x_pay + loading_pay;
 
-  const totalPay     = basePay + (ts.travel_allowance || 0) + (ts.meal_allowance || 0);
+  // An unpaid training day pays NOTHING — allowances included.
+  const totalPay     = basePay + (unpaidTraining ? 0 : (ts.travel_allowance || 0) + (ts.meal_allowance || 0));
   const chargeAmount = computeChargeAmount(ts, clientRecord, rateLine, { isSaturday, isSundayOrPH, geoPct: GEO_PCT });
 
   return {
@@ -448,6 +450,74 @@ export function buildPayBreakdownCSV(rows, periodFrom, periodTo, downloadFn) {
     'AWJ Reference':     r.awj_reference,
   }));
   downloadFn(`pay_breakdown_${periodFrom}_to_${periodTo}.csv`, out);
+}
+
+// Invoice-ready charge summary of the CURRENTLY FILTERED payroll rows:
+// client → site/project → role × rate-source, with the tier hour split for
+// context and the dollars summed straight off each row's charge_amount so the
+// CSV always reconciles with the Payroll screen. $0 rows and training days
+// never reach an invoice. Per-tier DOLLARS are deliberately absent: charge
+// splits by the A/B/C day-type bands, not by the pay buckets, and this
+// function only sees finished rows — re-deriving the band split here could
+// disagree with computeChargeAmount, the single source of billing truth.
+export function buildInvoiceCSV(rows, periodFrom, periodTo, downloadFn) {
+  const num = (v) => parseFloat(v) || 0;
+  const f2 = (n) => n.toFixed(2);
+  const SOURCE_LABEL = {
+    'schedule':        'Schedule of Rates',
+    'schedule-group':  'Schedule of Rates (role group)',
+    'client-fallback': 'Client fallback A/B/C',
+    'legacy':          'Legacy single rate',
+  };
+  const billable = (rows || []).filter(r =>
+    num(r.charge_amount) > 0 && (r.scenario || 'standard') !== 'training_day');
+  if (!billable.length) return 0;
+
+  const groups = new Map();
+  for (const r of billable) {
+    const client = r.client || '(no client)';
+    const site   = r.site || '(no site)';
+    const role   = r.role || '(no role)';
+    const src    = r.charge_rate_source || 'legacy';
+    const key    = [client, site, role, src].join('\u0000');
+    if (!groups.has(key)) groups.set(key, { client, site, role, src, shifts: 0, ord: 0, ot15: 0, ot2x: 0, chargeHrs: 0, charge: 0 });
+    const g = groups.get(key);
+    g.shifts += 1;
+    g.ord += num(r.ordinary_hours); g.ot15 += num(r.ot15_hours); g.ot2x += num(r.ot2x_hours);
+    g.chargeHrs += num(r.charge_hours); g.charge += num(r.charge_amount);
+  }
+  const lines = [...groups.values()].sort((a, b) =>
+    a.client.localeCompare(b.client) || a.site.localeCompare(b.site)
+    || a.role.localeCompare(b.role) || a.src.localeCompare(b.src));
+
+  const row = (label, g, extras = {}) => ({
+    'Client':          label,
+    'Site / Project':  extras.site ?? '',
+    'Role':            extras.role ?? '',
+    'Rate source':     extras.src ?? '',
+    'Shifts':          g.shifts,
+    'Normal Hrs':      f2(g.ord),
+    'OT 1.5x Hrs':     f2(g.ot15),
+    'OT 2x Hrs':       f2(g.ot2x),
+    'Charge Hrs':      f2(g.chargeHrs),
+    'Charge $':        f2(g.charge),
+  });
+  const KEYS = ['shifts', 'ord', 'ot15', 'ot2x', 'chargeHrs', 'charge'];
+  const zero = () => ({ shifts: 0, ord: 0, ot15: 0, ot2x: 0, chargeHrs: 0, charge: 0 });
+
+  const out = [];
+  let curClient = null, sub = null;
+  const grand = zero();
+  const pushSubtotal = () => { if (sub) out.push(row(`${curClient} — SUBTOTAL`, sub)); };
+  for (const g of lines) {
+    if (g.client !== curClient) { pushSubtotal(); curClient = g.client; sub = zero(); }
+    out.push(row(g.client, g, { site: g.site, role: g.role, src: SOURCE_LABEL[g.src] || g.src }));
+    for (const k of KEYS) { sub[k] += g[k]; grand[k] += g[k]; }
+  }
+  pushSubtotal();
+  out.push(row('GRAND TOTAL', grand));
+  downloadFn(`client_invoices_${periodFrom}_to_${periodTo}.csv`, out);
+  return billable.length;
 }
 
 export function buildXeroCSV(rows, periodFrom, periodTo, downloadFn) {

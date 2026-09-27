@@ -117,6 +117,11 @@ export function calcShift(input, variant = 'B') {
 export function calcPortalLine(line, profile) {
   if (!profile || profile === 'PORTAL') return null;
   if (!line.date || !line.start_time || !line.end_time) return null;
+  // Leave / rain-off / training are flat-ordinary in the DB under EVERY
+  // profile — previewing Dashpivot OT buckets for them showed overtime that
+  // would never be paid. Fall back to the portal display for those lines.
+  const sc = line.scenario || 'standard';
+  if (sc !== 'standard' && sc !== 'public_holiday' && sc !== 'emergency_callout') return null;
   const shift = line.shift_type === 'Night' ? 'Night Shift' : 'Day Shift';
   const dayType = (line.shift_type === 'Public Holiday' || line.scenario === 'public_holiday')
     ? 'Public Holiday' : 'Regular Work';

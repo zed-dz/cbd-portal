@@ -1,15 +1,19 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnSmall, btnDanger } from '../../theme';
-import { todayISO, isTakeFiveDay } from '../../utils/dates';
+import { todayISO, isTakeFiveDay, sydneyHHMM, sydneyInstant } from '../../utils/dates';
 import {
   dayFromDate, computeLineTotalHours, computeLineRegularHours, autoMealAllowance, SHIFT_TYPES,
   splitDailyHours,
 } from '../../utils/payroll';
 import { Field } from '../ui/Field';
+import { Modal } from '../ui/Modal';
 import { SignaturePad } from '../ui/SignaturePad';
+import { Take5Form } from '../take5/Take5Form';
 import { calcPortalLine } from '../../utils/hoursCalc';
 import { logActivity } from '../../utils/activity';
+import { addAdminNotification, normaliseAUMobile, sendWorkerSms } from '../../utils/notify';
+import { approveTimesheet } from '../../utils/approve';
 import { sendTimesheetForClientApproval, markClientApprovedManually } from '../../utils/clientApproval';
 import { ROLE_GROUPS, ALL_ROLE_NAMES, roleChipStyle } from '../../constants/roles';
 
@@ -40,8 +44,8 @@ export function dailyFromHeader(header, lineRows) {
     hours_lines: (lineRows || []).map(r => ({
       date: r.date || '',
       shift_type: r.shift_type || 'Day',
-      start_time: r.start_time ? new Date(r.start_time).toTimeString().slice(0, 5) : '',
-      end_time: r.end_time ? new Date(r.end_time).toTimeString().slice(0, 5) : '',
+      start_time: r.start_time ? sydneyHHMM(r.start_time) : '',
+      end_time: r.end_time ? sydneyHHMM(r.end_time) : '',
       total_break_hours: r.total_break_hours ?? 0,
       total_hours: r.total_hours ?? 0,
       regular_hours: r.regular_hours ?? 0,
@@ -68,10 +72,12 @@ export function dailyFromHeader(header, lineRows) {
 // past midnight, so the end rolls to the next day.
 function lineInstant(date, time, rollAfter = null) {
   if (!date || !time) return '';
-  let d = new Date(`${date}T${time}:00`);
-  if (isNaN(d)) return '';
-  if (rollAfter && d <= rollAfter) d = new Date(d.getTime() + 24 * 3600 * 1000);
-  return d.toISOString();
+  // Sydney wall-clock regardless of the browser's own timezone — an overseas
+  // admin editing a sheet must never shift the crew's hours.
+  let iso = sydneyInstant(date, time);
+  if (!iso) return '';
+  if (rollAfter && new Date(iso) <= rollAfter) iso = new Date(new Date(iso).getTime() + 24 * 3600 * 1000).toISOString();
+  return iso;
 }
 
 function buildLinesPayload(form, config) {
@@ -115,6 +121,7 @@ export function DailyTimesheetForm({
   const [saving, setSaving] = useState(false);
   const [taskError, setTaskError] = useState('');
   const [take5Block, setTake5Block] = useState(null);   // { dates:[…] } when a Tue/Thu Take 5 is missing
+  const [take5Modal, setTake5Modal] = useState(false);  // "Do it now" — Take 5 inside the timesheet flow
   const [workerType, setWorkerType] = useState(null);   // drives the ordinary/RDO/OT split display
   const [prefillNote, setPrefillNote] = useState(null); // 'allocation' when today's allocation seeded the form
   const [copying, setCopying] = useState(false);
@@ -289,8 +296,8 @@ export function DailyTimesheetForm({
         hours_lines: f.hours_lines.map((l, i) => i === 0 ? recalcLine({
           ...l,
           shift_type: line?.shift_type || l.shift_type,
-          start_time: line?.start_time ? new Date(line.start_time).toTimeString().slice(0, 5) : l.start_time,
-          end_time: line?.end_time ? new Date(line.end_time).toTimeString().slice(0, 5) : l.end_time,
+          start_time: line?.start_time ? sydneyHHMM(line.start_time) : l.start_time,
+          end_time: line?.end_time ? sydneyHHMM(line.end_time) : l.end_time,
           total_break_hours: line?.total_break_hours ?? l.total_break_hours,
         }, prof) : l),
       }));
@@ -345,9 +352,30 @@ export function DailyTimesheetForm({
     return () => { if (mq.removeEventListener) mq.removeEventListener('change', onChange); else mq.removeListener(onChange); };
   }, []);
 
+  // A rejection must reach the worker, not just flip a status they never look
+  // at: bell row + SMS carrying the reason so they can fix and resubmit the
+  // same day. Safe columns only — pay_rate_* is column-locked on workers.
+  const notifyWorkerRejected = async (reason) => {
+    try {
+      const { data: w } = await supabase.from('workers').select('name, mobile').eq('id', targetWorker).maybeSingle();
+      const workerName = w?.name || 'Worker';
+      addAdminNotification({
+        type: 'timesheet_rejected',
+        title: `${workerName}: timesheet rejected`,
+        body: reason || null,
+        worker_id: targetWorker,
+      });
+      const to = normaliseAUMobile(w?.mobile);
+      if (to) {
+        sendWorkerSms(to, `Your timesheet for ${form.client || 'your client'} was rejected${reason ? `: ${reason}` : ''}. Please fix and resubmit in the portal.`);
+      }
+    } catch { /* fire-and-forget — never blocks the reject itself */ }
+  };
+
   // statusOverride (from the manager Approve/Reject buttons) forces the saved
-  // status; otherwise the form's own status is used.
-  const handleSave = async (statusOverride) => {
+  // status; otherwise the form's own status is used. `rejectReason` rides along
+  // only on the reject path and lands on timesheet_headers.rejection_reason.
+  const handleSave = async (statusOverride, rejectReason) => {
     const overriding = statusOverride === 'approved' || statusOverride === 'rejected';
     if (!targetWorker) { showToast('No worker selected for this timesheet.', 'error'); return; }
     if (!form.client) { showToast('Client is required.', 'error'); return; }
@@ -410,7 +438,11 @@ export function DailyTimesheetForm({
       setTake5Block(null);
     }
 
-    const statusToUse = overriding ? statusOverride : (form.status || 'pending');
+    const approving = statusOverride === 'approved';
+    // Office approval happens AFTER the save, via the approve-timesheet edge
+    // function (server recomputes the split, locks, emails the PDF). Saving
+    // 'approved' directly bypassed the drift check and the lock (review #5).
+    const statusToUse = overriding ? (approving ? 'pending' : 'rejected') : (form.status || 'pending');
     const recalced = validLines.map(recalcLine);
     // Meal allowance is auto-derived from each day's hours (DB triggers are
     // authoritative; this payload keeps the header allowance_lines in sync).
@@ -434,71 +466,74 @@ export function DailyTimesheetForm({
     });
     if (error) { setSaving(false); showToast(error.message, 'error'); return; }
 
-    // Manager Approve/Reject: keep the header + line rows in lock-step so
-    // payroll/Xero read the same status (mirrors the old row-level action).
-    if (overriding && form.id) {
-      await supabase.from('timesheet_headers').update({ status: statusToUse }).eq('id', form.id);
-      await supabase.from('timesheets').update({ status: statusToUse }).eq('header_id', form.id);
+    // Reject keeps the direct status write (nothing locks on reject). The
+    // reason is stored on the header and pushed to the worker (bell + SMS).
+    if (overriding && !approving) {
+      const rejectId = form.id || data;
+      if (rejectId) {
+        await supabase.from('timesheet_headers').update({ status: 'rejected', rejection_reason: rejectReason || null }).eq('id', rejectId);
+        await supabase.from('timesheets').update({ status: 'rejected' }).eq('header_id', rejectId);
+      }
+      notifyWorkerRejected(rejectReason);
     }
-    setSaving(false);
-    const msg = overriding
-      ? (statusToUse === 'approved' ? 'Timesheet approved' : 'Timesheet rejected')
-      : (form.id ? 'Daily timesheet updated' : 'Daily timesheet submitted');
-    showToast(msg, statusToUse === 'rejected' ? 'info' : 'success');
-    logActivity({
-      verb: overriding ? (statusToUse === 'approved' ? 'approved' : 'rejected') : (form.id ? 'edited' : 'submitted'),
-      object_type: 'timesheet_header', object_id: form.id || data,
-      after: { client: form.client, project: form.project, total_hours: totals.totalHours },
-    });
 
-    // Master-data ids + name snapshots (Dashpivot 1.1). The RPC signature is
-    // fixed, so the ids can't ride along with the save — they're stamped onto
-    // the header and its (freshly re-inserted) line rows straight after the
-    // RPC returns. Fire-and-forget; a failure never blocks the submission.
     const savedHeaderId = form.id || data;
+
+    // Master-data ids + name snapshots (Dashpivot 1.1) — stamped right after
+    // the RPC and AWAITED: the approval paths below can lock the header, and
+    // these columns are not in the lock's allowed set (review #10 race).
     if (savedHeaderId) {
       const { clientId, siteId } = resolveMasterIds();
-      supabase.from('timesheet_headers').update({
+      const { error: e1 } = await supabase.from('timesheet_headers').update({
         client_id: clientId, site_id: siteId,
         client_name_snapshot: form.client || null,
         site_name_snapshot: form.project || null,
         role_name_snapshot: form.role || null,
-      }).eq('id', savedHeaderId).then(({ error: e }) => {
-        if (e) showToast(`Timesheet saved, but the client/site link failed: ${e.message}`, 'error');
-      });
+      }).eq('id', savedHeaderId);
+      if (e1) showToast(`Timesheet saved, but the client/site link failed: ${e1.message}`, 'error');
       if (clientId || siteId) {
-        supabase.from('timesheets').update({ client_id: clientId, site_id: siteId })
-          .eq('header_id', savedHeaderId).then(({ error: e }) => {
-            if (e) showToast(`Timesheet saved, but the line client/site link failed: ${e.message}`, 'error');
-          });
+        const { error: e2 } = await supabase.from('timesheets').update({ client_id: clientId, site_id: siteId })
+          .eq('header_id', savedHeaderId);
+        if (e2) showToast(`Timesheet saved, but the line client/site link failed: ${e2.message}`, 'error');
       }
     }
 
-    // Autonomous sign-off: every submission (worker or admin) goes straight to
-    // the site supervisor. Their acceptance auto-approves the timesheet and
-    // makes it billable in Payroll — no admin step required. Fire-and-forget;
-    // duplicate sends are blocked by the already-sent guard in the util, and
-    // contact/channel failures light up the admin bell so the office can act.
-    // EXCEPTION: a client signature captured on the worker's phone approves the
-    // sheet on the spot — the tokenised supervisor link is then SKIPPED.
-    if (statusToUse !== 'rejected') {
-      const headerId = savedHeaderId;
-      if (headerId && signedOnSite) {
+    let approveFailed = null;
+    if (approving && savedHeaderId) {
+      // One approve path for every admin surface (review #5): the server
+      // recomputes the split, refuses drift, locks and emails the PDF.
+      const r = await approveTimesheet(savedHeaderId);
+      if (!r.ok) approveFailed = r.error;
+    }
+
+    setSaving(false);
+    const msg = overriding
+      ? (approving
+          ? (approveFailed ? `Saved, but NOT approved: ${approveFailed}` : 'Timesheet approved, locked and the client PDF is on its way.')
+          : 'Timesheet rejected')
+      : (form.id ? 'Daily timesheet updated' : 'Daily timesheet submitted');
+    showToast(msg, approveFailed ? 'error' : (statusOverride === 'rejected' ? 'info' : 'success'));
+    logActivity({
+      verb: overriding ? (approving ? (approveFailed ? 'edited' : 'approved') : 'rejected') : (form.id ? 'edited' : 'submitted'),
+      object_type: 'timesheet_header', object_id: savedHeaderId,
+      after: { client: form.client, project: form.project, total_hours: totals.totalHours },
+    });
+
+    // Autonomous sign-off: a submission goes to the site supervisor UNLESS a
+    // client signature was captured on the phone (approves on the spot), and
+    // not on reject / office-approve (the office path already emailed the PDF).
+    if (statusOverride !== 'rejected' && !approving) {
+      if (savedHeaderId && signedOnSite) {
         const who = `${sig.name.trim()}${String(sig.company).trim() ? ` (${String(sig.company).trim()})` : ''} — signed on site`;
-        markClientApprovedManually(headerId, who).then(r => {
+        markClientApprovedManually(savedHeaderId, who).then(r => {
           if (r.ok) showToast('Client signed on site — timesheet approved and the PDF copy is on its way.', 'success');
           else showToast(`Signed on site, but approval could not be recorded: ${r.error}`, 'error');
         });
-      } else if (headerId) {
-        sendTimesheetForClientApproval(headerId).then(r => {
+      } else if (savedHeaderId) {
+        sendTimesheetForClientApproval(savedHeaderId).then(r => {
           if (r.ok) showToast(`Sent to the site supervisor for sign-off — ${r.sentTo}`, 'success');
           else if (!r.alreadySent && allowAdmin) showToast(`Supervisor sign-off link NOT sent: ${r.error}`, 'error');
         });
-        // Office approval also emails the client their PDF copy automatically —
-        // the server skips it politely if it already went out (idempotent).
-        if (statusToUse === 'approved') {
-          supabase.functions.invoke('send-timesheet-pdf', { body: { header_id: headerId, reason: 'admin' } }).catch(() => {});
-        }
       }
     }
     onSaved?.(data);
@@ -534,7 +569,13 @@ export function DailyTimesheetForm({
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 12px' }}>
         <Field label="Client *">
           <select style={inputStyle} value={form.client}
-            onChange={e => setField('client', e.target.value)}>
+            onChange={e => {
+              const v = e.target.value;
+              // Hour rules follow the client — recompute every line under the
+              // new profile so the preview matches what the server will store.
+              const prof = (clients.find(c => c.name === v)?.award_profile || 'PORTAL').toUpperCase();
+              setForm(f => ({ ...f, client: v, project: '', hours_lines: f.hours_lines.map(l => recalcLine(l, prof)) }));
+            }}>
             <option value="">Select…</option>
             {clientNames.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
@@ -618,7 +659,7 @@ export function DailyTimesheetForm({
                       onChange={e => setHoursLine(i, e.target.value === 'Training'
                         ? { shift_type: 'Day', scenario: 'training_day' }
                         : { shift_type: e.target.value, ...(l.scenario === 'training_day' ? { scenario: 'standard' } : {}) })}>
-                      {SHIFT_TYPES.map(s => <option key={s} value={s}>{s}</option>)}
+                      {(clientProfile !== 'PORTAL' ? ['Day', 'Night', 'Public Holiday'] : SHIFT_TYPES).map(s => <option key={s} value={s}>{s}</option>)}
                       <option value="Training">Training</option>
                     </select>
                   </div>
@@ -676,7 +717,7 @@ export function DailyTimesheetForm({
                     onChange={e => setHoursLine(i, e.target.value === 'Training'
                       ? { shift_type: 'Day', scenario: 'training_day' }
                       : { shift_type: e.target.value, ...(l.scenario === 'training_day' ? { scenario: 'standard' } : {}) })}>
-                    {SHIFT_TYPES.map(s => <option key={s} value={s}>{s}</option>)}
+                    {(clientProfile !== 'PORTAL' ? ['Day', 'Night', 'Public Holiday'] : SHIFT_TYPES).map(s => <option key={s} value={s}>{s}</option>)}
                     <option value="Training">Training</option>
                   </select>
                 </td>
@@ -836,11 +877,16 @@ export function DailyTimesheetForm({
               Missing for: {take5Block.dates.join(', ')}. Complete a Take 5 for that date, then submit again.
             </div>
           </div>
-          {onGoToTake5 && (
-            <button type="button" onClick={() => onGoToTake5()} style={{ ...btnPrimary, background: C.warning, color: '#1a1a1a' }}>
-              Go to Take 5 →
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button type="button" onClick={() => setTake5Modal(true)} style={{ ...btnPrimary, background: C.warning, color: '#1a1a1a' }}>
+              ✋ Do it now
             </button>
-          )}
+            {onGoToTake5 && (
+              <button type="button" onClick={() => onGoToTake5()} style={btnSecondary}>
+                Go to Take 5 →
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -851,7 +897,14 @@ export function DailyTimesheetForm({
         </button>
         {allowReview && (
           <>
-            <button type="button" onClick={() => handleSave('rejected')} disabled={saving}
+            <button type="button" disabled={saving}
+              onClick={() => {
+                // The reason is worker-facing: it lands in their notification
+                // + SMS, so cancel here means no reject at all.
+                const reason = window.prompt('Why is this timesheet being rejected? The worker will see this.');
+                if (reason === null) return;
+                handleSave('rejected', reason.trim());
+              }}
               style={{ ...btnSecondary, color: '#fca5a5', borderColor: 'rgba(239,68,68,0.32)' }}>
               ✗ Reject
             </button>
@@ -862,6 +915,26 @@ export function DailyTimesheetForm({
           </>
         )}
       </div>
+
+      {/* Take 5 without leaving the timesheet: submitting it clears the gate,
+          the modal closes, and the half-filled sheet is untouched — the worker
+          just presses Submit again. Prefilled with the blocked date + job. */}
+      {take5Modal && (
+        <Modal title="✋ Take 5 — pre-start safety check" onClose={() => setTake5Modal(false)} width={640}>
+          <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 12 }}>
+            Complete this Take 5, then press Submit on your timesheet again — everything you typed is still there.
+          </div>
+          <Take5Form
+            workerId={targetWorker}
+            showToast={showToast}
+            prefill={{
+              work_date: take5Block?.dates?.[0] || todayISO(),
+              site: [form.client, form.project].filter(Boolean).join(' — '),
+            }}
+            onSubmitted={() => { setTake5Modal(false); setTake5Block(null); }}
+          />
+        </Modal>
+      )}
     </div>
   );
 }

@@ -168,8 +168,17 @@ export function RateSetsPage({ showToast }) {
     })));
     if (insErr) { setBusy(false); showToast(`Nothing changed — insert failed: ${insErr.message}`, 'error'); return; }
     const oldIds = (oldRows || []).map(r => r.id);
-    if (oldIds.length) await supabase.from('client_rate_cards').delete().in('id', oldIds);
-    await supabase.from('clients').update({ rate_set_id: s.id }).eq('id', clientId);
+    if (oldIds.length) {
+      const { error: delErr } = await supabase.from('client_rate_cards').delete().in('id', oldIds);
+      if (delErr) {
+        setBusy(false);
+        showToast(`New lines added but the OLD schedule could not be removed — ${client?.name} now has duplicates. Fix in Clients & Rates. (${delErr.message})`, 'error');
+        load();
+        return;
+      }
+    }
+    const { error: stampErr } = await supabase.from('clients').update({ rate_set_id: s.id }).eq('id', clientId);
+    if (stampErr) showToast(`Rates applied, but tagging the client with the set failed: ${stampErr.message}`, 'error');
     setBusy(false);
     logActivity({ verb: 'applied', object_type: 'rate set', object_id: s.id, client_id: clientId, after: { name: `${s.name} → ${client?.name}`, lines: lines.length } });
     showToast(`"${s.name}" applied to ${client?.name} (${lines.length} lines).`, 'success');

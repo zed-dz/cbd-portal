@@ -152,6 +152,11 @@ begin
        v_orig_start, v_orig_end, v_orig_break, v_adj_by, v_adj_at);
   end loop;
 
+  -- total_regular_hours is only known after the loop above (finding 4).
+  update public.timesheet_headers
+     set total_regular_hours = v_total_regular
+   where id = v_header_id;
+
   return v_header_id;
 end;
 $function$;

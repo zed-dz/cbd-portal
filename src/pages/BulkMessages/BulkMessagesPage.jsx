@@ -237,13 +237,8 @@ export function BulkMessagesPage({ showToast }) {
           }}>
             <span style={{ fontSize: 16 }}>ⓘ</span>
             <span>
-              <strong style={{ color: C.text }}>Email</strong> goes via Gmail (if connected under <strong>Inbox</strong>) or Resend.
-              <strong style={{ color: C.text }}> SMS &amp; WhatsApp</strong> go via Twilio — add
-              <code style={{ fontFamily: MONO, fontSize: 10.5, color: C.accent, margin: '0 2px' }}>TWILIO_ACCOUNT_SID</code>,
-              <code style={{ fontFamily: MONO, fontSize: 10.5, color: C.accent, margin: '0 2px' }}>TWILIO_AUTH_TOKEN</code>,
-              <code style={{ fontFamily: MONO, fontSize: 10.5, color: C.accent, margin: '0 2px' }}>TWILIO_SMS_FROM</code> and
-              <code style={{ fontFamily: MONO, fontSize: 10.5, color: C.accent, margin: '0 2px' }}>TWILIO_WHATSAPP_FROM</code>
-              under Supabase Edge Function secrets. Until then the buttons return a friendly "not configured" error.
+              <strong style={{ color: C.text }}>SMS and client email need their keys connected — ask your developer.</strong> Until
+              then those buttons show a "not configured" message. Worker email sends as normal.
             </span>
           </div>
 

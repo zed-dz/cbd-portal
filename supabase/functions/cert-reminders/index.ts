@@ -8,8 +8,11 @@
 // What one run does:
 //   1. Finds certifications whose expiry is EXACTLY 30 / 14 / 7 / 0 days away,
 //      measured in Sydney calendar dates (expiry is a plain DATE column).
-//   2. Skips any cert whose last_reminded_stage already equals this stage —
-//      that is the whole idempotence story, so cron can safely double-fire.
+//   2. Skips any cert whose last_reminded_stage already equals this run's
+//      '<expiry>:<stage>' key — that is the whole idempotence story, so cron
+//      can safely double-fire. Keyed on expiry+stage (not stage alone) so a
+//      RENEWED cert — new expiry, same stage numbers — gets its reminders
+//      again instead of being skipped forever.
 //   3. Inserts one notifications row per hit (type 'cert_expiring') for the
 //      admin bell, tagged with the worker.
 //   4. Emails each affected WORKER one summary of all their hits this run —
@@ -86,7 +89,10 @@ serve(async (req) => {
   for (const c of certs || []) {
     const days = targetByDate.get(c.expiry as string);
     if (days == null) continue;
-    const stage = String(days);
+    // '<expiry>:<stage>' — the column is text, so no DDL. Legacy plain-stage
+    // values ('30') never match the new key; worst case is one repeat
+    // reminder per cert right after this format lands, then it self-heals.
+    const stage = `${c.expiry}:${days}`;
     if (c.last_reminded_stage === stage) { skipped++; continue; }
 
     const w = (c as any).workers || {};

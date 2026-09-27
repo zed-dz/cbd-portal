@@ -219,7 +219,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
             {isMobile && (
               <button onClick={() => setSidebarOpen(o => !o)} style={{ background: 'none', border: 'none', color: C.text, cursor: 'pointer', fontSize: 22, lineHeight: 1, padding: 4 }} aria-label="Toggle menu">☰</button>
             )}
-            <span style={{ fontSize: 10, color: C.textDim, fontFamily: MONO, letterSpacing: 1, fontWeight: 600 }}>CBD PLANT & LABOUR · ABN 75 663 693 070</span>
+            <span style={{ fontSize: 10, color: C.textDim, fontFamily: MONO, letterSpacing: 1, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{isMobile ? 'CBD PLANT & LABOUR' : 'CBD PLANT & LABOUR · ABN 75 663 693 070'}</span>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <NotificationBell />
@@ -237,7 +237,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'pending_workers'  && <PendingWorkersPage showToast={showToast} />}
           {activePage === 'applications'     && <ApplicationsPage    showToast={showToast} onNavigate={navigate} />}
           {activePage === 'timesheets'       && <TimesheetsPage showToast={showToast} isMobile={isMobile} refreshBadge={refreshBadge} />}
-          {activePage === 'clients'          && <ClientsPage showToast={showToast} />}
+          {activePage === 'clients'          && <ClientsPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'rate_sets'        && <RateSetsPage showToast={showToast} />}
           {activePage === 'sent_timesheets'  && <SentTimesheetsPage showToast={showToast} />}
           {activePage === 'default_rates'    && <DefaultRatesPage showToast={showToast} />}

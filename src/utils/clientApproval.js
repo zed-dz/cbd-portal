@@ -5,6 +5,10 @@
 import { supabase } from '../supabaseClient';
 import { PORTAL_URL, normaliseAUMobile, sendWorkerSms, addAdminNotification } from './notify';
 
+// LIKE/ILIKE treat % and _ as wildcards — a client literally named "100% Civil"
+// must not match every client. Backslash is Postgres's default LIKE escape.
+const escLike = (s) => String(s || '').replace(/[\\%_]/g, '\\$&');
+
 // Resolve the best supervisor contact for a header: the project's site contact
 // first (client_jobs matched by client + project name), then the client's
 // head-office contact as fallback.
@@ -15,13 +19,13 @@ async function resolveSupervisorContact(header) {
 
   const { data: clients } = await supabase.from('clients')
     .select('id, name, contact, contact_email, contact_phone')
-    .ilike('name', clientName).limit(1);
+    .ilike('name', escLike(clientName)).limit(1);
   const client = clients?.[0];
 
   if (client && projectName) {
     const { data: jobs } = await supabase.from('client_jobs')
       .select('name, site_contact_name, site_contact_email, site_contact_phone')
-      .eq('client_id', client.id).ilike('name', projectName).limit(1);
+      .eq('client_id', client.id).ilike('name', escLike(projectName)).limit(1);
     const job = jobs?.[0];
     if (job && (job.site_contact_email || job.site_contact_phone)) {
       return {
