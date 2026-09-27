@@ -3,8 +3,10 @@ import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
 import { fmtDate, fmtDateTime } from '../../utils/dates';
 import { normaliseAUMobile, sendWorkerSms, addAdminNotification, allocationSmsBody, broadcastAdminSms, adminCreateSmsBody, sendAdminEmail, sendWorkerAllocationEmail } from '../../utils/notify';
+import { logActivity } from '../../utils/activity';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, DateField, ClockField } from '../../components';
 import { ROLE_GROUPS, roleChipStyle } from '../../constants/roles';
+import { isLikelyMapLink } from '../../utils/mapLink';
 
 // Find allocations for a given worker that overlap a [start, end] date range
 // AND are still live (pending/confirmed). Used to warn the admin before
@@ -211,6 +213,11 @@ export function AllocationsPage({ showToast }) {
     // never silently hide an allocation (how zeff's SMS ended up with Nick).
     sendWorkerAllocationEmail(worker, { client, site, role, start_date: startDate }).then(r => {
       if (r.ok) showToast(`Email sent to ${name}.`, 'success');
+    });
+
+    logActivity({
+      verb: 'created', object_type: 'allocation', object_id: inserted?.id || null,
+      after: { worker: name, client, site, role, start_date: startDate },
     });
 
     // (b) Admin in-app notification.
@@ -433,6 +440,11 @@ export function AllocationsPage({ showToast }) {
                     </a>
                   )}
                 </div>
+                {form.map_link && !isLikelyMapLink(form.map_link) && (
+                  <div style={{ fontSize: 11, color: C.warning, marginTop: 4 }}>
+                    ⚠ Doesn't look like a Google/Apple Maps link — it will still save, but tap 📍 Test to check it opens a map.
+                  </div>
+                )}
               </Field>
             </div>
             <Field label="Site Supervisor"><input style={inputStyle} value={form.site_supervisor} onChange={e => setForm(f => ({ ...f, site_supervisor: e.target.value }))} /></Field>
@@ -476,6 +488,11 @@ export function AllocationsPage({ showToast }) {
                 <input style={inputStyle} value={quickSite.map_link}
                   onChange={e => setQuickSite(q => ({ ...q, map_link: e.target.value }))}
                   placeholder="https://maps.app.goo.gl/…" />
+                {quickSite.map_link && !isLikelyMapLink(quickSite.map_link) && (
+                  <div style={{ fontSize: 11, color: C.warning, marginTop: 4 }}>
+                    ⚠ Doesn't look like a Google/Apple Maps link — it will still save, but check it opens a map.
+                  </div>
+                )}
               </Field>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
                 <button style={btnSecondary} onClick={() => setQuickSite(null)}>Cancel</button>

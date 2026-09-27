@@ -1,14 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
-import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
-import { todayISO } from '../../utils/dates';
+import { C, MONO, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
+import { todayISO, fmtDate } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
 import { useDraft, DraftBanner } from '../../utils/useDraft';
-import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, ClientSitesManager } from '../../components';
+import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, ClientSitesManager, Badge, timesheetBadge } from '../../components';
 import { EmailHistoryPanel } from '../../components/inbox/EmailHistoryPanel';
+import { ActivityFeed } from '../../components/activity/ActivityFeed';
+import { logActivity } from '../../utils/activity';
 
 const clientDefaults = {
   name: '', site: '', contact: '', contact_email: '', contact_phone: '',
+  award_profile: '',   // '' = project default; A/B/C = Dashpivot rules, PORTAL = legacy 7.6h+RDO
   rate_a: '', rate_b: '', rate_c: '',
   charge_travel: '', charge_meal: '', notes: '',
   email_domains: [],
@@ -90,14 +93,45 @@ export function ClientsPage({ showToast }) {
   );
 }
 
-// ── Clients list ─────────────────────────────────────────────────────────────
+// ── Clients folder view (Dashpivot parity 3.1) ──────────────────────────────
+// Left: client list (search + archived toggle). Right: the selected client's
+// detail with Sites / Rates / Timesheets / Activity tabs. Every pre-existing
+// entry point (edit modal incl. Hour rules, Schedule of Rates modal with
+// upload, Projects manager, Sites manager) lives on in the detail header —
+// nothing was removed, only re-homed. On phones the left list collapses to a
+// dropdown so nothing scrolls sideways.
+
+const HOUR_RULES_LABEL = {
+  B: 'Dashpivot Standard (B)',
+  A: 'Dashpivot A',
+  C: 'Dashpivot C',
+  PORTAL: 'Legacy 7.6h + RDO',
+};
+
+// Escape ILIKE wildcards — a client named "100% Civil" must not match everything.
+const escapeLike = (s) => (s || '').replace(/([%_\\])/g, '\\$1');
+
+function useIsNarrow(px = 700) {
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < px);
+  useEffect(() => {
+    const onResize = () => setNarrow(window.innerWidth < px);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [px]);
+  return narrow;
+}
 
 function ClientsList({ showToast }) {
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
+  const [selectedId, setSelectedId] = useState(null);
+  const [detailTab, setDetailTab] = useState('sites');
+  const [refreshKey, setRefreshKey] = useState(0); // bump → detail tabs refetch after a manage modal closes
   const [modal, setModal] = useState(null);
   const [sitesFor, setSitesFor] = useState(null); // client whose sites/contacts are open
+  const isNarrow = useIsNarrow();
   const draftKey = modal === 'add'
     ? 'client_add'
     : modal && typeof modal === 'object'
@@ -126,6 +160,7 @@ function ClientsList({ showToast }) {
     setForm({
       name: c.name, site: c.site || '', contact: c.contact || '',
       contact_email: c.contact_email || '', contact_phone: c.contact_phone || '',
+      award_profile: c.award_profile || '',
       rate_a: c.rate_a ?? c.rate_regular ?? '',
       rate_b: c.rate_b ?? c.rate_overtime ?? c.rate_night ?? '',
       rate_c: c.rate_c ?? c.rate_weekend ?? '',
@@ -153,28 +188,56 @@ function ClientsList({ showToast }) {
       rate_night:    n(form.rate_b),
       rate_weekend:  n(form.rate_c),
       charge_travel: n(form.charge_travel), charge_meal: n(form.charge_meal),
+      // Hour rules: only write when the admin actually picked one, so a new
+      // client falls back to the project's own DB default (CBD: 'B' Dashpivot;
+      // MRA/Hecate: 'PORTAL' legacy).
+      ...(form.award_profile ? { award_profile: form.award_profile } : {}),
       notes: form.notes,
       email_domains: (form.email_domains || [])
         .map(d => (d || '').toLowerCase().trim().replace(/^@/, ''))
         .filter(Boolean),
     };
     if (modal === 'add') {
-      const { error } = await supabase.from('clients').insert([payload]);
+      const { data: created, error } = await supabase.from('clients').insert([payload]).select('id').single();
       if (error) showToast(error.message, 'error');
-      else { showToast('Client added', 'success'); closeModal(); load(); }
+      else {
+        logActivity({ verb: 'created', object_type: 'client', object_id: created?.id || null, client_id: created?.id || null, after: { name: payload.name } });
+        showToast('Client added', 'success'); closeModal();
+        if (created?.id) setSelectedId(created.id);
+        load();
+      }
     } else {
       const { error } = await supabase.from('clients').update(payload).eq('id', modal.id);
       if (error) showToast(error.message, 'error');
-      else { showToast('Client updated', 'success'); closeModal(); load(); }
+      else {
+        logActivity({ verb: 'updated', object_type: 'client', object_id: modal.id, client_id: modal.id, after: { name: payload.name } });
+        showToast('Client updated', 'success'); closeModal(); load();
+      }
     }
     setSaving(false);
   };
 
+  // Archive, never delete (Dashpivot rule) — archived clients keep every
+  // record and stay restorable; they just leave the list and new work.
+  const toggleArchive = async (c) => {
+    const archiving = !c.archived_at;
+    if (archiving && !window.confirm(`Archive "${c.name}"?\n\nNothing is deleted — they leave this list (tick "Show archived" to see them) and can be unarchived anytime.`)) return;
+    const { error } = await supabase.from('clients')
+      .update({ archived_at: archiving ? new Date().toISOString() : null }).eq('id', c.id);
+    if (error) { showToast(error.message, 'error'); return; }
+    logActivity({ verb: archiving ? 'archived' : 'restored', object_type: 'client', object_id: c.id, client_id: c.id, after: { name: c.name } });
+    showToast(archiving ? `"${c.name}" archived.` : `"${c.name}" restored.`, 'success');
+    load();
+  };
+
   const handleDelete = async (c) => {
-    if (!window.confirm(`Delete client "${c.name}"? All their jobs and rate cards will also be deleted.`)) return;
+    if (!window.confirm(`Delete client "${c.name}"? All their jobs and rate cards will also be deleted.\n\nPrefer Archive — it keeps the history.`)) return;
     const { error } = await supabase.from('clients').delete().eq('id', c.id);
     if (error) showToast(error.message, 'error');
-    else { showToast('Client deleted', 'success'); load(); }
+    else {
+      logActivity({ verb: 'deleted', object_type: 'client', after: { name: c.name } });
+      showToast('Client deleted', 'success'); load();
+    }
   };
 
   const handleExport = async () => {
@@ -184,80 +247,101 @@ function ClientsList({ showToast }) {
     showToast('Clients exported', 'success');
   };
 
-  const filtered = clients.filter(c =>
-    !search ||
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    (c.site || '').toLowerCase().includes(search.toLowerCase()) ||
-    (c.contact || '').toLowerCase().includes(search.toLowerCase())
+  const filtered = useMemo(() => clients.filter(c =>
+    (showArchived || !c.archived_at) &&
+    (!search ||
+      c.name.toLowerCase().includes(search.toLowerCase()) ||
+      (c.site || '').toLowerCase().includes(search.toLowerCase()) ||
+      (c.contact || '').toLowerCase().includes(search.toLowerCase()))
+  ), [clients, search, showArchived]);
+
+  // Keep something sensible selected as the list filters/loads.
+  useEffect(() => {
+    if (!filtered.length) return;
+    if (!filtered.some(c => c.id === selectedId)) setSelectedId(filtered[0].id);
+  }, [filtered, selectedId]);
+
+  const selected = clients.find(c => c.id === selectedId) || null;
+  const archivedCount = clients.filter(c => c.archived_at).length;
+
+  const controls = (
+    <div style={{ marginBottom: 10 }}>
+      <input style={{ ...inputStyle, marginBottom: 8 }} placeholder="Search by name, site, contact…" value={search} onChange={e => setSearch(e.target.value)} />
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button onClick={openAdd} style={{ ...btnPrimary, flex: 1, padding: '8px 12px' }}>+ Add Client</button>
+        <button onClick={handleExport} style={{ ...btnSecondary, padding: '8px 12px' }} title="Export all clients to CSV">↓ CSV</button>
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: C.textMuted, cursor: 'pointer', marginTop: 8 }}>
+        <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} style={{ accentColor: C.accent, width: 14, height: 14 }} />
+        Show archived{archivedCount ? ` (${archivedCount})` : ''}
+      </label>
+    </div>
+  );
+
+  const detail = selected ? (
+    <ClientDetail
+      client={selected}
+      detailTab={detailTab}
+      setDetailTab={setDetailTab}
+      refreshKey={refreshKey}
+      onEdit={() => openEdit(selected)}
+      onOpenRates={() => setJobsClient({ ...selected, _initialTab: 'rates' })}
+      onOpenProjects={() => setJobsClient({ ...selected, _initialTab: 'jobs' })}
+      onOpenSites={() => setSitesFor(selected)}
+      onArchive={() => toggleArchive(selected)}
+      onDelete={() => handleDelete(selected)}
+    />
+  ) : (
+    <EmptyState message={clients.length ? 'Select a client on the left.' : 'No clients yet. Add your first client to get started.'} />
   );
 
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, gap: 12, flexWrap: 'wrap' }}>
-        <input style={{ ...inputStyle, maxWidth: 280 }} placeholder="Search by name, site, contact…" value={search} onChange={e => setSearch(e.target.value)} />
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={handleExport} style={btnSecondary}>↓ Export CSV</button>
-          <button onClick={openAdd} style={btnPrimary}>+ Add Client</button>
-        </div>
-      </div>
-
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>
-      ) : filtered.length === 0 ? (
-        <EmptyState message="No clients yet. Add your first client to get started." />
+      ) : isNarrow ? (
+        /* Phone: the client list collapses to a dropdown above the detail. */
+        <div>
+          {controls}
+          {filtered.length > 0 && (
+            <select style={{ ...inputStyle, marginBottom: 12 }} value={selectedId || ''} onChange={e => setSelectedId(e.target.value)}>
+              {filtered.map(c => <option key={c.id} value={c.id}>{c.name}{c.archived_at ? ' (archived)' : ''}</option>)}
+            </select>
+          )}
+          {detail}
+        </div>
       ) : (
-        <TableWrap>
-          <thead>
-            <tr>
-              <Th>Client Name</Th><Th>Site</Th><Th>Contact</Th><Th>Phone</Th>
-              <Th>Default A · B · C</Th><Th>Rates</Th><Th>Projects</Th><Th>Actions</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map(c => (
-              <tr key={c.id}>
-                <Td><strong>{c.name}</strong></Td>
-                <Td>{c.site || '—'}</Td>
-                <Td>
-                  <div>{c.contact || '—'}</div>
-                  {c.contact_email && <div style={{ fontSize: 12, color: C.textMuted }}>{c.contact_email}</div>}
-                </Td>
-                <Td>{c.contact_phone || '—'}</Td>
-                <Td>
-                  {(c.rate_a ?? c.rate_regular) != null
-                    ? <span style={{ fontFamily: '"DM Mono", monospace', fontSize: 12, color: C.accent, fontWeight: 700 }}>
-                        ${parseFloat(c.rate_a ?? c.rate_regular).toFixed(0)} · ${parseFloat(c.rate_b ?? c.rate_overtime ?? 0).toFixed(0)} · ${parseFloat(c.rate_c ?? c.rate_weekend ?? 0).toFixed(0)}
-                      </span>
-                    : <span style={{ color: C.textMuted }}>—</span>}
-                </Td>
-                <Td>
-                  <button
-                    onClick={() => setJobsClient({ ...c, _initialTab: 'rates' })}
-                    style={{ ...btnSmall, background: 'rgba(34,197,94,0.12)', color: C.success, border: 'none' }}
-                    title="Schedule of rates — line items"
-                  >
-                    Rates {c.client_rate_cards?.length > 0 ? `(${c.client_rate_cards.length})` : ''}
-                  </button>
-                </Td>
-                <Td>
-                  <button
-                    onClick={() => setJobsClient({ ...c, _initialTab: 'jobs' })}
-                    style={{ ...btnSmall, background: 'rgba(249,115,22,0.12)', color: C.accent, border: 'none' }}
-                  >
-                    Projects {c.client_jobs?.length > 0 ? `(${c.client_jobs.length})` : ''}
-                  </button>
-                </Td>
-                <Td>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button onClick={() => setSitesFor(c)} style={btnSmall}>🏗 Sites</button>
-                    <button onClick={() => openEdit(c)} style={btnSmall}>Edit</button>
-                    <button onClick={() => handleDelete(c)} style={btnDanger}>Delete</button>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+          <div style={{ width: 272, flexShrink: 0 }}>
+            {controls}
+            <div style={{ maxHeight: 'calc(100vh - 330px)', overflowY: 'auto', paddingRight: 2 }}>
+              {filtered.length === 0 ? (
+                <div style={{ fontSize: 12, color: C.textMuted, padding: '10px 4px' }}>
+                  {clients.length ? 'No clients match.' : 'No clients yet.'}
+                </div>
+              ) : filtered.map(c => {
+                const sel = c.id === selectedId;
+                return (
+                  <div key={c.id} onClick={() => setSelectedId(c.id)} style={{
+                    padding: '9px 11px', borderRadius: 8, cursor: 'pointer', marginBottom: 4,
+                    background: sel ? 'rgba(249,115,22,0.10)' : 'transparent',
+                    border: `1px solid ${sel ? C.accentBorder : 'transparent'}`,
+                    opacity: c.archived_at ? 0.65 : 1,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{c.name}</span>
+                      {c.archived_at && <Badge label="Archived" color="gray" size="sm" />}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: C.textDim, marginTop: 2, fontFamily: MONO }}>
+                      {(c.client_rate_cards?.length || 0)} rates · {(c.client_jobs?.length || 0)} projects
+                    </div>
                   </div>
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </TableWrap>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>{detail}</div>
+        </div>
       )}
 
       {/* Client add/edit modal */}
@@ -276,6 +360,16 @@ function ClientsList({ showToast }) {
             <Field label="Site / Project"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
             <Field label="Contact Person"><input style={inputStyle} value={form.contact} onChange={e => setForm(f => ({ ...f, contact: e.target.value }))} /></Field>
             <Field label="Contact Email"><input style={inputStyle} type="email" value={form.contact_email} onChange={e => setForm(f => ({ ...f, contact_email: e.target.value }))} /></Field>
+            <Field label="Hour rules" hint="How this client's timesheet hours split into Normal / 1.5× / 2×. Dashpivot Standard is what clients have signed ~4,700 timesheets on. Legacy = the old 7.6h + RDO model, kept restorable.">
+              <select style={inputStyle} value={form.award_profile}
+                onChange={e => setForm(f => ({ ...f, award_profile: e.target.value }))}>
+                <option value="">Project default</option>
+                <option value="B">Dashpivot Standard (B)</option>
+                <option value="A">Dashpivot A — no public-holiday type</option>
+                <option value="C">Dashpivot C — after-midnight night starts</option>
+                <option value="PORTAL">Legacy portal (7.6h + RDO)</option>
+              </select>
+            </Field>
             <Field label="Contact Phone"><input style={inputStyle} value={form.contact_phone} onChange={e => setForm(f => ({ ...f, contact_phone: e.target.value }))} /></Field>
 
             <div style={{ gridColumn: '1 / -1' }}>
@@ -352,7 +446,7 @@ function ClientsList({ showToast }) {
           client={jobsClient}
           initialTab={jobsClient._initialTab || 'jobs'}
           showToast={showToast}
-          onClose={() => { setJobsClient(null); load(); }}
+          onClose={() => { setJobsClient(null); setRefreshKey(k => k + 1); load(); }}
         />
       )}
 
@@ -360,10 +454,273 @@ function ClientsList({ showToast }) {
         <ClientSitesManager
           client={sitesFor}
           showToast={showToast}
-          onClose={() => { setSitesFor(null); load(); }}
+          onClose={() => { setSitesFor(null); setRefreshKey(k => k + 1); load(); }}
         />
       )}
     </>
+  );
+}
+
+// ── Right-hand client detail: header + Sites/Rates/Timesheets/Activity ──────
+
+function ClientDetail({ client, detailTab, setDetailTab, refreshKey, onEdit, onOpenRates, onOpenProjects, onOpenSites, onArchive, onDelete }) {
+  const rateCount = client.client_rate_cards?.length || 0;
+  const projCount = client.client_jobs?.length || 0;
+  const abc = (client.rate_a ?? client.rate_regular) != null
+    ? `$${parseFloat(client.rate_a ?? client.rate_regular).toFixed(0)} · $${parseFloat(client.rate_b ?? client.rate_overtime ?? 0).toFixed(0)} · $${parseFloat(client.rate_c ?? client.rate_weekend ?? 0).toFixed(0)}`
+    : null;
+  const TABS = [
+    { id: 'sites', label: '🏗 Sites' },
+    { id: 'rates', label: '💰 Rates' },
+    { id: 'timesheets', label: '🕐 Timesheets' },
+    { id: 'activity', label: '📜 Activity' },
+  ];
+
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 11 }}>
+      <div style={{ padding: '16px 18px 12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: 'Syne, sans-serif', fontSize: 19, fontWeight: 700, color: C.text }}>{client.name}</span>
+              {client.archived_at && <Badge label="Archived" color="gray" />}
+              {client.award_profile && <Badge label={HOUR_RULES_LABEL[client.award_profile] || client.award_profile} color="blue" size="sm" />}
+            </div>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12, color: C.textMuted, marginTop: 5 }}>
+              {client.site && <span>📍 {client.site}</span>}
+              {client.contact && <span>👤 {client.contact}</span>}
+              {client.contact_email && <span>✉️ {client.contact_email}</span>}
+              {client.contact_phone && <span>📞 {client.contact_phone}</span>}
+              {abc && <span style={{ fontFamily: MONO, color: C.accent, fontWeight: 700 }} title="Default fallback rates A · B · C">{abc}</span>}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <button onClick={onEdit} style={btnSmall}>Edit</button>
+            <button onClick={onOpenRates} style={{ ...btnSmall, background: 'rgba(34,197,94,0.12)', color: C.success, border: 'none' }} title="Schedule of rates — line items, bulk add, upload">
+              Schedule of Rates{rateCount ? ` (${rateCount})` : ''}
+            </button>
+            <button onClick={onOpenProjects} style={{ ...btnSmall, background: 'rgba(249,115,22,0.12)', color: C.accent, border: 'none' }}>
+              Projects{projCount ? ` (${projCount})` : ''}
+            </button>
+            <button onClick={onOpenSites} style={btnSmall}>Manage sites</button>
+            <button onClick={onArchive} style={btnSmall}>{client.archived_at ? 'Unarchive' : 'Archive'}</button>
+            <button onClick={onDelete} style={btnDanger}>Delete</button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 2, borderBottom: `1px solid ${C.border}`, padding: '0 18px', overflowX: 'auto' }}>
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setDetailTab(t.id)} style={{
+            background: 'none', border: 'none',
+            borderBottom: detailTab === t.id ? `2px solid ${C.accent}` : '2px solid transparent',
+            color: detailTab === t.id ? C.text : C.textMuted, padding: '8px 12px', cursor: 'pointer',
+            fontSize: 13, fontWeight: detailTab === t.id ? 600 : 400, marginBottom: -1, whiteSpace: 'nowrap',
+          }}>{t.label}</button>
+        ))}
+      </div>
+
+      <div style={{ padding: '14px 18px 18px' }}>
+        {detailTab === 'sites'      && <SitesTabView client={client} refreshKey={refreshKey} onManage={onOpenSites} />}
+        {detailTab === 'rates'      && <RatesTabView client={client} refreshKey={refreshKey} onManage={onOpenRates} />}
+        {detailTab === 'timesheets' && <TimesheetsTabView client={client} />}
+        {detailTab === 'activity'   && <ActivityFeed clientId={client.id} limit={30} />}
+      </div>
+    </div>
+  );
+}
+
+// Read-only sites overview; all editing stays in ClientSitesManager so there
+// is exactly one owner of the write logic.
+function SitesTabView({ client, refreshKey, onManage }) {
+  const [sites, setSites] = useState(null);
+  const [contacts, setContacts] = useState([]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const { data: s } = await supabase.from('client_sites').select('*').eq('client_id', client.id).order('name');
+      let k = [];
+      const ids = (s || []).map(x => x.id);
+      if (ids.length) {
+        const res = await supabase.from('client_site_contacts').select('*').in('site_id', ids).order('name');
+        k = res.data || [];
+      }
+      if (mounted) { setSites(s || []); setContacts(k); }
+    })();
+    return () => { mounted = false; };
+  }, [client.id, refreshKey]);
+
+  if (sites === null) return <div style={{ display: 'flex', justifyContent: 'center', padding: 20 }}><Spinner /></div>;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: C.textMuted }}>
+          Job sites for this client — the supervisor ticked "approves timesheets" gets the sign-off link.
+        </span>
+        <button onClick={onManage} style={btnSecondary}>Manage sites</button>
+      </div>
+      {sites.length === 0 ? (
+        <EmptyState message="No sites yet — use Manage sites to add the first one." icon="🏗" />
+      ) : sites.map(site => {
+        const mine = contacts.filter(c => c.site_id === site.id);
+        return (
+          <div key={site.id} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '11px 14px', marginBottom: 8 }}>
+            <div style={{ fontWeight: 700, fontSize: 13.5, color: C.text }}>
+              {site.name}
+              {site.is_active === false && <span style={{ marginLeft: 8, fontSize: 10, color: C.textMuted }}>(inactive)</span>}
+            </div>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12, color: C.textMuted, marginTop: 3 }}>
+              {site.address && <span>🏠 {site.address}</span>}
+              {site.map_link && <a href={site.map_link} target="_blank" rel="noreferrer" style={{ color: '#93c5fd', textDecoration: 'none' }}>📍 Map pin</a>}
+              {site.notes && <span>{site.notes}</span>}
+            </div>
+            {mine.length > 0 && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7 }}>
+                {mine.map(c => (
+                  <span key={c.id} style={{ background: C.cardHover, border: `1px solid ${C.border}`, borderRadius: 999, padding: '2px 9px', fontSize: 11, color: C.text }}>
+                    {c.name}{c.role ? ` · ${c.role}` : ''}
+                    {c.approves_timesheets && <span style={{ color: C.success, marginLeft: 5, fontSize: 9, fontWeight: 700 }}>APPROVES</span>}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Read-only Schedule of Rates, grouped by category. Writes happen through the
+// Schedule of Rates modal (one-off tweaks / upload) or the Rate Sets page
+// (set-wide changes, re-applied to the client).
+function RatesTabView({ client, refreshKey, onManage }) {
+  const [cards, setCards] = useState(null);
+  const [setName, setSetName] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const { data } = await supabase.from('client_rate_cards').select('*').eq('client_id', client.id)
+        .order('category', { ascending: true, nullsFirst: false })
+        .order('sort_order', { ascending: true })
+        .order('role_name', { ascending: true });
+      let rsName = null;
+      if (client.rate_set_id) {
+        const { data: rs } = await supabase.from('rate_sets').select('name').eq('id', client.rate_set_id).limit(1);
+        rsName = rs?.[0]?.name || null;
+      }
+      if (mounted) { setCards(data || []); setSetName(rsName); }
+    })();
+    return () => { mounted = false; };
+  }, [client.id, client.rate_set_id, refreshKey]);
+
+  if (cards === null) return <div style={{ display: 'flex', justifyContent: 'center', padding: 20 }}><Spinner /></div>;
+
+  const grouped = (() => {
+    const buckets = new Map();
+    for (const cat of CATEGORY_OPTIONS) buckets.set(cat.value, []);
+    buckets.set('_uncategorised', []);
+    cards.forEach(c => {
+      const k = c.category || '_uncategorised';
+      if (!buckets.has(k)) buckets.set(k, []);
+      buckets.get(k).push(c);
+    });
+    return [...buckets.entries()].filter(([, list]) => list.length > 0);
+  })();
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: C.textMuted }}>
+          {setName
+            ? <>On rate set <strong style={{ color: C.text }}>{setName}</strong> — set-wide changes happen on the <strong style={{ color: C.text }}>Rate Sets</strong> page (re-apply to sync).</>
+            : <>No rate set assigned — apply one from the <strong style={{ color: C.text }}>Rate Sets</strong> page, or manage lines directly.</>}
+          {' '}Read-only here.
+        </span>
+        <button onClick={onManage} style={btnSecondary}>Open Schedule of Rates</button>
+      </div>
+      {cards.length === 0 ? (
+        <EmptyState message="No rate lines yet. Apply a rate set, or add lines via Schedule of Rates." icon="💰" />
+      ) : grouped.map(([catKey, list]) => (
+        <div key={catKey} style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
+            {catKey === '_uncategorised' ? 'Uncategorised' : CATEGORY_LABEL[catKey] || catKey} <span style={{ opacity: 0.6 }}>· {list.length}</span>
+          </div>
+          <TableWrap>
+            <thead><tr><Th>Description</Th><Th>UOM</Th><Th>A</Th><Th>B</Th><Th>C</Th></tr></thead>
+            <tbody>
+              {list.map(c => (
+                <tr key={c.id}>
+                  <Td>
+                    {c.role_name}
+                    {c.notes && <div style={{ fontSize: 11, color: C.textMuted }}>{c.notes}</div>}
+                  </Td>
+                  <Td>{(c.uom || 'hour').toUpperCase()}</Td>
+                  <Td>{c.rate_a != null ? `$${Number(c.rate_a).toFixed(2)}` : 'POR'}</Td>
+                  <Td>{c.rate_b != null ? `$${Number(c.rate_b).toFixed(2)}` : '—'}</Td>
+                  <Td>{c.rate_c != null ? `$${Number(c.rate_c).toFixed(2)}` : '—'}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableWrap>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Timesheets for this client, newest first. Headers store the client as TEXT
+// (the snapshot IS the key today — see 06-GAP-MAP §4d), so we match by name.
+// Rows are read-only for now; the full register (column picker, bulk CSV/PDF)
+// ships with the register prompt.
+function TimesheetsTabView({ client }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const { data } = await supabase.from('timesheet_headers')
+        .select('id, project, role, total_hours, status, created_at, workers(name), timesheets(date)')
+        .ilike('client', escapeLike(client.name))
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (mounted) setRows(data || []);
+    })();
+    return () => { mounted = false; };
+  }, [client.id, client.name]);
+
+  if (rows === null) return <div style={{ display: 'flex', justifyContent: 'center', padding: 20 }}><Spinner /></div>;
+  if (!rows.length) return <EmptyState message="No timesheets recorded for this client yet." icon="🕐" />;
+
+  const dateLabel = (h) => {
+    const dates = (h.timesheets || []).map(t => t.date).filter(Boolean).sort();
+    if (!dates.length) return fmtDate(h.created_at);
+    return dates[0] === dates[dates.length - 1] ? fmtDate(dates[0]) : `${fmtDate(dates[0])} – ${fmtDate(dates[dates.length - 1])}`;
+  };
+
+  return (
+    <div>
+      <TableWrap>
+        <thead><tr><Th>Date</Th><Th>Worker</Th><Th>Project</Th><Th>Hours</Th><Th>Status</Th></tr></thead>
+        <tbody>
+          {rows.map(h => (
+            <tr key={h.id}>
+              <Td style={{ fontFamily: MONO, fontSize: 12 }}>{dateLabel(h)}</Td>
+              <Td><strong>{h.workers?.name || '—'}</strong></Td>
+              <Td>{h.project || '—'}</Td>
+              <Td style={{ fontFamily: MONO }}>{h.total_hours != null ? Number(h.total_hours).toFixed(2) : '—'}</Td>
+              <Td>{timesheetBadge(h.status)}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </TableWrap>
+      <div style={{ fontSize: 11, color: C.textDim, marginTop: 8 }}>
+        Showing the latest {rows.length} — full register with column picker + CSV export is a coming step.
+      </div>
+    </div>
   );
 }
 

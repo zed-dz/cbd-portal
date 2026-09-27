@@ -526,3 +526,20 @@ automatically. Everything is deployed; it just needs OAuth credentials.
 - User's primary email on file: `zed.dz1998@gmail.com`.
 - GitHub: `zed-dz/cbd-portal`, branch `main`.
 - Supabase project ref: `tsizneslellcqusjwtub`.
+
+## Dashpivot parity (CBD portal)
+
+Reference pack: `docs/dashpivot/` (teardown, template schemas, hour rules, data model, prompts, screenshots).
+
+Rules for every change:
+- **No free text** for client, site/project, role. Always IDs from master tables + a `*_name_snapshot` on the record.
+- **Site belongs to a client.** Site dropdown is always filtered by the chosen client.
+- **Archive, never delete** master data (clients, sites, roles, rate sets). Old records keep their snapshots.
+- **Hours math lives in one place:** `docs/dashpivot/code/hoursCalc.ts` (copy into `src/lib/`). Same function on the worker form (preview) and on the server (truth). Round to 0.25 h. Time pickers step 15 min.
+- **Money is private.** Only `admin` and `accounts` can read any rate, charge, allowance amount or payroll value. Enforce with RLS, not only by hiding UI. Allocators get views without money columns.
+- **Client-facing PDFs show hours only.** Never rates, dollars or allowances. Keep the unit test that fails if "$" appears.
+- **Approve = state change + lock.** Approved timesheets are read-only until an admin runs "Reset workflow" (logged with reason).
+- **Training days:** full-time/part-time paid, casual unpaid, client never billed. Enforced by DB trigger.
+- **Log everything** in `activity_events`. Every email send in `timesheet_sends`.
+- **Phone first:** no horizontal scroll at 360px. Tables stack vertically on phones.
+- Additive migrations only. Show SQL before running anything that updates existing rows.

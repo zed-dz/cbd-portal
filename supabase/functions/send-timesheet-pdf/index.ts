@@ -68,8 +68,17 @@ async function buildPdf(header: any, lines: any[], workerName: string) {
   const newPageIfNeeded = (need: number) => {
     if (y - need < M) { page = doc.addPage(A4); y = A4[1] - M; }
   };
-  const text = (s: string, x: number, size = 10, f = font, color = ink) =>
+  // HOURS-ONLY CONTRACT: pdf-lib can't extract text back out, so the guard
+  // sits in front of every draw — a "$" in anything we'd render (a comment,
+  // a client name, a future field) aborts the whole build rather than leak
+  // money onto a client-facing PDF. Keep this; there's a matching rule in
+  // CLAUDE.md ("Client-facing PDFs show hours only").
+  const text = (s: string, x: number, size = 10, f = font, color = ink) => {
+    if (String(s ?? '').includes('$')) {
+      throw new Error(`money leak blocked: refusing to draw "$" on a client PDF (${String(s).slice(0, 60)})`);
+    }
     page.drawText(s ?? '', { x, y, size, font: f, color });
+  };
   const wrap = (s: string, size: number, maxW: number) => {
     const words = String(s || '').split(/\s+/);
     const out: string[] = [];
@@ -172,6 +181,8 @@ async function sendViaResend(to: string[], cc: string[], subject: string, html: 
     }),
   });
   if (!res.ok) throw new Error(`Resend ${res.status}: ${await res.text()}`);
+  const j = await res.json().catch(() => null);
+  return (j?.id as string) || null;
 }
 
 async function sendViaGmail(sb: any, to: string[], cc: string[], subject: string, html: string, pdf: Uint8Array, filename: string) {
@@ -217,6 +228,8 @@ async function sendViaGmail(sb: any, to: string[], cc: string[], subject: string
     body: JSON.stringify({ raw }),
   });
   if (!send.ok) throw new Error(`Gmail ${send.status}: ${await send.text()}`);
+  const sent = await send.json().catch(() => null);
+  return { id: (sent?.id as string) || null, from: (tok.email_address as string) || null };
 }
 
 serve(async (req) => {
@@ -228,7 +241,7 @@ serve(async (req) => {
 
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-  const sel = 'id, client, project, role, status, comments, wet_hire, total_hours, client_approved, client_approved_by, client_approved_at, pdf_emailed_at, worker_id, workers(name)';
+  const sel = 'id, client, project, role, status, comments, wet_hire, total_hours, client_approved, client_approved_by, client_approved_at, pdf_emailed_at, locked, version, worker_id, workers(name)';
   let q = sb.from('timesheet_headers').select(sel);
   if (body.token)          q = q.eq('client_approval_token', body.token);
   else if (body.header_id) q = q.eq('id', body.header_id);
@@ -237,6 +250,14 @@ serve(async (req) => {
   const { data: h, error } = await q.maybeSingle();
   if (error || !h) return json({ error: 'timesheet not found' }, 404);
   if (h.status !== 'approved') return json({ error: 'timesheet is not approved yet' }, 409);
+
+  // Approve = lock. The token/auto-approve RPCs don't set locked yet (central
+  // owns them) — this backstop locks any approved sheet the moment it reaches
+  // the send pipeline, so a supervisor-accepted sheet can't be edited after.
+  if (!h.locked) {
+    await sb.from('timesheet_headers').update({ locked: true }).eq('id', h.id);
+  }
+
   if (h.pdf_emailed_at && !body.force) return json({ ok: true, skipped: 'already emailed', at: h.pdf_emailed_at });
 
   const { data: lines } = await sb.from('timesheets').select('*').eq('header_id', h.id).order('date');
@@ -265,6 +286,15 @@ serve(async (req) => {
       title: `Timesheet PDF NOT emailed — ${workerName} / ${h.client || 'client'}`,
       body: 'No client email on file. Add a site contact email on the project, or a contact email on the client, then resend from Timesheets.',
     }]);
+    // Ledger the failure too, so the Sent Timesheets screen surfaces it.
+    await sb.from('timesheet_sends').insert([{
+      header_id: h.id, client_id: client?.id ?? null,
+      to_emails: [], cc_emails: [],
+      from_email: RESEND_ON ? MAIL_FROM : null,
+      subject: `Approved timesheet — ${workerName} — ${h.project || h.client || ''}`,
+      status: 'failed', error: 'no client email on file',
+      idempotency_key: `approve:${h.id}:v${(h as any).version || 1}:noaddr${Date.now()}`,
+    }]);
     return json({ error: 'no client email on file' }, 422);
   }
 
@@ -288,16 +318,70 @@ serve(async (req) => {
     <p style="color:#777;font-size:12px">Sent automatically by the ${BRAND} portal when a timesheet is approved. Hours only — no rates are shown.</p>`;
 
   const toArr = [...to], ccArr = [...cc];
+
+  // ── 2.2: the exact PDF goes to storage + a timesheet_sends ledger row ────
+  const slug = (s: string) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const pdfPath = [
+    dates[0] || new Date().toISOString().slice(0, 10),
+    slug(h.client || 'client'),
+    slug(h.project || 'site'),
+    slug(workerName),
+    h.id,
+  ].join('-') + '.pdf';
+  const shaBuf = await crypto.subtle.digest('SHA-256', pdf);
+  const pdfSha256 = [...new Uint8Array(shaBuf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  const version = (h as any).version || 1;
+  // A force resend gets its OWN ledger row — the canonical key stays with the
+  // first send, so the unique index keeps double-taps out without blocking
+  // deliberate resends.
+  const idemKey = body.force
+    ? `approve:${h.id}:v${version}:r${Date.now()}`
+    : `approve:${h.id}:v${version}`;
+
+  // Queue the ledger row BEFORE sending: a concurrent double-tap loses the
+  // unique-key race here instead of double-emailing the client.
+  const { data: sendRow, error: sendRowErr } = await sb.from('timesheet_sends').insert([{
+    header_id: h.id, client_id: client?.id ?? null,
+    to_emails: toArr, cc_emails: ccArr,
+    from_email: RESEND_ON ? MAIL_FROM : null,
+    subject, pdf_path: pdfPath, pdf_sha256: pdfSha256,
+    status: 'queued', idempotency_key: idemKey,
+  }]).select('id').single();
+  if (sendRowErr) {
+    if (/duplicate key|unique/i.test(sendRowErr.message) && !body.force) {
+      return json({ ok: true, skipped: 'duplicate send (idempotency key)', idempotency_key: idemKey });
+    }
+    // Ledger unavailable — the email still matters more; carry on without it.
+    console.error('timesheet_sends insert failed:', sendRowErr.message);
+  }
+  const sendId = sendRow?.id ?? null;
+  const markSend = async (patch: Record<string, unknown>) => {
+    if (sendId) await sb.from('timesheet_sends').update(patch).eq('id', sendId);
+  };
+
+  let uploadErr = '';
+  const up = await sb.storage.from('timesheet-pdfs')
+    .upload(pdfPath, pdf, { contentType: 'application/pdf', upsert: true });
+  if (up.error) uploadErr = `pdf upload failed: ${up.error.message}`;
+
   let via = '';
+  let providerMessageId: string | null = null;
+  let fromUsed: string | null = RESEND_ON ? MAIL_FROM : null;
   try {
     if (!RESEND_ON) throw new Error('Resend not configured');
-    await sendViaResend(toArr, ccArr, subject, html, pdf, filename);
+    providerMessageId = await sendViaResend(toArr, ccArr, subject, html, pdf, filename);
     via = 'resend';
   } catch (_e1) {
     try {
-      await sendViaGmail(sb, toArr, ccArr, subject, html, pdf, filename);
+      const g = await sendViaGmail(sb, toArr, ccArr, subject, html, pdf, filename);
+      providerMessageId = g.id;
+      fromUsed = g.from || fromUsed;
       via = 'gmail-fallback';
     } catch (e2) {
+      await markSend({
+        status: 'failed',
+        error: [uploadErr, String((e2 as Error).message).slice(0, 300)].filter(Boolean).join(' | '),
+      });
       await sb.from('notifications').insert([{
         type: 'timesheet_pdf_blocked',
         title: `Timesheet PDF email FAILED — ${workerName} / ${h.client || 'client'}`,
@@ -306,6 +390,15 @@ serve(async (req) => {
       return json({ error: 'send failed on every channel', detail: String((e2 as Error).message) }, 502);
     }
   }
+
+  await markSend({
+    status: 'sent',
+    provider: via === 'resend' ? 'resend' : 'gmail',
+    provider_message_id: providerMessageId,
+    from_email: fromUsed,
+    sent_at: new Date().toISOString(),
+    error: uploadErr || null,
+  });
 
   await sb.from('timesheet_headers').update({
     pdf_emailed_at: new Date().toISOString(),
@@ -318,5 +411,10 @@ serve(async (req) => {
     status: 'sent', sent_by: 'send-timesheet-pdf',
   }]);
 
-  return json({ ok: true, via, to: toArr, cc: ccArr });
+  await sb.from('activity_events').insert([{
+    actor_name: 'portal', verb: 'sent', object_type: 'timesheet_header', object_id: h.id,
+    after: { to: toArr, cc: ccArr, via, pdf_path: pdfPath },
+  }]);
+
+  return json({ ok: true, via, to: toArr, cc: ccArr, pdf_path: pdfPath, sha256: pdfSha256 });
 });

@@ -22,6 +22,60 @@ function sumBy(lines, fn) {
   return lines.reduce((s, l) => s + (fn(l) || 0), 0);
 }
 
+// Status timeline (Dashpivot 1.5): rendered purely from header fields when
+// present — no extra table needed. Hours-only view; nothing money-related.
+function statusSteps(header) {
+  const steps = [{ label: 'Submitted', at: header.created_at, detail: null }];
+  if (header.client_approval_sent_at) {
+    steps.push({ label: 'Sent to supervisor', at: header.client_approval_sent_at, detail: header.client_approval_sent_to });
+  }
+  if (header.client_approved) {
+    // The 7-day cron stamps an "auto" note in client_approved_by — that's the
+    // only marker distinguishing auto-approval from a real acceptance.
+    const auto = /auto/i.test(header.client_approved_by || '');
+    steps.push({
+      label: auto ? 'Auto-approved' : 'Accepted',
+      at: header.client_approved_at,
+      detail: auto ? null : header.client_approved_by,
+    });
+  } else if (header.status === 'approved' && (header.approved_at || header.approved_by)) {
+    steps.push({ label: 'Approved', at: header.approved_at, detail: header.approved_by });
+  }
+  if (header.pdf_emailed_at) {
+    steps.push({ label: 'PDF emailed', at: header.pdf_emailed_at, detail: header.pdf_emailed_to });
+  }
+  return steps;
+}
+
+function StatusTimeline({ header }) {
+  const steps = statusSteps(header);
+  if (!steps.length) return null;
+  const short = (s) => (s && s.length > 34 ? `${s.slice(0, 34)}…` : s);
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 14 }}>
+      {steps.map((s, i) => (
+        <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          {i > 0 && <span style={{ color: C.textMuted, fontSize: 12 }}>→</span>}
+          <span
+            title={s.detail || undefined}
+            style={{
+              display: 'inline-flex', flexDirection: 'column', gap: 1,
+              background: C.card, border: `1px solid ${C.border}`, borderRadius: 999,
+              padding: '4px 12px', maxWidth: '100%',
+            }}>
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: i === steps.length - 1 ? C.accent : C.text, lineHeight: 1.2 }}>
+              {s.label}
+            </span>
+            <span style={{ fontSize: 10.5, color: C.textMuted, lineHeight: 1.2 }}>
+              {s.at ? fmtDateTime(s.at) : '—'}{s.detail ? ` · ${short(s.detail)}` : ''}
+            </span>
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // Full, client-presentable view of one daily timesheet (header + line rows).
 // Shows hours only — no pay or charge rates — so it's safe to hand to a client
 // or to the worker. Print/Save-PDF opens a light print-friendly window.
@@ -66,6 +120,8 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
           {!hidePrint && <button onClick={() => printTimesheet({ header, lines, workerName, brand })} style={btnPrimary}>🖨 Print / Save PDF</button>}
         </div>
       </div>
+
+      <StatusTimeline header={header} />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 16 }}>
         {meta.map(([k, v]) => (

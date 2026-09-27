@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnSmall, btnDanger } from '../../theme';
 import { Modal, Field, Spinner, EmptyState } from '../index';
+import { isLikelyMapLink } from '../../utils/mapLink';
 
 // Sites and their contacts for ONE client.
 //
@@ -176,6 +177,11 @@ export function ClientSitesManager({ client, onClose, showToast }) {
             <input style={inputStyle} value={siteForm.map_link || ''}
               onChange={e => setSiteForm(f => ({ ...f, map_link: e.target.value }))}
               placeholder="https://maps.app.goo.gl/…" />
+            {siteForm.map_link && !isLikelyMapLink(siteForm.map_link) && (
+              <div style={{ fontSize: 11, color: C.warning, marginTop: 4 }}>
+                ⚠ Doesn't look like a Google/Apple Maps link — it will still save, but check it opens a map.
+              </div>
+            )}
           </Field>
           <Field label="Notes">
             <input style={inputStyle} value={siteForm.notes || ''}

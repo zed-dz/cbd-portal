@@ -4,6 +4,7 @@ import { C, R, MONO, btnPrimary, btnSecondary } from '../../theme';
 import { todayISO, localISO, fmtDate } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
 import { Spinner, allocationBadge, timesheetBadge } from '../../components';
+import { ActivityFeed } from '../../components/activity/ActivityFeed';
 
 export function DashboardPage({ showToast, currentWorker, onNavigate }) {
   const [stats, setStats] = useState(null);
@@ -192,6 +193,12 @@ export function DashboardPage({ showToast, currentWorker, onNavigate }) {
             </table>
           </div>
         )}
+      </div>
+
+      {/* Site-wide activity feed (Dashpivot X1) — who changed what, newest first. */}
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 11, padding: 18 }}>
+        <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>📜 Recent Activity</div>
+        <ActivityFeed limit={15} />
       </div>
     </div>
   );

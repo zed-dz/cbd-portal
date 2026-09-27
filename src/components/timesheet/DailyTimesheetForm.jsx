@@ -7,7 +7,10 @@ import {
   splitDailyHours,
 } from '../../utils/payroll';
 import { Field } from '../ui/Field';
-import { sendTimesheetForClientApproval } from '../../utils/clientApproval';
+import { SignaturePad } from '../ui/SignaturePad';
+import { calcPortalLine } from '../../utils/hoursCalc';
+import { logActivity } from '../../utils/activity';
+import { sendTimesheetForClientApproval, markClientApprovedManually } from '../../utils/clientApproval';
 import { ROLE_GROUPS, ALL_ROLE_NAMES, roleChipStyle } from '../../constants/roles';
 
 const BREAK_OPTIONS = [0, 0.5, 0.75, 1];
@@ -113,6 +116,13 @@ export function DailyTimesheetForm({
   const [taskError, setTaskError] = useState('');
   const [take5Block, setTake5Block] = useState(null);   // { dates:[…] } when a Tue/Thu Take 5 is missing
   const [workerType, setWorkerType] = useState(null);   // drives the ordinary/RDO/OT split display
+  const [prefillNote, setPrefillNote] = useState(null); // 'allocation' when today's allocation seeded the form
+  const [copying, setCopying] = useState(false);
+  // On-site client signature (worker flow only): signer name + company captured
+  // beside the pad — the drawn PNG itself lives in form.client_signature.
+  // `touched` = drawn THIS session; a signature loaded from an old sheet must
+  // not re-trigger the approve-on-the-spot flow (it was recorded back then).
+  const [sig, setSig] = useState({ name: '', company: '', touched: false });
 
   useEffect(() => { setForm(initial || blankDaily()); }, [initial]);
 
@@ -120,10 +130,10 @@ export function DailyTimesheetForm({
     let mounted = true;
     (async () => {
       const [c, r, j, s, cfg] = await Promise.all([
-        supabase.from('clients').select('id, name').order('name'),
+        supabase.from('clients').select('id, name, award_profile').order('name'),
         supabase.from('job_roles').select('name').order('name'),
         supabase.from('client_jobs').select('name, client_id').order('name'),
-        supabase.from('client_sites').select('name, client_id, is_active').order('name'),
+        supabase.from('client_sites').select('id, name, client_id, is_active').order('name'),
         supabase.from('payroll_config').select('config_key, config_value'),
       ]);
       if (!mounted) return;
@@ -133,8 +143,8 @@ export function DailyTimesheetForm({
       // libraries (Clients & Rates → Sites), and a misspelt client can no longer
       // reach review. Sites are offered per selected client.
       setProjects([
-        ...((s.data || []).filter(x => x.is_active !== false).map(x => ({ name: x.name, client_id: x.client_id }))),
-        ...((j.data || []).map(x => ({ name: x.name, client_id: x.client_id }))),
+        ...((s.data || []).filter(x => x.is_active !== false).map(x => ({ name: x.name, client_id: x.client_id, site_id: x.id }))),
+        ...((j.data || []).map(x => ({ name: x.name, client_id: x.client_id, site_id: null }))),
       ].filter(x => x.name));
       if (cfg.data) {
         const map = {};
@@ -145,9 +155,24 @@ export function DailyTimesheetForm({
     return () => { mounted = false; };
   }, []);
 
+  // Which hour rules apply is the CLIENT's setting (owner, 2026-09-27):
+  // A/B/C = the Dashpivot formulas clients signed ~4,700 timesheets on;
+  // PORTAL = the legacy 7.6h + RDO model. The server recomputes the same split
+  // at save time (split_shift_hours_v2), so this is a live preview, not truth.
+  const clientProfile = (clients.find(c => c.name === form.client)?.award_profile || 'PORTAL').toUpperCase();
+
   // Recompute Day + Total + Regular + auto Meal Allowance for a single hours line.
-  const recalcLine = useCallback((line) => {
-    const total = computeLineTotalHours(line.start_time, line.end_time, line.total_break_hours);
+  // `profileOverride` covers the one case where the client just changed in the
+  // same state update (Copy last shift) and the closure profile is stale.
+  const recalcLine = useCallback((line, profileOverride) => {
+    let total = computeLineTotalHours(line.start_time, line.end_time, line.total_break_hours);
+    let regular = computeLineRegularHours(total, config);
+    const dp = calcPortalLine(line, profileOverride || clientProfile);
+    if (dp) {
+      // Dashpivot rounds to 0.25h — store the same total the split is built on.
+      total = dp.total;
+      regular = dp.regular;
+    }
     const meal = line.meal_allowance_override
       ? (parseFloat(line.meal_allowance) || 0)
       : autoMealAllowance(total, config);
@@ -155,10 +180,25 @@ export function DailyTimesheetForm({
       ...line,
       day: dayFromDate(line.date),
       total_hours: total,
-      regular_hours: computeLineRegularHours(total, config),
+      regular_hours: regular,
       meal_allowance: meal,
     };
-  }, [config]);
+  }, [config, clientProfile]);
+
+  // Per-line split for display: Dashpivot buckets when the client is on A/B/C,
+  // else the legacy portal split. `blocked` = day shift starting at/after 5pm.
+  const lineSplit = useCallback((l) => {
+    const dp = calcPortalLine(l, clientProfile);
+    if (dp) {
+      return {
+        regular: dp.regular, rdo: 0, overtime: dp.ot15 + dp.ot20,
+        ot15: dp.ot15, ot20: dp.ot20,
+        blocked: l.start_time && l.end_time && dp.total === 0 && dp.warnings.length > 0,
+      };
+    }
+    const sp = splitDailyHours(l.total_hours, workerType, l.date, config);
+    return { regular: l.regular_hours, rdo: sp.rdo, overtime: sp.overtime, ot15: null, ot20: null, blocked: false };
+  }, [clientProfile, workerType, config]);
 
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -176,7 +216,7 @@ export function DailyTimesheetForm({
     const totalReg = form.hours_lines.reduce((s, l) => s + (parseFloat(l.regular_hours) || 0), 0);
     let totalRdo = 0, totalOt = 0;
     form.hours_lines.forEach(l => {
-      const sp = splitDailyHours(l.total_hours, workerType, l.date, config);
+      const sp = lineSplit(l);
       totalRdo += sp.rdo; totalOt += sp.overtime;
     });
     const totalMeal = form.hours_lines.reduce((s, l) => {
@@ -186,7 +226,7 @@ export function DailyTimesheetForm({
       return s + meal;
     }, 0);
     return { totalHours, totalReg, totalRdo, totalOt, totalMeal };
-  }, [form, config, workerType]);
+  }, [form, config, lineSplit]);
 
   const targetWorker = workerId || form.worker_id;
 
@@ -197,6 +237,77 @@ export function DailyTimesheetForm({
       .then(({ data }) => { if (mounted) setWorkerType(data?.worker_type || null); });
     return () => { mounted = false; };
   }, [targetWorker]);
+
+  // NEW worker sheet: seed Client / Project / Role from the allocation covering
+  // today (start_date <= today <= end_date-or-start_date, still live). The
+  // functional-updater blank check makes the async fetch safe: anything the
+  // worker typed before it lands is never overwritten.
+  useEffect(() => {
+    if (allowAdmin || initial?.id || !targetWorker) return undefined;
+    let mounted = true;
+    (async () => {
+      const today = todayISO();
+      const { data: allocs } = await supabase.from('allocations')
+        .select('client, site, project, role, start_date, end_date, status')
+        .eq('worker_id', targetWorker)
+        .in('status', ['pending', 'confirmed'])
+        .lte('start_date', today)
+        .order('start_date', { ascending: false })
+        .limit(10);
+      const hit = (allocs || []).find(a => a.start_date && (a.end_date || a.start_date) >= today);
+      if (!mounted || !hit || !(hit.client || hit.site || hit.role)) return;
+      setForm(f => {
+        if (f.client || f.project || f.role) return f;
+        setPrefillNote('allocation');
+        return { ...f, client: hit.client || '', project: hit.site || hit.project || '', role: hit.role || '' };
+      });
+    })();
+    return () => { mounted = false; };
+  }, [allowAdmin, initial, targetWorker]);
+
+  // "Copy last shift": client, project, role, shift type, start, end, break
+  // from the most recent header + its first line. NEVER the date, comments or
+  // signatures (they belong to the old day).
+  const copyLastShift = async () => {
+    if (!targetWorker || copying) return;
+    setCopying(true);
+    try {
+      const { data: hs } = await supabase.from('timesheet_headers')
+        .select('id, client, project, role')
+        .eq('worker_id', targetWorker)
+        .order('created_at', { ascending: false }).limit(1);
+      const h = hs?.[0];
+      if (!h) { showToast('No previous timesheet to copy from yet.', 'info'); return; }
+      const { data: ls } = await supabase.from('timesheets')
+        .select('shift_type, start_time, end_time, total_break_hours')
+        .eq('header_id', h.id).order('date').limit(1);
+      const line = ls?.[0];
+      const prof = (clients.find(c => c.name === h.client)?.award_profile || 'PORTAL').toUpperCase();
+      setForm(f => ({
+        ...f,
+        client: h.client || '', project: h.project || '', role: h.role || '',
+        hours_lines: f.hours_lines.map((l, i) => i === 0 ? recalcLine({
+          ...l,
+          shift_type: line?.shift_type || l.shift_type,
+          start_time: line?.start_time ? new Date(line.start_time).toTimeString().slice(0, 5) : l.start_time,
+          end_time: line?.end_time ? new Date(line.end_time).toTimeString().slice(0, 5) : l.end_time,
+          total_break_hours: line?.total_break_hours ?? l.total_break_hours,
+        }, prof) : l),
+      }));
+      showToast('Copied your last shift — check the times, then submit.', 'success');
+    } finally {
+      setCopying(false);
+    }
+  };
+
+  // Resolve the picked names to master-data ids (Dashpivot 1.1). Same shape as
+  // AllocationsPage: the site pins the client when several clients share a name.
+  const resolveMasterIds = () => {
+    const cs = clients.filter(c => c.name === form.client);
+    const site = projects.find(p => p.site_id && p.name === form.project && cs.some(c => c.id === p.client_id)) || null;
+    const client = site ? cs.find(c => c.id === site.client_id) : (cs.length === 1 ? cs[0] : null);
+    return { clientId: client?.id || null, siteId: site?.site_id || null };
+  };
 
   // Master role list is the primary source; keep any library roles (job_roles)
   // or a pre-existing legacy value so nothing already saved gets dropped.
@@ -250,6 +361,26 @@ export function DailyTimesheetForm({
     const suspicious = validLines.map(recalcLine).filter(l => (parseFloat(l.total_hours) || 0) > 16);
     if (suspicious.length) {
       showToast(`Check the start/finish times on ${suspicious.map(l => `${l.date} (${Number(l.total_hours).toFixed(2)}h)`).join(', ')} — more than 16 hours in one shift usually means an AM/PM mix-up. Fix the times, then submit.`, 'error');
+      return;
+    }
+
+    // Dashpivot rule (A/B/C clients): a Day shift can't start at or after
+    // 5:00 pm — the signed formulas return 0 hours for it. Block the save.
+    if (clientProfile !== 'PORTAL') {
+      const lateDay = validLines.filter(l => l.shift_type !== 'Night'
+        && (l.scenario || 'standard') === 'standard'
+        && parseInt(l.start_time.split(':')[0], 10) >= 17);
+      if (lateDay.length) {
+        showToast(`${lateDay.map(l => l.date).join(', ')}: a Day shift can't start at or after 5:00 pm — change the Shift Type to Night.`, 'error');
+        return;
+      }
+    }
+
+    // On-site client signature (worker flow): drawn signature needs the
+    // signer's name, or the approval note would say nobody signed.
+    const signedOnSite = !allowAdmin && sig.touched && String(form.client_signature || '').startsWith('data:image');
+    if (signedOnSite && !String(sig.name).trim()) {
+      showToast("Add the supervisor's name next to their signature — or clear the signature to use the text-a-link flow.", 'error');
       return;
     }
 
@@ -314,15 +445,51 @@ export function DailyTimesheetForm({
       ? (statusToUse === 'approved' ? 'Timesheet approved' : 'Timesheet rejected')
       : (form.id ? 'Daily timesheet updated' : 'Daily timesheet submitted');
     showToast(msg, statusToUse === 'rejected' ? 'info' : 'success');
+    logActivity({
+      verb: overriding ? (statusToUse === 'approved' ? 'approved' : 'rejected') : (form.id ? 'edited' : 'submitted'),
+      object_type: 'timesheet_header', object_id: form.id || data,
+      after: { client: form.client, project: form.project, total_hours: totals.totalHours },
+    });
+
+    // Master-data ids + name snapshots (Dashpivot 1.1). The RPC signature is
+    // fixed, so the ids can't ride along with the save — they're stamped onto
+    // the header and its (freshly re-inserted) line rows straight after the
+    // RPC returns. Fire-and-forget; a failure never blocks the submission.
+    const savedHeaderId = form.id || data;
+    if (savedHeaderId) {
+      const { clientId, siteId } = resolveMasterIds();
+      supabase.from('timesheet_headers').update({
+        client_id: clientId, site_id: siteId,
+        client_name_snapshot: form.client || null,
+        site_name_snapshot: form.project || null,
+        role_name_snapshot: form.role || null,
+      }).eq('id', savedHeaderId).then(({ error: e }) => {
+        if (e) showToast(`Timesheet saved, but the client/site link failed: ${e.message}`, 'error');
+      });
+      if (clientId || siteId) {
+        supabase.from('timesheets').update({ client_id: clientId, site_id: siteId })
+          .eq('header_id', savedHeaderId).then(({ error: e }) => {
+            if (e) showToast(`Timesheet saved, but the line client/site link failed: ${e.message}`, 'error');
+          });
+      }
+    }
 
     // Autonomous sign-off: every submission (worker or admin) goes straight to
     // the site supervisor. Their acceptance auto-approves the timesheet and
     // makes it billable in Payroll — no admin step required. Fire-and-forget;
     // duplicate sends are blocked by the already-sent guard in the util, and
     // contact/channel failures light up the admin bell so the office can act.
+    // EXCEPTION: a client signature captured on the worker's phone approves the
+    // sheet on the spot — the tokenised supervisor link is then SKIPPED.
     if (statusToUse !== 'rejected') {
-      const headerId = form.id || data;
-      if (headerId) {
+      const headerId = savedHeaderId;
+      if (headerId && signedOnSite) {
+        const who = `${sig.name.trim()}${String(sig.company).trim() ? ` (${String(sig.company).trim()})` : ''} — signed on site`;
+        markClientApprovedManually(headerId, who).then(r => {
+          if (r.ok) showToast('Client signed on site — timesheet approved and the PDF copy is on its way.', 'success');
+          else showToast(`Signed on site, but approval could not be recorded: ${r.error}`, 'error');
+        });
+      } else if (headerId) {
         sendTimesheetForClientApproval(headerId).then(r => {
           if (r.ok) showToast(`Sent to the site supervisor for sign-off — ${r.sentTo}`, 'success');
           else if (!r.alreadySent && allowAdmin) showToast(`Supervisor sign-off link NOT sent: ${r.error}`, 'error');
@@ -350,6 +517,19 @@ export function DailyTimesheetForm({
             {workers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
         </Field>
+      )}
+      {!allowAdmin && !form.id && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+          <button type="button" onClick={copyLastShift} disabled={copying} style={{ ...btnSmall, opacity: copying ? 0.6 : 1 }}
+            title="Pre-fills client, project, role, shift type, start, end and break from your most recent timesheet. Never copies the date, comments or signatures.">
+            {copying ? 'Copying…' : '⧉ Copy last shift'}
+          </button>
+        </div>
+      )}
+      {prefillNote === 'allocation' && (
+        <div style={{ fontSize: 12, color: C.textMuted, margin: '0 0 8px' }}>
+          📌 Pre-filled from your allocation — change it if you worked elsewhere.
+        </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 12px' }}>
         <Field label="Client *">
@@ -398,7 +578,7 @@ export function DailyTimesheetForm({
           {form.hours_lines.map((l, i) => {
             const autoMeal = autoMealAllowance(l.total_hours, config);
             const mealVal = l.meal_allowance_override ? (parseFloat(l.meal_allowance) || 0) : autoMeal;
-            const split = splitDailyHours(l.total_hours, workerType, l.date, config);
+            const split = lineSplit(l);
             const breakOpts = BREAK_OPTIONS.includes(parseFloat(l.total_break_hours) || 0)
               ? BREAK_OPTIONS
               : [...BREAK_OPTIONS, parseFloat(l.total_break_hours) || 0].sort((a, b) => a - b);
@@ -416,12 +596,12 @@ export function DailyTimesheetForm({
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <div>
                     <div style={smallLabel}>Start *</div>
-                    <input type="time" style={{ ...cellInput, width: '100%' }} value={l.start_time}
+                    <input type="time" step={900} style={{ ...cellInput, width: '100%' }} value={l.start_time}
                       onChange={e => setHoursLine(i, { start_time: e.target.value })} />
                   </div>
                   <div>
                     <div style={smallLabel}>End *</div>
-                    <input type="time" style={{ ...cellInput, width: '100%' }} value={l.end_time}
+                    <input type="time" step={900} style={{ ...cellInput, width: '100%' }} value={l.end_time}
                       onChange={e => setHoursLine(i, { end_time: e.target.value })} />
                   </div>
                   <div>
@@ -477,7 +657,7 @@ export function DailyTimesheetForm({
             {form.hours_lines.map((l, i) => {
               const autoMeal = autoMealAllowance(l.total_hours, config);
               const mealVal = l.meal_allowance_override ? (parseFloat(l.meal_allowance) || 0) : autoMeal;
-              const split = splitDailyHours(l.total_hours, workerType, l.date, config);
+              const split = lineSplit(l);
               const breakOpts = BREAK_OPTIONS.includes(parseFloat(l.total_break_hours) || 0)
                 ? BREAK_OPTIONS
                 : [...BREAK_OPTIONS, parseFloat(l.total_break_hours) || 0].sort((a, b) => a - b);
@@ -500,8 +680,8 @@ export function DailyTimesheetForm({
                     <option value="Training">Training</option>
                   </select>
                 </td>
-                <td style={{ padding: 3 }}><input type="time" style={{ ...cellInput, width: 100 }} value={l.start_time} onChange={e => setHoursLine(i, { start_time: e.target.value })} /></td>
-                <td style={{ padding: 3 }}><input type="time" style={{ ...cellInput, width: 100 }} value={l.end_time} onChange={e => setHoursLine(i, { end_time: e.target.value })} /></td>
+                <td style={{ padding: 3 }}><input type="time" step={900} style={{ ...cellInput, width: 100 }} value={l.start_time} onChange={e => setHoursLine(i, { start_time: e.target.value })} /></td>
+                <td style={{ padding: 3 }}><input type="time" step={900} style={{ ...cellInput, width: 100 }} value={l.end_time} onChange={e => setHoursLine(i, { end_time: e.target.value })} /></td>
                 <td style={{ padding: 3 }}>
                   <select style={{ ...cellInput, width: 78 }} value={String(parseFloat(l.total_break_hours) || 0)}
                     onChange={e => setHoursLine(i, { total_break_hours: parseFloat(e.target.value) })}>
@@ -615,6 +795,37 @@ export function DailyTimesheetForm({
             <option value="rejected">Rejected</option>
           </select>
         </Field>
+      )}
+
+      {/* X4 — client signs on the worker's phone. Optional: signed = approved on
+          the spot (markClientApprovedManually) and the supervisor link is
+          skipped; left blank = the usual text-a-link flow, unchanged. */}
+      {!allowAdmin && (
+        <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 14px', margin: '4px 0 12px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>✍️ Client signature (optional)</div>
+          <div style={{ fontSize: 12, color: C.textMuted, margin: '2px 0 10px' }}>
+            Supervisor with you? Get them to sign now — otherwise we text them a link.
+          </div>
+          <SignaturePad
+            value={String(form.client_signature || '').startsWith('data:image') ? form.client_signature : ''}
+            onChange={v => { setField('client_signature', v); setSig(s => ({ ...s, touched: !!v })); }}
+            height={130}
+          />
+          {sig.touched && String(form.client_signature || '').startsWith('data:image') && (
+            <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : '1fr 1fr', gap: '0 12px', marginTop: 8 }}>
+              <Field label="Supervisor name *">
+                <input style={inputStyle} value={sig.name}
+                  onChange={e => setSig(s => ({ ...s, name: e.target.value }))}
+                  placeholder="Who signed" />
+              </Field>
+              <Field label="Company">
+                <input style={inputStyle} value={sig.company}
+                  onChange={e => setSig(s => ({ ...s, company: e.target.value }))}
+                  placeholder="e.g. MLC Civil" />
+              </Field>
+            </div>
+          )}
+        </div>
       )}
 
       {take5Block && (

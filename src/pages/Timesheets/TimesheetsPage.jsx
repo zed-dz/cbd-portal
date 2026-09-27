@@ -12,6 +12,20 @@ const fmtTime = (iso) => iso
   ? new Date(iso).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
   : '—';
 
+// Approve goes through the approve-timesheet edge function, never a direct
+// status update: the server recomputes the hours split, locks the sheet and
+// emails the client PDF. Surfaces the function's own error body (e.g. the
+// 409 hours-mismatch message) instead of the generic invoke error.
+async function invokeApprove(headerId) {
+  const { data, error } = await supabase.functions.invoke('approve-timesheet', { body: { header_id: headerId } });
+  if (!error && !data?.error) return { ok: true, data };
+  let msg = data?.error || error?.message || 'Approval failed';
+  if (error?.context) {
+    try { const j = await error.context.json(); msg = j.error || msg; } catch { /* keep msg */ }
+  }
+  return { ok: false, error: msg };
+}
+
 // datetime-local <-> instant conversion for the Line-tab editor. Times are
 // edited as local wall-clock but stored as true UTC instants — same contract
 // as the daily form (naive strings used to shift every display +10h).
@@ -201,10 +215,24 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
   const handleApproveAll = async () => {
     const pending = timesheets.filter(ts => ts.status === 'pending');
     if (!pending.length) { showToast('No pending timesheets to approve.', 'info'); return; }
-    if (!window.confirm(`Approve all ${pending.length} pending timesheets?`)) return;
-    const { error } = await supabase.from('timesheets').update({ status: 'approved' }).in('id', pending.map(ts => ts.id));
-    if (error) showToast(error.message, 'error');
-    else { showToast(`${pending.length} timesheets approved`, 'success'); load(); refreshBadge?.(); }
+    if (!window.confirm(`Approve all ${pending.length} pending timesheets? Daily-sheet rows are re-checked and locked on the server, and the client PDF is emailed.`)) return;
+    // Rows belonging to a daily sheet go through the server (recompute + lock
+    // + PDF). Legacy header-less line rows have nothing to lock — they keep
+    // the old direct update.
+    const headerIds = [...new Set(pending.map(ts => ts.header_id).filter(Boolean))];
+    const legacy = pending.filter(ts => !ts.header_id);
+    let failed = 0;
+    for (const id of headerIds) {
+      const r = await invokeApprove(id);
+      if (!r.ok) { failed++; showToast(r.error, 'error'); }
+    }
+    if (legacy.length) {
+      const { error } = await supabase.from('timesheets').update({ status: 'approved' }).in('id', legacy.map(ts => ts.id));
+      if (error) { failed++; showToast(error.message, 'error'); }
+    }
+    if (!failed) showToast(`${pending.length} timesheets approved`, 'success');
+    else showToast('Some approvals failed — see the errors above; the rest went through.', 'info');
+    load(); refreshBadge?.();
   };
 
   const handleXeroExport = () => {
@@ -436,13 +464,24 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
   );
 }
 
+// X3 — kanban columns. "PDF sent" is derived from pdf_emailed_at, not a
+// status of its own: an approved sheet whose PDF has gone out lives there.
+const KANBAN_COLS = [
+  { id: 'pending',  label: 'Pending',  color: '#eab308', match: h => h.status === 'pending' },
+  { id: 'approved', label: 'Approved', color: '#4ade80', match: h => h.status === 'approved' && !h.pdf_emailed_at },
+  { id: 'rejected', label: 'Rejected', color: '#f87171', match: h => h.status === 'rejected' },
+  { id: 'sent',     label: 'PDF sent', color: '#93c5fd', match: h => h.status === 'approved' && !!h.pdf_emailed_at },
+];
+
 // ---- Daily Timesheets (detailed) admin: list + full edit of submitted ones ----
-function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
+function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
   const [headers, setHeaders] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState('');
   const [search, setSearch] = useState('');
+  const [layout, setLayout] = useState('table'); // 'table' | 'kanban' (X3)
+  const [approving, setApproving] = useState(false);
   const [modal, setModal] = useState(null);      // 'add' | header object | null
   const [viewing, setViewing] = useState(null);  // header (with embedded lines) shown in the full view
   const [selected, setSelected] = useState(() => new Set()); // header ids ticked for bulk download
@@ -647,6 +686,16 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
           />
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', border: `1px solid ${C.border}`, borderRadius: R.md, overflow: 'hidden' }}
+            title="Cards move via the Approve / Reject actions — drag is disabled">
+            {[['table', '☰ Table'], ['kanban', '▦ Kanban']].map(([id, label]) => (
+              <button key={id} onClick={() => setLayout(id)} style={{
+                padding: '7px 12px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                background: layout === id ? C.accentSoft : 'transparent',
+                color: layout === id ? C.accent : C.textMuted,
+              }}>{label}</button>
+            ))}
+          </div>
           <button onClick={openReport} style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }}>📄 Timesheet report</button>
           <button onClick={openAdd} style={btnPrimary}>+ Add Daily Timesheet</button>
         </div>
@@ -678,6 +727,51 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
 
       {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : filtered.length === 0 ? (
         <EmptyState message="No daily timesheets found." />
+      ) : layout === 'kanban' ? (
+        /* X3 — kanban view. Cards move between columns via the Approve/Reject
+           actions only (drag deliberately disabled); click opens the View
+           modal. Columns stack to one per row on phones. */
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(4, minmax(0, 1fr))', gap: 12, alignItems: 'start' }}>
+          {KANBAN_COLS.map(col => {
+            const cards = filtered.filter(col.match);
+            return (
+              <div key={col.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: R.md, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: `1px solid ${C.border}` }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: col.color, flexShrink: 0 }} />
+                  <span style={{ fontSize: 11, fontWeight: 700, color: C.text, textTransform: 'uppercase', letterSpacing: 1 }}>{col.label}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11, fontFamily: '"DM Mono", monospace', color: C.textMuted }}>{cards.length}</span>
+                </div>
+                <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {cards.length === 0 && <div style={{ fontSize: 12, color: C.textMuted, textAlign: 'center', padding: '14px 0' }}>—</div>}
+                  {cards.map(h => {
+                    const info = lineInfo(h);
+                    const first = info.lines[0];
+                    const last = info.lines[info.lines.length - 1];
+                    return (
+                      <div key={h.id} onClick={() => setViewing(h)} style={{
+                        background: C.bg, border: `1px solid ${C.border}`, borderLeft: `3px solid ${col.color}`,
+                        borderRadius: 8, padding: '10px 12px', cursor: 'pointer', minWidth: 0,
+                      }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{h.workers?.name || '—'}</div>
+                        <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {h.client || '—'}{h.project ? ` · ${h.project}` : ''}
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 6, fontSize: 11.5, fontFamily: '"DM Mono", monospace', color: C.textMuted }}>
+                          <span>
+                            {info.lines.length === 0 ? fmtDate(h.created_at)
+                              : info.lines.length === 1 ? fmtDate(first.date)
+                              : `${fmtDate(first.date)} – ${fmtDate(last.date)}`}
+                          </span>
+                          <span style={{ color: C.text, fontWeight: 700 }}>{info.total.toFixed(2)}h</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       ) : (
         <TableWrap>
           <thead><tr><Th><input type="checkbox" checked={allShownSelected} onChange={toggleAllShown} title="Select all shown" style={{ accentColor: C.accent, width: 15, height: 15, cursor: 'pointer' }} /></Th><Th>Worker</Th><Th>Date</Th><Th>Client</Th><Th>Project</Th><Th>Role</Th><Th>Start</Th><Th>Finish</Th><Th>Normal</Th><Th>OT</Th><Th>Status</Th><Th>Actions</Th></tr></thead>
@@ -736,6 +830,22 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge }) {
             onClose={() => setViewing(null)}
             onEdit={() => { const h = viewing; setViewing(null); openEdit(h); }}
           />
+          {viewing.status === 'pending' && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
+              <button disabled={approving} style={{ ...btnPrimary, background: '#16a34a' }} onClick={async () => {
+                if (!window.confirm('Approve this timesheet? The server re-checks the hours split, locks the sheet, and emails the hours-only PDF to the client.')) return;
+                setApproving(true);
+                const r = await invokeApprove(viewing.id);
+                setApproving(false);
+                if (r.ok) {
+                  showToast(r.data?.pdf?.ok
+                    ? 'Approved and locked — PDF emailed to the client'
+                    : 'Approved and locked — PDF email pending (the bell lights up if it fails)', 'success');
+                  setViewing(null); load(); refreshBadge?.();
+                } else showToast(r.error, 'error');
+              }}>{approving ? 'Approving…' : '✓ Approve, lock & email PDF'}</button>
+            </div>
+          )}
           {viewing.status !== 'rejected' && (
             <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 16px', marginTop: 14 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Supervisor sign-off</div>

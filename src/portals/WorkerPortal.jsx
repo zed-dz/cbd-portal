@@ -130,7 +130,18 @@ function WorkerAllocations({ currentWorker, showToast }) {
               📍 Open map
             </a>
           )}
-          {a.site_manager && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Site Supervisor: {a.site_manager}{a.manager_phone ? ` · ${a.manager_phone}` : ''}</div>}
+          {(a.site_manager || a.manager_phone) && (
+            <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span>Site Supervisor: {a.site_manager || '—'}</span>
+              {a.manager_phone && (
+                /* tel: link so one tap on site rings the supervisor */
+                <a href={`tel:${String(a.manager_phone).replace(/[^\d+]/g, '')}`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 999, background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.35)', color: '#4ade80', fontSize: 12, fontWeight: 600, textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                  📞 {a.manager_phone}
+                </a>
+              )}
+            </div>
+          )}
           {a.start_date && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Date: {a.start_date}</div>}
           <div style={{ color: C.textMuted, fontSize: 13 }}>Start: {fmtDateTime(a.start_time)}</div>
           {a.notes && <div style={{ color: C.textMuted, fontSize: 12, marginTop: 10, fontStyle: 'italic' }}>{a.notes}</div>}

@@ -8,6 +8,7 @@ import { NotificationSettings } from '../components/notifications/NotificationSe
 import { DashboardPage } from '../pages/Dashboard/DashboardPage';
 import { WorkersPage } from '../pages/Workers/WorkersPage';
 import { RateSetsPage } from '../pages/RateSets/RateSetsPage';
+import { SentTimesheetsPage } from '../pages/SentTimesheets/SentTimesheetsPage';
 import { AllocationsPage } from '../pages/Allocations/AllocationsPage';
 import { AllocationsCalendarPage } from '../pages/Calendar/AllocationsCalendarPage';
 import { TimesheetsPage } from '../pages/Timesheets/TimesheetsPage';
@@ -99,9 +100,14 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         { id: 'allocations', label: '📋 Allocations', badge: badges.allocations || null, badgeColor: 'orange' },
         { id: 'calendar', label: '📅 Calendar' },
         { id: 'timesheets', label: '🕐 Timesheets', badge: badges.timesheets || null, badgeColor: 'red' },
+        { id: 'sent_timesheets', label: '📤 Sent Timesheets' },
       ],
     },
-    {
+    // Money pages are Admin-only (owner, 2026-09-27). Managers/allocators keep
+    // MAIN + TOOLS; the DB enforces the same line with RLS, this just removes
+    // the dead doors. Clients & Rates stays visible to managers for sites and
+    // contacts — its rate panels are gated inside the page.
+    ...(currentWorker?.access_level === 'admin' ? [{
       label: 'FINANCE',
       items: [
         { id: 'clients', label: '🏗 Clients & Rates' },
@@ -112,7 +118,12 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         { id: 'payroll_config', label: '⚙ Payroll Config' },
         { id: 'xero_sync', label: '🔄 Xero Data' },
       ],
-    },
+    }] : [{
+      label: 'FINANCE',
+      items: [
+        { id: 'clients', label: '🏗 Clients & Sites' },
+      ],
+    }]),
     {
       label: 'TOOLS',
       items: [
@@ -228,6 +239,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'timesheets'       && <TimesheetsPage showToast={showToast} isMobile={isMobile} refreshBadge={refreshBadge} />}
           {activePage === 'clients'          && <ClientsPage showToast={showToast} />}
           {activePage === 'rate_sets'        && <RateSetsPage showToast={showToast} />}
+          {activePage === 'sent_timesheets'  && <SentTimesheetsPage showToast={showToast} />}
           {activePage === 'default_rates'    && <DefaultRatesPage showToast={showToast} />}
           {activePage === 'payroll'          && <PayrollTrackerPage showToast={showToast} />}
           {activePage === 'payments'         && <PaymentsPage showToast={showToast} />}
