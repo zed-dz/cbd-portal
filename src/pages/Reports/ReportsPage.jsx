@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
+import { WORKER_SAFE_COLS } from '../../utils/workerCols';
 import { C, inputStyle, btnPrimary, btnSecondary } from '../../theme';
 import { todayISO } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
@@ -27,7 +28,12 @@ export function ReportsPage({ showToast }) {
     setExporting(e => ({ ...e, [type]: true }));
     try {
       if (type === 'workers') {
-        const { data, error } = await supabase.from('workers').select('*');
+        // Admins export everything incl. pay via the definer view; managers get
+        // the safe-column export (the DB refuses them the pay columns anyway).
+        let { data, error } = await supabase.from('v_workers_admin').select('*');
+        if (!error && (data || []).length === 0) {
+          ({ data, error } = await supabase.from('workers').select(WORKER_SAFE_COLS));
+        }
         if (error) throw error;
         downloadCSV(`workers_export_${todayISO()}.csv`, data);
       } else if (type === 'allocations') {

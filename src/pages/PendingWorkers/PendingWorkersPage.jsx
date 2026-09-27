@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../supabaseClient';
+import { WORKER_SAFE_COLS } from '../../utils/workerCols';
 import { C, btnSmall } from '../../theme';
 import { Spinner, Badge, EmptyState } from '../../components';
 import { onboardLink, whatsappLink, inviteMessage, normaliseMobileE164AU } from '../../utils/inviteLinks';
@@ -12,7 +13,7 @@ export function PendingWorkersPage({ showToast }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('workers').select('*').neq('app_status', 'Active').is('archived_at', null).order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('workers').select(WORKER_SAFE_COLS).neq('app_status', 'Active').is('archived_at', null).order('created_at', { ascending: false });
     if (error) showToast(error.message, 'error');
     else setWorkers(data || []);
     setLoading(false);

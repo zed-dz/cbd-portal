@@ -62,7 +62,7 @@ export function PayrollTrackerPage({ showToast }) {
     if (dateTo) q = q.lte('date', dateTo);
     const [t, w, cl, cfg, rc] = await Promise.all([
       q,
-      supabase.from('workers').select('id, name, worker_type, pay_rate_regular, pay_rate_overtime, subcontractor_abn').order('name'),
+      supabase.from('v_workers_admin').select('id, name, worker_type, pay_rate_regular, pay_rate_overtime, subcontractor_abn').order('name'),
       supabase.from('clients').select('id, name, rate_a, rate_b, rate_c, rate_regular, rate_overtime, rate_night, rate_weekend').order('name'),
       supabase.from('payroll_config').select('config_key, config_value'),
       // Per-client Schedule of Rates. Charging bills column A/B/C off the line

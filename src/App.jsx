@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+import { WORKER_SAFE_COLS } from './utils/workerCols';
 import { C, btnSecondary } from './theme';
 import { ToastContainer, Spinner } from './components';
 import { LoginPage } from './pages/Login/LoginPage';
@@ -161,7 +162,7 @@ function AppShell() {
   }, []);
 
   const fetchWorker = useCallback(async (email) => {
-    const { data, error } = await supabase.from('workers').select('*').eq('email', email).maybeSingle();
+    const { data, error } = await supabase.from('workers').select(WORKER_SAFE_COLS).eq('email', email).maybeSingle();
     if (error) { showToast('Could not load profile: ' + error.message, 'error'); }
     setCurrentWorker(data ?? null);
     setAuthLoading(false);

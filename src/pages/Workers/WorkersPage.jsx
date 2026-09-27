@@ -11,6 +11,7 @@ import { JOB_TITLES } from '../../constants/jobTitles';
 import { WORKER_TYPES } from '../../constants/scenarios';
 import { onboardLink, publicProfileLink, whatsappLink, inviteMessage, normaliseMobileE164AU } from '../../utils/inviteLinks';
 import { addAdminNotification } from '../../utils/notify';
+import { WORKER_SAFE_COLS } from '../../utils/workerCols';
 
 const ARCHIVE_REASONS = [
   { value: 'resigned',        label: 'Resigned (left voluntarily)' },
@@ -117,11 +118,16 @@ export function WorkersPage({ showToast, currentWorker }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('workers').select('*').order('created_at', { ascending: false });
+    // Admins read the definer view (includes pay columns); managers read the
+    // table, which the DB limits to the safe column set - selecting * or any
+    // pay_rate_* there now fails outright for client roles.
+    const { data, error } = canSeeRates
+      ? await supabase.from('v_workers_admin').select('*').order('created_at', { ascending: false })
+      : await supabase.from('workers').select(WORKER_SAFE_COLS).order('created_at', { ascending: false });
     if (error) showToast(error.message, 'error');
     else setWorkers(data || []);
     setLoading(false);
-  }, [showToast]);
+  }, [showToast, canSeeRates]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -215,7 +221,7 @@ export function WorkersPage({ showToast, currentWorker }) {
     }
 
     if (modal === 'add') {
-      const { data, error } = await supabase.from('workers').insert([payload]).select().single();
+      const { data, error } = await supabase.from('workers').insert([payload]).select('id, name, email, profile_token').single();
       if (error) { showToast(error.message, 'error'); setSaving(false); return; }
 
       if (!canSeeRates) {

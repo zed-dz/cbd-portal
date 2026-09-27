@@ -110,7 +110,7 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
     setLoading(true);
     const [t, w, cfg, c] = await Promise.all([
       supabase.from('timesheets').select('*, workers(name)').order('created_at', { ascending: false }),
-      supabase.from('workers').select('id, name, worker_type, pay_rate_regular').is('archived_at', null).order('name'),
+      supabase.from('workers').select('id, name, worker_type').is('archived_at', null).order('name'),
       supabase.from('payroll_config').select('config_key, config_value'),
       supabase.from('clients').select('id, name').order('name'),
     ]);
