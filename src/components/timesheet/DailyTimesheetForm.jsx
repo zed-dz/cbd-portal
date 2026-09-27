@@ -119,21 +119,23 @@ export function DailyTimesheetForm({
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const [c, r, j, alloc, cfg] = await Promise.all([
-        supabase.from('clients').select('name').order('name'),
+      const [c, r, j, s, cfg] = await Promise.all([
+        supabase.from('clients').select('id, name').order('name'),
         supabase.from('job_roles').select('name').order('name'),
-        supabase.from('client_jobs').select('name').order('name'),
-        supabase.from('allocations').select('project').not('project', 'is', null),
+        supabase.from('client_jobs').select('name, client_id').order('name'),
+        supabase.from('client_sites').select('name, client_id, is_active').order('name'),
         supabase.from('payroll_config').select('config_key, config_value'),
       ]);
       if (!mounted) return;
-      if (c.data) setClients(c.data.map(x => x.name).filter(Boolean));
+      if (c.data) setClients(c.data);
       if (r.data) setRoles(r.data.map(x => x.name).filter(Boolean));
-      const projSet = new Set([
-        ...((j.data || []).map(x => x.name)),
-        ...((alloc.data || []).map(x => x.project)),
-      ].filter(Boolean));
-      setProjects([...projSet].sort());
+      // Client and Project are PICK-ONLY on this form: the office maintains the
+      // libraries (Clients & Rates → Sites), and a misspelt client can no longer
+      // reach review. Sites are offered per selected client.
+      setProjects([
+        ...((s.data || []).filter(x => x.is_active !== false).map(x => ({ name: x.name, client_id: x.client_id }))),
+        ...((j.data || []).map(x => ({ name: x.name, client_id: x.client_id }))),
+      ].filter(x => x.name));
       if (cfg.data) {
         const map = {};
         cfg.data.forEach(row => { map[row.config_key] = row.config_value; });
@@ -205,6 +207,32 @@ export function DailyTimesheetForm({
     if (form.role && !known.has(form.role)) extra.add(form.role);
     return [...extra];
   }, [roles, form.role]);
+
+  // A value already saved on the sheet stays selectable even if it has since
+  // left the library, so old timesheets still open and save unchanged.
+  const clientNames = useMemo(() => {
+    const seen = new Set(clients.map(c => c.name).filter(Boolean));
+    if (form.client) seen.add(form.client);
+    return [...seen].sort();
+  }, [clients, form.client]);
+
+  const projectOptions = useMemo(() => {
+    const ids = new Set(clients.filter(c => c.name === form.client).map(c => c.id));
+    const names = new Set(projects.filter(p => !p.client_id || ids.has(p.client_id)).map(p => p.name));
+    if (form.project) names.add(form.project);
+    return [...names].sort();
+  }, [clients, projects, form.client, form.project]);
+
+  // Phone layout: the wide hours table forced sideways scrolling and the crew
+  // kept missing the End/Break cells. Under 640px each hours line renders as a
+  // stacked card — Start, End and Break sit directly under the Date.
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 640px)');
+    const onChange = (e) => setNarrow(e.matches);
+    if (mq.addEventListener) mq.addEventListener('change', onChange); else mq.addListener(onChange);
+    return () => { if (mq.removeEventListener) mq.removeEventListener('change', onChange); else mq.removeListener(onChange); };
+  }, []);
 
   // statusOverride (from the manager Approve/Reject buttons) forces the saved
   // status; otherwise the form's own status is used.
@@ -299,6 +327,11 @@ export function DailyTimesheetForm({
           if (r.ok) showToast(`Sent to the site supervisor for sign-off — ${r.sentTo}`, 'success');
           else if (!r.alreadySent && allowAdmin) showToast(`Supervisor sign-off link NOT sent: ${r.error}`, 'error');
         });
+        // Office approval also emails the client their PDF copy automatically —
+        // the server skips it politely if it already went out (idempotent).
+        if (statusToUse === 'approved') {
+          supabase.functions.invoke('send-timesheet-pdf', { body: { header_id: headerId, reason: 'admin' } }).catch(() => {});
+        }
       }
     }
     onSaved?.(data);
@@ -320,14 +353,23 @@ export function DailyTimesheetForm({
       )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 12px' }}>
         <Field label="Client *">
-          <input style={inputStyle} list="dts-clients" value={form.client}
-            onChange={e => setField('client', e.target.value)} placeholder="Select…" />
-          <datalist id="dts-clients">{clients.map(c => <option key={c} value={c} />)}</datalist>
+          <select style={inputStyle} value={form.client}
+            onChange={e => setField('client', e.target.value)}>
+            <option value="">Select…</option>
+            {clientNames.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
         </Field>
-        <Field label="Project *">
-          <input style={inputStyle} list="dts-projects" value={form.project}
-            onChange={e => setField('project', e.target.value)} placeholder="Select or type…" />
-          <datalist id="dts-projects">{projects.map(p => <option key={p} value={p} />)}</datalist>
+        <Field label="Project / site *">
+          <select style={inputStyle} value={form.project} disabled={!form.client}
+            onChange={e => setField('project', e.target.value)}>
+            <option value="">{form.client ? 'Select…' : 'Pick a client first'}</option>
+            {projectOptions.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+          {form.client && projectOptions.length === 0 && (
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
+              No sites on file for this client yet — ask the office to add it.
+            </div>
+          )}
         </Field>
         <Field label="Role performed *">
           <select style={inputStyle} value={form.role} onChange={e => setField('role', e.target.value)}>
@@ -351,6 +393,68 @@ export function DailyTimesheetForm({
 
       {/* Hours worked */}
       <div style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: '8px 0 8px' }}>Hours worked</div>
+      {narrow ? (
+        <div style={{ display: 'grid', gap: 10 }}>
+          {form.hours_lines.map((l, i) => {
+            const autoMeal = autoMealAllowance(l.total_hours, config);
+            const mealVal = l.meal_allowance_override ? (parseFloat(l.meal_allowance) || 0) : autoMeal;
+            const split = splitDailyHours(l.total_hours, workerType, l.date, config);
+            const breakOpts = BREAK_OPTIONS.includes(parseFloat(l.total_break_hours) || 0)
+              ? BREAK_OPTIONS
+              : [...BREAK_OPTIONS, parseFloat(l.total_break_hours) || 0].sort((a, b) => a - b);
+            const smallLabel = { fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3 };
+            return (
+              <div key={i} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', background: C.card }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                  <input type="date" max={todayISO()} style={{ ...cellInput, flex: 1, minWidth: 0 }} value={l.date}
+                    onChange={e => setHoursLine(i, { date: e.target.value > todayISO() ? todayISO() : e.target.value })} />
+                  <span style={{ color: C.textMuted, fontSize: 12, whiteSpace: 'nowrap' }}>{dayFromDate(l.date) || '—'}</span>
+                  {form.hours_lines.length > 1 && (
+                    <button type="button" onClick={() => removeHoursLine(i)} style={{ ...btnDanger, padding: '4px 9px' }}>×</button>
+                  )}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div>
+                    <div style={smallLabel}>Start *</div>
+                    <input type="time" style={{ ...cellInput, width: '100%' }} value={l.start_time}
+                      onChange={e => setHoursLine(i, { start_time: e.target.value })} />
+                  </div>
+                  <div>
+                    <div style={smallLabel}>End *</div>
+                    <input type="time" style={{ ...cellInput, width: '100%' }} value={l.end_time}
+                      onChange={e => setHoursLine(i, { end_time: e.target.value })} />
+                  </div>
+                  <div>
+                    <div style={smallLabel}>Break</div>
+                    <select style={{ ...cellInput, width: '100%' }} value={String(parseFloat(l.total_break_hours) || 0)}
+                      onChange={e => setHoursLine(i, { total_break_hours: parseFloat(e.target.value) })}>
+                      {breakOpts.map(b => <option key={b} value={String(b)}>{b === 0 ? 'No break' : `${b} hr`}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={smallLabel}>Shift type</div>
+                    <select style={{ ...cellInput, width: '100%' }}
+                      value={l.scenario === 'training_day' ? 'Training' : l.shift_type}
+                      onChange={e => setHoursLine(i, e.target.value === 'Training'
+                        ? { shift_type: 'Day', scenario: 'training_day' }
+                        : { shift_type: e.target.value, ...(l.scenario === 'training_day' ? { scenario: 'standard' } : {}) })}>
+                      {SHIFT_TYPES.map(s => <option key={s} value={s}>{s}</option>)}
+                      <option value="Training">Training</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 12, color: C.textMuted, flexWrap: 'wrap' }}>
+                  <span>Total <strong style={{ color: C.text }}>{Number(l.total_hours).toFixed(2)}h</strong></span>
+                  <span>Normal {Number(l.regular_hours).toFixed(2)}h</span>
+                  {split.rdo > 0 && <span style={{ color: C.success }}>RDO {split.rdo.toFixed(2)}h</span>}
+                  {split.overtime > 0 && <span style={{ color: C.warning }}>OT {split.overtime.toFixed(2)}h</span>}
+                  {mealVal > 0 && <span>Meal ${mealVal.toFixed(2)}</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
@@ -385,8 +489,15 @@ export function DailyTimesheetForm({
                 <td style={{ padding: 3 }}><input type="date" max={todayISO()} style={{ ...cellInput, width: 130 }} value={l.date} onChange={e => setHoursLine(i, { date: e.target.value > todayISO() ? todayISO() : e.target.value })} /></td>
                 <td style={{ padding: 3, color: C.textMuted, whiteSpace: 'nowrap' }}>{dayFromDate(l.date) || '—'}</td>
                 <td style={{ padding: 3 }}>
-                  <select style={{ ...cellInput, width: 120 }} value={l.shift_type} onChange={e => setHoursLine(i, { shift_type: e.target.value })}>
+                  {/* "Training" is a scenario, not a real shift type — it maps to
+                      scenario=training_day (FT paid, casual unpaid, never billed). */}
+                  <select style={{ ...cellInput, width: 120 }}
+                    value={l.scenario === 'training_day' ? 'Training' : l.shift_type}
+                    onChange={e => setHoursLine(i, e.target.value === 'Training'
+                      ? { shift_type: 'Day', scenario: 'training_day' }
+                      : { shift_type: e.target.value, ...(l.scenario === 'training_day' ? { scenario: 'standard' } : {}) })}>
                     {SHIFT_TYPES.map(s => <option key={s} value={s}>{s}</option>)}
+                    <option value="Training">Training</option>
                   </select>
                 </td>
                 <td style={{ padding: 3 }}><input type="time" style={{ ...cellInput, width: 100 }} value={l.start_time} onChange={e => setHoursLine(i, { start_time: e.target.value })} /></td>
@@ -424,7 +535,14 @@ export function DailyTimesheetForm({
           </tbody>
         </table>
       </div>
+      )}
       <button type="button" onClick={addHoursLine} style={{ ...btnSmall, marginTop: 8 }}>+ Add hours row</button>
+
+      {form.hours_lines.some(l => l.scenario === 'training_day') && (
+        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6 }}>
+          🎓 Training: paid for full-time staff, unpaid for casuals — the client is never billed for it.
+        </div>
+      )}
 
       {/* Night-shift suggestion — suggest only, never auto-switch (owner call) */}
       {form.hours_lines.some(l => l.start_time && parseInt(l.start_time.split(':')[0], 10) >= 14 && l.shift_type === 'Day') && (

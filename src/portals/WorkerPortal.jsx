@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary } from '../theme';
 import { todayISO, fmtDate, fmtDateTime } from '../utils/dates';
-import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, timesheetBadge, certBadge, DailyTimesheetForm, TimesheetDetailView } from '../components';
+import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, timesheetBadge, DailyTimesheetForm, TimesheetDetailView } from '../components';
 import { WorkerCertificateUploads } from '../components/certificates/WorkerCertificateUploads';
 import { addAdminNotification, broadcastAdminSms, adminAcceptSmsBody, adminDeclineSmsBody, sendAdminEmail } from '../utils/notify';
 import { roleChipStyle } from '../constants/roles';
@@ -16,7 +16,6 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
     { id: 'take5', label: '✋ Take 5' },
     { id: 'profile', label: '👤 My Profile' },
     { id: 'certificates', label: '🪪 Certificates / Tickets' },
-    { id: 'certifications', label: '📜 My Certifications' },
     { id: 'history', label: '🗂 History' },
     { id: 'clockin', label: '⏱ Clock In/Out' },
   ];
@@ -49,7 +48,6 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
         {activeTab === 'take5'          && <WorkerTake5 currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'profile'        && <WorkerMyProfile currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'certificates'   && <WorkerCertificateUploads workerId={currentWorker.id} showToast={showToast} canEdit />}
-        {activeTab === 'certifications' && <WorkerCertifications currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'history'        && <WorkerHistory currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'clockin'        && <WorkerClockIn currentWorker={currentWorker} showToast={showToast} />}
       </div>
@@ -125,6 +123,13 @@ function WorkerAllocations({ currentWorker, showToast }) {
           <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Client: {a.client || '—'}</div>
           {a.project && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Project: {a.project}</div>}
           {a.address && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Address: {a.address}</div>}
+          {(a.map_link || a.address) && (
+            <a href={a.map_link || `https://maps.google.com/?q=${encodeURIComponent(a.address)}`}
+              target="_blank" rel="noreferrer"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: '2px 0 8px', padding: '6px 12px', borderRadius: 7, background: 'rgba(96,165,250,0.12)', border: '1px solid rgba(96,165,250,0.35)', color: '#93c5fd', fontSize: 12.5, fontWeight: 600, textDecoration: 'none' }}>
+              📍 Open map
+            </a>
+          )}
           {a.site_manager && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Site Supervisor: {a.site_manager}{a.manager_phone ? ` · ${a.manager_phone}` : ''}</div>}
           {a.start_date && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Date: {a.start_date}</div>}
           <div style={{ color: C.textMuted, fontSize: 13 }}>Start: {fmtDateTime(a.start_time)}</div>
@@ -228,7 +233,9 @@ function WorkerTimesheets({ currentWorker, showToast, onGoToTake5 }) {
             <thead><tr><Th>Submitted</Th><Th>Client</Th><Th>Project</Th><Th>Role</Th><Th>Total Hrs</Th><Th>Status</Th><Th /></tr></thead>
             <tbody>
               {headers.map(h => (
-                <tr key={h.id}>
+                /* Whole row opens the full sheet — on a phone the View column can
+                   sit off-screen, and the crew thought their submission was gone. */
+                <tr key={h.id} onClick={() => openView(h)} style={{ cursor: 'pointer' }} title="Tap to see everything you submitted">
                   <Td>{fmtDate(h.created_at)}</Td>
                   <Td>{h.client || '—'}</Td>
                   <Td>{h.project || '—'}</Td>
@@ -369,40 +376,8 @@ function ChangePassword({ showToast }) {
   );
 }
 
-function WorkerCertifications({ currentWorker, showToast }) {
-  const [certs, setCerts] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const { data, error } = await supabase.from('certifications').select('*').eq('worker_id', currentWorker.id).order('expiry', { ascending: true });
-      if (!mounted) return;
-      if (error) showToast(error.message, 'error');
-      else setCerts(data || []);
-      setLoading(false);
-    })();
-    return () => { mounted = false; };
-  }, [currentWorker.id, showToast]);
-
-  if (loading) return <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>;
-  if (!certs.length) return <EmptyState message="No certifications on file." />;
-
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>
-      {certs.map(c => (
-        <div key={c.id} style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-            <div style={{ fontWeight: 700, color: C.text, fontSize: 15 }}>{c.cert_name}</div>
-            {certBadge(c.expiry)}
-          </div>
-          {c.issuer && <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 4 }}>Issuer: {c.issuer}</div>}
-          <div style={{ color: C.textMuted, fontSize: 13 }}>Expiry: {fmtDate(c.expiry)}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
+// The "My Certifications" tab was removed 2026-09-27 (team request): tickets
+// already live under Certificates / Tickets, and two lists confused the crew.
 
 function WorkerClockIn({ currentWorker, showToast }) {
   const [now, setNow] = useState(new Date());

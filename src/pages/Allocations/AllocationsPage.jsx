@@ -27,7 +27,7 @@ function findConflicts(allAllocations, workerId, startISO, endISO, currentId) {
 const allocDefaults = {
   worker_id: '', role: '', site: '', client: '', project: '', address: '', site_supervisor: '',
   manager_phone: '', status: 'pending', start_date: '', end_date: '',
-  arrival_time: '', notes: '',
+  arrival_time: '', notes: '', map_link: '',
 };
 
 export function AllocationsPage({ showToast }) {
@@ -41,6 +41,31 @@ export function AllocationsPage({ showToast }) {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(allocDefaults);
   const [saving, setSaving] = useState(false);
+  // Quick-add for a brand-new site while allocating — clients text new sites in
+  // monthly, and leaving the modal to add one loses the half-filled allocation.
+  const [quickSite, setQuickSite] = useState(null);
+
+  const saveQuickSite = async () => {
+    const clientRow = clients.find(c => c.name === form.client);
+    if (!clientRow) { showToast('Pick a client first.', 'error'); return; }
+    if (!quickSite.name.trim()) { showToast('Site name is required.', 'error'); return; }
+    const { data, error } = await supabase.from('client_sites').insert([{
+      client_id: clientRow.id,
+      name: quickSite.name.trim(),
+      address: quickSite.address || null,
+      map_link: quickSite.map_link || null,
+      is_active: true,
+    }]).select().single();
+    if (error) { showToast(error.message, 'error'); return; }
+    setSites(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+    setForm(f => ({
+      ...f, site: data.name,
+      ...(data.address ? { address: data.address } : {}),
+      ...(data.map_link ? { map_link: data.map_link } : {}),
+    }));
+    setQuickSite(null);
+    showToast(`Site "${data.name}" added to ${form.client}.`, 'success');
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -50,7 +75,7 @@ export function AllocationsPage({ showToast }) {
       supabase.from('clients').select('id, name').order('name'),
       // A client can run several jobs at once, so sites are their own list and the
       // Site picker below narrows to the chosen client rather than being free text.
-      supabase.from('client_sites').select('id, client_id, name, address').eq('is_active', true).order('name'),
+      supabase.from('client_sites').select('id, client_id, name, address, map_link').eq('is_active', true).order('name'),
       supabase.from('client_site_contacts').select('id, site_id, name, role, email, phone, is_primary').order('name'),
     ]);
     if (a.error) showToast(a.error.message, 'error');
@@ -79,6 +104,7 @@ export function AllocationsPage({ showToast }) {
         ? (d => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`)(new Date(a.start_time))
         : '',
       notes: a.notes || '',
+      map_link: a.map_link || '',
     });
     setModal(a);
   };
@@ -141,6 +167,7 @@ export function AllocationsPage({ showToast }) {
       // finish") — actual hours come from the worker's timesheet.
       end_time: null,
       notes: form.notes || null,
+      map_link: form.map_link || null,
     };
     if (modal === 'add') {
       const { data: inserted, error } = await supabase.from('allocations').insert([payload]).select().single();
@@ -325,30 +352,19 @@ export function AllocationsPage({ showToast }) {
               </Field>
             </div>
             <Field label="Client">
+              {/* Pick-only: free-typed client names produced duplicates and $0
+                  billing. New clients are added under Clients & Rates. */}
               <>
-                <input style={inputStyle} list="alloc-clients-list" value={form.client}
-                  onChange={e => {
-                    const v = e.target.value;
-                    // Several clients share a name and differ only by site, so the
-                    // bare name told you nothing about which job you'd picked.
-                    // Fill Site/Project from the record when the name is
-                    // unambiguous; leave them alone when it isn't, so the
-                    // allocator has to choose rather than be silently given one.
-                    const hits = clients.filter(c => c.name === v);
-                    setForm(f => ({
-                      ...f,
-                      client: v,
-                      ...(hits.length === 1 && !f.site ? { site: hits[0].site || f.site } : {}),
-                    }));
-                  }}
-                  placeholder="Type or select…" />
-                <datalist id="alloc-clients-list">
-                  {clients.map(c => (
-                    <option key={c.id} value={c.name}>
-                      {c.site ? `${c.name} — ${c.site}` : c.name}
-                    </option>
+                <select style={inputStyle} value={form.client}
+                  onChange={e => setForm(f => ({ ...f, client: e.target.value, site: '', address: '', map_link: '' }))}>
+                  <option value="">Select a client…</option>
+                  {[...new Set(clients.map(c => c.name).filter(Boolean))].map(n => (
+                    <option key={n} value={n}>{n}</option>
                   ))}
-                </datalist>
+                  {form.client && !clients.some(c => c.name === form.client) && (
+                    <option value={form.client}>{form.client}</option>
+                  )}
+                </select>
                 {clients.filter(c => c.name === form.client).length > 1 && (
                   <div style={{ fontSize: 11, color: C.warning, marginTop: 4 }}>
                     ⚠ {clients.filter(c => c.name === form.client).length} clients share this name (different sites).
@@ -361,10 +377,10 @@ export function AllocationsPage({ showToast }) {
             <Field label="Site" hint={(() => {
               const cs = clients.filter(c => c.name === form.client).map(c => c.id);
               const n = sites.filter(s => cs.includes(s.client_id)).length;
-              return n ? `${n} site${n === 1 ? '' : 's'} on file for this client` : 'No sites on file yet — type one, or add it under Clients & Rates → Sites';
+              return n ? `${n} site${n === 1 ? '' : 's'} on file for this client` : 'No sites on file yet — add one with + New site below';
             })()}>
               <>
-                <input style={inputStyle} list="alloc-sites-list" value={form.site}
+                <select style={inputStyle} value={form.site} disabled={!form.client}
                   onChange={e => {
                     const v = e.target.value;
                     const cs = clients.filter(c => c.name === form.client).map(c => c.id);
@@ -380,21 +396,45 @@ export function AllocationsPage({ showToast }) {
                       ...f,
                       site: v,
                       ...(hit?.address && !f.address ? { address: hit.address } : {}),
+                      ...(hit?.map_link && !f.map_link ? { map_link: hit.map_link } : {}),
                       ...(contact && !f.site_supervisor ? { site_supervisor: contact.name } : {}),
                       ...(contact?.phone && !f.manager_phone ? { manager_phone: contact.phone } : {}),
                     }));
-                  }}
-                  placeholder={form.client ? 'Type or select…' : 'Pick a client first'} />
-                <datalist id="alloc-sites-list">
+                  }}>
+                  <option value="">{form.client ? 'Select a site…' : 'Pick a client first'}</option>
                   {(() => {
                     const cs = clients.filter(c => c.name === form.client).map(c => c.id);
                     return sites.filter(s => cs.includes(s.client_id))
-                      .map(s => <option key={s.id} value={s.name}>{s.address || s.name}</option>);
+                      .map(s => <option key={s.id} value={s.name}>{s.name}</option>);
                   })()}
-                </datalist>
+                  {form.site && !sites.some(s => s.name === form.site) && (
+                    <option value={form.site}>{form.site}</option>
+                  )}
+                </select>
+                {form.client && (
+                  <button type="button" onClick={() => setQuickSite({ name: '', address: '', map_link: '' })}
+                    style={{ ...btnSmall, marginTop: 6, padding: '4px 10px', fontSize: 11 }}>
+                    + New site for {form.client}
+                  </button>
+                )}
               </>
             </Field>
             <Field label="Site Address"><input style={inputStyle} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></Field>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <Field label="Map link (pin drop)" hint="Paste the Google/Apple Maps link the client texted. The worker gets a tappable Open Map button on their allocation.">
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input style={{ ...inputStyle, flex: 1 }} value={form.map_link}
+                    onChange={e => setForm(f => ({ ...f, map_link: e.target.value }))}
+                    placeholder="https://maps.app.goo.gl/…" />
+                  {form.map_link && (
+                    <a href={form.map_link} target="_blank" rel="noreferrer"
+                      style={{ ...btnSecondary, padding: '9px 14px', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                      📍 Test
+                    </a>
+                  )}
+                </div>
+              </Field>
+            </div>
             <Field label="Site Supervisor"><input style={inputStyle} value={form.site_supervisor} onChange={e => setForm(f => ({ ...f, site_supervisor: e.target.value }))} /></Field>
             <Field label="Supervisor Phone"><input style={inputStyle} value={form.manager_phone} onChange={e => setForm(f => ({ ...f, manager_phone: e.target.value }))} /></Field>
             <Field label="Start Date *"><DateField value={form.start_date} onChange={v => setForm(f => ({ ...f, start_date: v }))} /></Field>
@@ -419,6 +459,30 @@ export function AllocationsPage({ showToast }) {
             <button onClick={closeModal} style={btnSecondary}>Cancel</button>
             <button onClick={handleSave} disabled={saving} style={btnPrimary}>{saving ? 'Saving…' : 'Save'}</button>
           </div>
+
+          {quickSite && (
+            <Modal title={`New site — ${form.client}`} onClose={() => setQuickSite(null)} width={440}>
+              <Field label="Site / project name *">
+                <input style={inputStyle} value={quickSite.name} autoFocus
+                  onChange={e => setQuickSite(q => ({ ...q, name: e.target.value }))}
+                  placeholder="e.g. Jordan Springs Stage 4" />
+              </Field>
+              <Field label="Address">
+                <input style={inputStyle} value={quickSite.address}
+                  onChange={e => setQuickSite(q => ({ ...q, address: e.target.value }))}
+                  placeholder="Street, Suburb" />
+              </Field>
+              <Field label="Map link (pin drop)">
+                <input style={inputStyle} value={quickSite.map_link}
+                  onChange={e => setQuickSite(q => ({ ...q, map_link: e.target.value }))}
+                  placeholder="https://maps.app.goo.gl/…" />
+              </Field>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+                <button style={btnSecondary} onClick={() => setQuickSite(null)}>Cancel</button>
+                <button style={btnPrimary} onClick={saveQuickSite}>Add site</button>
+              </div>
+            </Modal>
+          )}
         </Modal>
       )}
     </div>

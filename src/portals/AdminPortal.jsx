@@ -7,6 +7,7 @@ import { NotificationBell } from '../components/notifications/NotificationBell';
 import { NotificationSettings } from '../components/notifications/NotificationSettings';
 import { DashboardPage } from '../pages/Dashboard/DashboardPage';
 import { WorkersPage } from '../pages/Workers/WorkersPage';
+import { RateSetsPage } from '../pages/RateSets/RateSetsPage';
 import { AllocationsPage } from '../pages/Allocations/AllocationsPage';
 import { AllocationsCalendarPage } from '../pages/Calendar/AllocationsCalendarPage';
 import { TimesheetsPage } from '../pages/Timesheets/TimesheetsPage';
@@ -104,6 +105,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       label: 'FINANCE',
       items: [
         { id: 'clients', label: '🏗 Clients & Rates' },
+        { id: 'rate_sets', label: '📚 Rate Sets' },
         { id: 'default_rates', label: '💲 Default Rates' },
         { id: 'payroll', label: '💰 Payroll', badge: badges.payroll || null, badgeColor: 'green' },
         { id: 'payments', label: '💳 Payments' },
@@ -218,13 +220,14 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? 12 : 24 }}>
           {activePage === 'dashboard'        && <DashboardPage showToast={showToast} currentWorker={currentWorker} onNavigate={navigate} />}
-          {activePage === 'workers'          && <WorkersPage showToast={showToast} />}
+          {activePage === 'workers'          && <WorkersPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'allocations'      && <AllocationsPage showToast={showToast} />}
           {activePage === 'calendar'         && <AllocationsCalendarPage showToast={showToast} />}
           {activePage === 'pending_workers'  && <PendingWorkersPage showToast={showToast} />}
           {activePage === 'applications'     && <ApplicationsPage    showToast={showToast} onNavigate={navigate} />}
           {activePage === 'timesheets'       && <TimesheetsPage showToast={showToast} isMobile={isMobile} refreshBadge={refreshBadge} />}
           {activePage === 'clients'          && <ClientsPage showToast={showToast} />}
+          {activePage === 'rate_sets'        && <RateSetsPage showToast={showToast} />}
           {activePage === 'default_rates'    && <DefaultRatesPage showToast={showToast} />}
           {activePage === 'payroll'          && <PayrollTrackerPage showToast={showToast} />}
           {activePage === 'payments'         && <PaymentsPage showToast={showToast} />}

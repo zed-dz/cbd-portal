@@ -36,7 +36,9 @@ export function computeTimesheetHours(form, workerType, config = {}) {
     case 'rain_off_partial':   pay_hours = 8.00; charge_hours = 4.00;        break;
     case 'rain_off_cancelled': pay_hours = 8.00; charge_hours = 0.00;        break;
     case 'no_work_available':  pay_hours = 8.00; charge_hours = 0.00;        break;
-    case 'training_day':       pay_hours = 8.00; charge_hours = 0.00;        break;
+    // Training: full-timers are paid the day, casuals attend unpaid (owner, 2026-09-22).
+    case 'training_day':
+      pay_hours = workerType === 'full-time' ? 8.00 : 0.00; charge_hours = 0.00; break;
     case 'annual_leave':       pay_hours = 8.00; charge_hours = 0.00;        break;
     case 'personal_leave':     pay_hours = 8.00; charge_hours = 0.00;        break;
     case 'lwop':               pay_hours = 0.00; charge_hours = 0.00;        break;
@@ -156,7 +158,9 @@ export function applyFullTimeMinDay(timesheets, workersById, config = {}) {
   for (const ts of timesheets) {
     const w = workersById[ts.worker_id];
     if (!w || w.worker_type !== 'full-time') continue;
-    if ((ts.scenario || 'standard') !== 'standard') continue;
+    // training_day counts toward the day: a full-timer whose only shift that
+    // weekday is a short training session is still paid the full minimum day.
+    if (!['standard', 'training_day'].includes(ts.scenario || 'standard')) continue;
     if (!ts.date) continue;
     const dow = new Date(ts.date + 'T12:00:00').getDay();
     if (dow === 0 || dow === 6 || PUBLIC_HOLIDAYS.has(ts.date)) continue;
@@ -264,6 +268,8 @@ function chargeBands(clientRecord, rateLine) {
 // Exported so the invoice screen and any test can bill exactly as payroll does.
 export function computeChargeAmount(ts, clientRecord, rateLine, opts = {}) {
   const { isSaturday = false, isSundayOrPH = false, geoPct = 0 } = opts;
+  // Training is never billed to a client, whichever flow recorded the hours.
+  if ((ts.scenario || 'standard') === 'training_day') return 0;
   const hours = parseFloat(ts.charge_hours) || 0;
   if (hours <= 0) return 0;
 
@@ -331,7 +337,15 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
   const useStored = (ts.ot15_hours != null || ts.ot2x_hours != null)
                  && worker.worker_type !== 'subcontractor';
 
-  if (useStored) {
+  // Training day: full-timers are paid it like a normal day (the branches below),
+  // casuals and subcontractors attend unpaid — every pay bucket stays at zero,
+  // whatever hours were recorded. The client is never billed (computeChargeAmount).
+  const unpaidTraining = (ts.scenario || 'standard') === 'training_day'
+                      && worker.worker_type !== 'full-time';
+
+  if (unpaidTraining) {
+    // all buckets stay 0
+  } else if (useStored) {
     ot15H = ts.ot15_hours || 0;
     ot2xH = ts.ot2x_hours || 0;
     ordH  = Math.max(0, hours - ot15H - ot2xH - rdoHours);

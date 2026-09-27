@@ -129,5 +129,7 @@ export async function markClientApprovedManually(headerId, approverNote) {
   if (error) return { ok: false, error: error.message };
   const { error: e2 } = await supabase.from('timesheets')
     .update({ client_approved: true, status: 'approved' }).eq('header_id', headerId);
+  // A verbal acceptance still gets the client their PDF record automatically.
+  supabase.functions.invoke('send-timesheet-pdf', { body: { header_id: headerId, reason: 'admin' } }).catch(() => {});
   return { ok: !e2, error: e2?.message };
 }

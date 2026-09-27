@@ -10,6 +10,7 @@ import { WorkerCertificateUploads } from '../../components/certificates/WorkerCe
 import { JOB_TITLES } from '../../constants/jobTitles';
 import { WORKER_TYPES } from '../../constants/scenarios';
 import { onboardLink, publicProfileLink, whatsappLink, inviteMessage, normaliseMobileE164AU } from '../../utils/inviteLinks';
+import { addAdminNotification } from '../../utils/notify';
 
 const ARCHIVE_REASONS = [
   { value: 'resigned',        label: 'Resigned (left voluntarily)' },
@@ -84,7 +85,12 @@ function autoCalcBC(form) {
   };
 }
 
-export function WorkersPage({ showToast }) {
+export function WorkersPage({ showToast, currentWorker }) {
+  // Pay rates are for the Admin access level only (owner, 2026-09-27). An
+  // allocator on Manager level adds the person and taps "notify accounts";
+  // accounts fill the pay side in. Missing prop falls back to visible so the
+  // page never hides rates by accident.
+  const canSeeRates = !currentWorker || currentWorker.access_level === 'admin';
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -201,9 +207,25 @@ export function WorkersPage({ showToast }) {
       pay_rate_overtime: n(form.pay_rate_b) ?? (A != null ? +(A * 1.5).toFixed(2) : null),
     };
 
+    if (!canSeeRates) {
+      // A manager saving a worker must never blank the rates accounts entered.
+      delete payload.pay_rate_a; delete payload.pay_rate_b; delete payload.pay_rate_c;
+      delete payload.pay_rate_base; delete payload.casual_loading_pct;
+      delete payload.pay_rate_regular; delete payload.pay_rate_overtime;
+    }
+
     if (modal === 'add') {
       const { data, error } = await supabase.from('workers').insert([payload]).select().single();
       if (error) { showToast(error.message, 'error'); setSaving(false); return; }
+
+      if (!canSeeRates) {
+        addAdminNotification({
+          type: 'worker_pay_setup_needed',
+          title: `Pay rates needed for ${data.name}`,
+          body: `${currentWorker?.name || 'An allocator'} added ${data.name} — accounts to set the pay rates on their worker record.`,
+          worker_id: data.id,
+        }).then(() => window.dispatchEvent(new CustomEvent('cbd:notify')));
+      }
 
       if (send_invite && data?.profile_token) {
         const link = onboardLink(data.profile_token);
@@ -659,6 +681,7 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
               </label>
             </div>
 
+            {canSeeRates ? (
             <div style={{ gridColumn: '1 / -1', marginTop: 6, marginBottom: 6 }}>
               <div style={{
                 background: 'rgba(249,115,22,0.06)', border: `1px solid ${C.border}`,
@@ -720,6 +743,13 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
                 </div>
               </div>
             </div>
+            ) : (
+            <div style={{ gridColumn: '1 / -1', marginTop: 6, marginBottom: 6 }}>
+              <div style={{ background: 'rgba(249,115,22,0.05)', border: `1px dashed ${C.border}`, borderRadius: 8, padding: '10px 14px', fontSize: 12.5, color: C.textMuted }}>
+                💰 Pay rates are set by the accounts team. Saving this worker sends them a bell notification to finish the pay setup.
+              </div>
+            </div>
+            )}
 
             {form.worker_type === 'subcontractor' && (
               <Field label="Subcontractor ABN">
@@ -746,12 +776,9 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
             <Field label="Current Site"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
             <Field label="Current Client"><input style={inputStyle} value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} /></Field>
 
-            <div style={{ gridColumn: '1 / -1', marginTop: 6 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text, cursor: 'pointer' }}>
-                <input type="checkbox" checked={!!form.qualified} onChange={e => setForm(f => ({ ...f, qualified: e.target.checked }))} />
-                <span>✅ Qualified — enables shareable client-facing profile link</span>
-              </label>
-            </div>
+            {/* The "Qualified / shareable client profile" switch was removed
+                2026-09-27 (team request) — the qualified flag stays in the DB
+                untouched for existing rows. */}
           </div>
 
           {modal === 'add' && (

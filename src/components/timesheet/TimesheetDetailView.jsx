@@ -32,7 +32,7 @@ function sumBy(lines, fn) {
 // differently from how we invoice the client, and showing the split here invited
 // questions from both sides. Pass showPayDetail to bring the breakdown back for
 // an admin-only context.
-export function TimesheetDetailView({ header, lines = [], workerName, brand = BRAND_DEFAULT, onClose, onEdit, showPayDetail = false }) {
+export function TimesheetDetailView({ header, lines = [], workerName, brand = BRAND_DEFAULT, onClose, onEdit, showPayDetail = false, hidePrint = false }) {
   const totalHours = sumBy(lines, l => parseFloat(l.total_hours) || 0);
   const totalReg   = sumBy(lines, l => parseFloat(l.regular_hours ?? l.total_hours) || 0);
   const totalRdo   = sumBy(lines, lineRdo);
@@ -61,7 +61,9 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           {onEdit && <button onClick={onEdit} style={btnSecondary}>✎ Edit / Adjust</button>}
-          <button onClick={() => printTimesheet({ header, lines, workerName, brand })} style={btnPrimary}>🖨 Print / Save PDF</button>
+          {/* hidePrint: on the supervisor approval page the PDF is emailed
+              automatically on Accept, so the manual button just confused people. */}
+          {!hidePrint && <button onClick={() => printTimesheet({ header, lines, workerName, brand })} style={btnPrimary}>🖨 Print / Save PDF</button>}
         </div>
       </div>
 

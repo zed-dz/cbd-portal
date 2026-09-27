@@ -37,6 +37,10 @@ export function ClientApprovePage({ token }) {
       setState('ready');
       return;
     }
+    // Acceptance triggers the PDF email to the client automatically — the
+    // server builds the PDF and sends it, so nobody has to print anything.
+    // Fire-and-forget; a failure lights the admin bell server-side.
+    supabase.functions.invoke('send-timesheet-pdf', { body: { token, reason: 'supervisor' } }).catch(() => {});
     setPayload(p => ({ ...p, header: { ...p.header, client_approved: true, client_approved_by: approver || null } }));
     setState('accepted');
   };
@@ -64,13 +68,14 @@ export function ClientApprovePage({ token }) {
         header={h}
         lines={payload.lines || []}
         workerName={h.worker_name}
+        hidePrint
       />
 
       {state === 'accepted' ? (
         <div style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.35)', borderRadius: 10, padding: '16px 20px', marginTop: 18, textAlign: 'center' }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: C.success }}>✓ Timesheet accepted</div>
           <div style={{ fontSize: 13, color: C.textMuted, marginTop: 4 }}>
-            {h.client_approved_by ? `Accepted by ${h.client_approved_by}. ` : ''}The hours are now finalised for invoicing. You can close this page.
+            {h.client_approved_by ? `Accepted by ${h.client_approved_by}. ` : ''}The hours are now finalised for invoicing, and a PDF copy has been emailed to your office automatically. You can close this page.
           </div>
         </div>
       ) : (

@@ -14,7 +14,7 @@ import { Modal, Field, Spinner, EmptyState } from '../index';
 // `approves_timesheets` marks who receives the timesheet approval link for work
 // on that site. Kept separate from `is_primary` deliberately.
 
-const blankSite    = { name: '', address: '', notes: '', is_active: true };
+const blankSite    = { name: '', address: '', notes: '', map_link: '', is_active: true };
 const blankContact = { name: '', role: '', email: '', phone: '', is_primary: false, approves_timesheets: false };
 
 export function ClientSitesManager({ client, onClose, showToast }) {
@@ -49,6 +49,7 @@ export function ClientSitesManager({ client, onClose, showToast }) {
       name: siteForm.name.trim(),
       address: siteForm.address || null,
       notes: siteForm.notes || null,
+      map_link: siteForm.map_link || null,
       is_active: siteForm.is_active !== false,
     };
     const { error } = siteForm.id
@@ -123,6 +124,7 @@ export function ClientSitesManager({ client, onClose, showToast }) {
                   {site.is_active === false && <span style={{ marginLeft: 8, fontSize: 10, color: C.textMuted }}>(inactive)</span>}
                 </div>
                 {site.address && <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{site.address}</div>}
+                {site.map_link && <a href={site.map_link} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#93c5fd', textDecoration: 'none' }}>📍 Map pin</a>}
                 {site.notes && <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{site.notes}</div>}
               </div>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
@@ -169,6 +171,11 @@ export function ClientSitesManager({ client, onClose, showToast }) {
             <input style={inputStyle} value={siteForm.address || ''}
               onChange={e => setSiteForm(f => ({ ...f, address: e.target.value }))}
               placeholder="Street, Suburb, State" />
+          </Field>
+          <Field label="Map link (pin drop)" hint="Paste the maps link the client texted — allocations for this site pick it up automatically.">
+            <input style={inputStyle} value={siteForm.map_link || ''}
+              onChange={e => setSiteForm(f => ({ ...f, map_link: e.target.value }))}
+              placeholder="https://maps.app.goo.gl/…" />
           </Field>
           <Field label="Notes">
             <input style={inputStyle} value={siteForm.notes || ''}
