@@ -614,102 +614,29 @@ export function DailyTimesheetForm({
 
       {/* Hours worked */}
       <div style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: '8px 0 8px' }}>Hours worked</div>
-      {narrow ? (
-        <div style={{ display: 'grid', gap: 10 }}>
-          {form.hours_lines.map((l, i) => {
-            const autoMeal = autoMealAllowance(l.total_hours, config);
-            const mealVal = l.meal_allowance_override ? (parseFloat(l.meal_allowance) || 0) : autoMeal;
-            const split = lineSplit(l);
-            const breakOpts = BREAK_OPTIONS.includes(parseFloat(l.total_break_hours) || 0)
-              ? BREAK_OPTIONS
-              : [...BREAK_OPTIONS, parseFloat(l.total_break_hours) || 0].sort((a, b) => a - b);
-            const smallLabel = { fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3 };
-            return (
-              <div key={i} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', background: C.card }}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                  <input type="date" max={todayISO()} style={{ ...cellInput, flex: 1, minWidth: 0 }} value={l.date}
+      {/* One wrapping row per shift at EVERY width — the old desktop table
+          forced sideways scrolling inside the modal (owner: "in-line instead
+          of scroll"). Inputs wrap naturally; computed hours sit underneath. */}
+      <div style={{ display: 'grid', gap: 10 }}>
+        {form.hours_lines.map((l, i) => {
+          const autoMeal = autoMealAllowance(l.total_hours, config);
+          const mealVal = l.meal_allowance_override ? (parseFloat(l.meal_allowance) || 0) : autoMeal;
+          const split = lineSplit(l);
+          const breakOpts = BREAK_OPTIONS.includes(parseFloat(l.total_break_hours) || 0)
+            ? BREAK_OPTIONS
+            : [...BREAK_OPTIONS, parseFloat(l.total_break_hours) || 0].sort((a, b) => a - b);
+          const smallLabel = { fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3 };
+          return (
+            <div key={i} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', background: C.card }}>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div>
+                  <div style={smallLabel}>Date · {dayFromDate(l.date) || '—'}</div>
+                  {/* max=today: a shift can't be logged before it happens. */}
+                  <input type="date" max={todayISO()} style={{ ...cellInput, width: 130 }} value={l.date}
                     onChange={e => setHoursLine(i, { date: e.target.value > todayISO() ? todayISO() : e.target.value })} />
-                  <span style={{ color: C.textMuted, fontSize: 12, whiteSpace: 'nowrap' }}>{dayFromDate(l.date) || '—'}</span>
-                  {form.hours_lines.length > 1 && (
-                    <button type="button" onClick={() => removeHoursLine(i)} style={{ ...btnDanger, padding: '4px 9px' }}>×</button>
-                  )}
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <div>
-                    <div style={smallLabel}>Start *</div>
-                    <input type="time" step={900} style={{ ...cellInput, width: '100%' }} value={l.start_time}
-                      onChange={e => setHoursLine(i, { start_time: e.target.value })} />
-                  </div>
-                  <div>
-                    <div style={smallLabel}>End *</div>
-                    <input type="time" step={900} style={{ ...cellInput, width: '100%' }} value={l.end_time}
-                      onChange={e => setHoursLine(i, { end_time: e.target.value })} />
-                  </div>
-                  <div>
-                    <div style={smallLabel}>Break</div>
-                    <select style={{ ...cellInput, width: '100%' }} value={String(parseFloat(l.total_break_hours) || 0)}
-                      onChange={e => setHoursLine(i, { total_break_hours: parseFloat(e.target.value) })}>
-                      {breakOpts.map(b => <option key={b} value={String(b)}>{b === 0 ? 'No break' : `${b} hr`}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <div style={smallLabel}>Shift type</div>
-                    <select style={{ ...cellInput, width: '100%' }}
-                      value={l.scenario === 'training_day' ? 'Training' : l.shift_type}
-                      onChange={e => setHoursLine(i, e.target.value === 'Training'
-                        ? { shift_type: 'Day', scenario: 'training_day' }
-                        : { shift_type: e.target.value, ...(l.scenario === 'training_day' ? { scenario: 'standard' } : {}) })}>
-                      {(clientProfile !== 'PORTAL' ? ['Day', 'Night', 'Public Holiday'] : SHIFT_TYPES).map(s => <option key={s} value={s}>{s}</option>)}
-                      <option value="Training">Training</option>
-                    </select>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 12, color: C.textMuted, flexWrap: 'wrap' }}>
-                  <span>Total <strong style={{ color: C.text }}>{Number(l.total_hours).toFixed(2)}h</strong></span>
-                  <span>Normal {Number(l.regular_hours).toFixed(2)}h</span>
-                  {split.rdo > 0 && <span style={{ color: C.success }}>RDO {split.rdo.toFixed(2)}h</span>}
-                  {split.overtime > 0 && <span style={{ color: C.warning }}>OT {split.overtime.toFixed(2)}h</span>}
-                  {mealVal > 0 && <span>Meal ${mealVal.toFixed(2)}</span>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-          <thead>
-            <tr style={{ color: C.textMuted, textAlign: 'left' }}>
-              <th style={{ padding: 4, fontWeight: 500 }}>Date</th>
-              <th style={{ padding: 4, fontWeight: 500 }}>Day</th>
-              <th style={{ padding: 4, fontWeight: 500 }}>Shift Type</th>
-              <th style={{ padding: 4, fontWeight: 500 }}>Start *</th>
-              <th style={{ padding: 4, fontWeight: 500 }}>End *</th>
-              <th style={{ padding: 4, fontWeight: 500 }}>Break (h)</th>
-              <th style={{ padding: 4, fontWeight: 500 }}>Total</th>
-              <th style={{ padding: 4, fontWeight: 500 }}>Normal</th>
-              <th style={{ padding: 4, fontWeight: 500 }} title="Banked to your RDO accrual (full-time, weekdays)">RDO</th>
-              <th style={{ padding: 4, fontWeight: 500 }}>OT</th>
-              <th style={{ padding: 4, fontWeight: 500 }}>Meal&nbsp;($)</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {form.hours_lines.map((l, i) => {
-              const autoMeal = autoMealAllowance(l.total_hours, config);
-              const mealVal = l.meal_allowance_override ? (parseFloat(l.meal_allowance) || 0) : autoMeal;
-              const split = lineSplit(l);
-              const breakOpts = BREAK_OPTIONS.includes(parseFloat(l.total_break_hours) || 0)
-                ? BREAK_OPTIONS
-                : [...BREAK_OPTIONS, parseFloat(l.total_break_hours) || 0].sort((a, b) => a - b);
-              return (
-              <tr key={i}>
-                {/* max=today: a shift can't be logged before it happens. A sheet
-                    dated in the future got approved "before" its own shift date,
-                    which looked wrong to clients on the printed copy. */}
-                <td style={{ padding: 3 }}><input type="date" max={todayISO()} style={{ ...cellInput, width: 130 }} value={l.date} onChange={e => setHoursLine(i, { date: e.target.value > todayISO() ? todayISO() : e.target.value })} /></td>
-                <td style={{ padding: 3, color: C.textMuted, whiteSpace: 'nowrap' }}>{dayFromDate(l.date) || '—'}</td>
-                <td style={{ padding: 3 }}>
+                <div>
+                  <div style={smallLabel}>Shift type</div>
                   {/* "Training" is a scenario, not a real shift type — it maps to
                       scenario=training_day (FT paid, casual unpaid, never billed). */}
                   <select style={{ ...cellInput, width: 120 }}
@@ -720,43 +647,53 @@ export function DailyTimesheetForm({
                     {(clientProfile !== 'PORTAL' ? ['Day', 'Night', 'Public Holiday'] : SHIFT_TYPES).map(s => <option key={s} value={s}>{s}</option>)}
                     <option value="Training">Training</option>
                   </select>
-                </td>
-                <td style={{ padding: 3 }}><input type="time" step={900} style={{ ...cellInput, width: 100 }} value={l.start_time} onChange={e => setHoursLine(i, { start_time: e.target.value })} /></td>
-                <td style={{ padding: 3 }}><input type="time" step={900} style={{ ...cellInput, width: 100 }} value={l.end_time} onChange={e => setHoursLine(i, { end_time: e.target.value })} /></td>
-                <td style={{ padding: 3 }}>
-                  <select style={{ ...cellInput, width: 78 }} value={String(parseFloat(l.total_break_hours) || 0)}
+                </div>
+                <div>
+                  <div style={smallLabel}>Start *</div>
+                  <input type="time" step={900} style={{ ...cellInput, width: 100 }} value={l.start_time}
+                    onChange={e => setHoursLine(i, { start_time: e.target.value })} />
+                </div>
+                <div>
+                  <div style={smallLabel}>End *</div>
+                  <input type="time" step={900} style={{ ...cellInput, width: 100 }} value={l.end_time}
+                    onChange={e => setHoursLine(i, { end_time: e.target.value })} />
+                </div>
+                <div>
+                  <div style={smallLabel}>Break</div>
+                  <select style={{ ...cellInput, width: 92 }} value={String(parseFloat(l.total_break_hours) || 0)}
                     onChange={e => setHoursLine(i, { total_break_hours: parseFloat(e.target.value) })}>
                     {breakOpts.map(b => <option key={b} value={String(b)}>{b === 0 ? 'No break' : `${b} hr`}</option>)}
                   </select>
-                </td>
-                <td style={{ padding: 3 }}><input readOnly style={{ ...roInput, width: 64 }} value={Number(l.total_hours).toFixed(2)} /></td>
-                <td style={{ padding: 3 }}><input readOnly style={{ ...roInput, width: 64 }} value={Number(l.regular_hours).toFixed(2)} /></td>
-                <td style={{ padding: 3 }}><input readOnly style={{ ...roInput, width: 52, color: split.rdo > 0 ? C.success : C.textMuted }} value={split.rdo.toFixed(2)} title="Banked to the RDO accrual (full-time weekday shifts)" /></td>
-                <td style={{ padding: 3 }}><input readOnly style={{ ...roInput, width: 56, color: split.overtime > 0 ? C.warning : C.textMuted }} value={split.overtime.toFixed(2)} title="Overtime — hours beyond the 8-hour normal-time block" /></td>
-                <td style={{ padding: 3 }}>
-                  {l.meal_allowance_override
-                    ? <input type="number" step="0.01" min="0" style={{ ...cellInput, width: 72 }} value={l.meal_allowance}
-                        onChange={e => setHoursLine(i, { meal_allowance: e.target.value })} title="Admin override amount" />
-                    : <input readOnly style={{ ...roInput, width: 72 }} value={mealVal.toFixed(2)}
-                        title={`Auto: ${l.total_hours >= 0 ? `${Number(l.total_hours).toFixed(2)}h` : ''} → ${autoMeal > 0 ? 'meal allowance applies' : 'below threshold'}`} />}
-                  {allowAdmin && (
+                </div>
+                {allowAdmin && (
+                  <div>
+                    <div style={smallLabel}>Meal ($)</div>
+                    {l.meal_allowance_override
+                      ? <input type="number" step="0.01" min="0" style={{ ...cellInput, width: 80 }} value={l.meal_allowance}
+                          onChange={e => setHoursLine(i, { meal_allowance: e.target.value })} title="Admin override amount" />
+                      : <input readOnly style={{ ...roInput, width: 80 }} value={mealVal.toFixed(2)} />}
                     <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: C.textMuted, marginTop: 2, cursor: 'pointer' }} title="Admin override of the auto meal allowance">
                       <input type="checkbox" checked={!!l.meal_allowance_override}
                         onChange={e => setHoursLine(i, { meal_allowance_override: e.target.checked, ...(e.target.checked ? {} : { meal_allowance: autoMeal }) })} />
                       override
                     </label>
-                  )}
-                </td>
-                <td style={{ padding: 3 }}>
-                  <button type="button" onClick={() => removeHoursLine(i)} style={{ ...btnDanger, padding: '4px 8px' }}>×</button>
-                </td>
-              </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  </div>
+                )}
+                {form.hours_lines.length > 1 && (
+                  <button type="button" onClick={() => removeHoursLine(i)} style={{ ...btnDanger, padding: '4px 9px', marginLeft: 'auto' }}>×</button>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 12, color: C.textMuted, flexWrap: 'wrap' }}>
+                <span>Total <strong style={{ color: C.text }}>{Number(l.total_hours).toFixed(2)}h</strong></span>
+                <span>Normal {Number(l.regular_hours).toFixed(2)}h</span>
+                {split.rdo > 0 && <span style={{ color: C.success }} title="Banked to the RDO accrual (full-time weekday shifts)">RDO {split.rdo.toFixed(2)}h</span>}
+                {split.overtime > 0 && <span style={{ color: C.warning }}>OT {split.overtime.toFixed(2)}h</span>}
+                {!allowAdmin && mealVal > 0 && <span>Meal ${mealVal.toFixed(2)}</span>}
+              </div>
+            </div>
+          );
+        })}
       </div>
-      )}
       <button type="button" onClick={addHoursLine} style={{ ...btnSmall, marginTop: 8 }}>+ Add hours row</button>
 
       {form.hours_lines.some(l => l.scenario === 'training_day') && (

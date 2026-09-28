@@ -291,6 +291,7 @@ function ClientsList({ showToast, canSeeRates = true }) {
   const detail = selected ? (
     <ClientDetail
       canSeeRates={canSeeRates}
+      showToast={showToast}
       client={selected}
       detailTab={detailTab}
       setDetailTab={setDetailTab}
@@ -476,7 +477,7 @@ function ClientsList({ showToast, canSeeRates = true }) {
 
 // ── Right-hand client detail: header + Sites/Rates/Timesheets/Activity ──────
 
-function ClientDetail({ client, detailTab, setDetailTab, refreshKey, onEdit, onOpenRates, onOpenProjects, onOpenSites, onArchive, onDelete, canSeeRates = true }) {
+function ClientDetail({ client, detailTab, setDetailTab, refreshKey, onEdit, onOpenRates, onOpenProjects, onOpenSites, onArchive, onDelete, canSeeRates = true, showToast }) {
   const rateCount = client.client_rate_cards?.length || 0;
   const projCount = client.client_jobs?.length || 0;
   const abc = canSeeRates && (client.rate_a ?? client.rate_regular) != null
@@ -536,7 +537,7 @@ function ClientDetail({ client, detailTab, setDetailTab, refreshKey, onEdit, onO
       <div style={{ padding: '14px 18px 18px' }}>
         {detailTab === 'sites'      && <SitesTabView client={client} refreshKey={refreshKey} onManage={onOpenSites} />}
         {detailTab === 'rates'      && <RatesTabView client={client} refreshKey={refreshKey} onManage={onOpenRates} />}
-        {detailTab === 'timesheets' && <TimesheetsTabView client={client} />}
+        {detailTab === 'timesheets' && <TimesheetsTabView client={client} showToast={showToast} />}
         {detailTab === 'activity'   && <ActivityFeed clientId={client.id} limit={30} />}
       </div>
     </div>
@@ -685,54 +686,150 @@ function RatesTabView({ client, refreshKey, onManage }) {
   );
 }
 
-// Timesheets for this client, newest first. Headers store the client as TEXT
-// (the snapshot IS the key today — see 06-GAP-MAP §4d), so we match by name.
-// Rows are read-only for now; the full register (column picker, bulk CSV/PDF)
-// ships with the register prompt.
-function TimesheetsTabView({ client }) {
+// The full timesheet register for one client (Dashpivot's "client register"):
+// every header matched by client-name snapshot, filterable by date range and
+// status, exportable as CSV, and bundle-able into ONE weekly PDF via the
+// build-timesheet-bundle edge function (approved sheets only, hours only).
+function TimesheetsTabView({ client, showToast }) {
   const [rows, setRows] = useState(null);
+  // Default range = the last 7 days: the bundle is a WEEKLY pack.
+  const weekAgo = () => {
+    const d = new Date(); d.setDate(d.getDate() - 6);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+  const [from, setFrom] = useState(weekAgo);
+  const [to, setTo] = useState(todayISO);
+  const [status, setStatus] = useState('all');
+  const [bundling, setBundling] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       const { data } = await supabase.from('timesheet_headers')
-        .select('id, project, role, total_hours, status, created_at, workers(name), timesheets(date)')
+        .select('id, project, role, total_hours, status, created_at, pdf_emailed_at, workers(name), timesheets(date)')
         .ilike('client', escapeLike(client.name))
         .order('created_at', { ascending: false })
-        .limit(100);
+        .limit(1000);
       if (mounted) setRows(data || []);
     })();
     return () => { mounted = false; };
   }, [client.id, client.name]);
 
-  if (rows === null) return <div style={{ display: 'flex', justifyContent: 'center', padding: 20 }}><Spinner /></div>;
-  if (!rows.length) return <EmptyState message="No timesheets recorded for this client yet." icon="🕐" />;
-
+  const lineDates = (h) => (h.timesheets || []).map(t => t.date).filter(Boolean).sort();
   const dateLabel = (h) => {
-    const dates = (h.timesheets || []).map(t => t.date).filter(Boolean).sort();
+    const dates = lineDates(h);
     if (!dates.length) return fmtDate(h.created_at);
     return dates[0] === dates[dates.length - 1] ? fmtDate(dates[0]) : `${fmtDate(dates[0])} – ${fmtDate(dates[dates.length - 1])}`;
   };
+  // A header is "in range" when ANY of its line dates falls inside — the same
+  // rule the bundle function applies server-side, so the list previews it.
+  const inRange = (h) => {
+    const dates = lineDates(h);
+    if (!dates.length) return String(h.created_at || '').slice(0, 10) >= from && String(h.created_at || '').slice(0, 10) <= to;
+    return dates.some(d => d >= from && d <= to);
+  };
+
+  const statusOptions = rows ? [...new Set(rows.map(h => h.status).filter(Boolean))].sort() : [];
+  const filtered = (rows || []).filter(h => inRange(h) && (status === 'all' || h.status === status));
+  const filteredHours = filtered.reduce((s, h) => s + (parseFloat(h.total_hours) || 0), 0);
+  const approvedCount = filtered.filter(h => h.status === 'approved').length;
+
+  const exportCSV = () => {
+    downloadCSV(
+      `register-${client.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${from}-to-${to}.csv`,
+      filtered.map(h => ({
+        Dates: dateLabel(h),
+        Worker: h.workers?.name || '',
+        Project: h.project || '',
+        Role: h.role || '',
+        Hours: h.total_hours != null ? Number(h.total_hours).toFixed(2) : '',
+        Status: h.status || '',
+        'PDF emailed': h.pdf_emailed_at ? fmtDate(h.pdf_emailed_at) : '',
+      })),
+    );
+  };
+
+  const buildBundle = async () => {
+    setBundling(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('build-timesheet-bundle', {
+        body: { client: client.name, from, to },
+      });
+      if (error) {
+        // supabase-js buries the function's JSON body inside error.context.
+        let msg = error.message;
+        try { msg = (await error.context.json())?.error || msg; } catch { /* keep msg */ }
+        throw new Error(msg);
+      }
+      if (data?.error) throw new Error(data.error);
+      const { data: signed, error: sErr } = await supabase.storage
+        .from('timesheet-pdfs').createSignedUrl(data.pdf_path, 3600);
+      if (sErr) throw new Error(sErr.message);
+      window.open(signed.signedUrl, '_blank', 'noopener');
+      showToast?.(`Bundle ready — ${data.count} approved timesheet${data.count === 1 ? '' : 's'}, ${Number(data.total_hours).toFixed(2)}h`, 'success');
+    } catch (e) {
+      showToast?.(`Bundle failed: ${e.message}`, 'error');
+    } finally {
+      setBundling(false);
+    }
+  };
+
+  if (rows === null) return <div style={{ display: 'flex', justifyContent: 'center', padding: 20 }}><Spinner /></div>;
+  if (!rows.length) return <EmptyState message="No timesheets recorded for this client yet." icon="🕐" />;
 
   return (
     <div>
-      <TableWrap>
-        <thead><tr><Th>Date</Th><Th>Worker</Th><Th>Project</Th><Th>Hours</Th><Th>Status</Th></tr></thead>
-        <tbody>
-          {rows.map(h => (
-            <tr key={h.id}>
-              <Td style={{ fontFamily: MONO, fontSize: 12 }}>{dateLabel(h)}</Td>
-              <Td><strong>{h.workers?.name || '—'}</strong></Td>
-              <Td>{h.project || '—'}</Td>
-              <Td style={{ fontFamily: MONO }}>{h.total_hours != null ? Number(h.total_hours).toFixed(2) : '—'}</Td>
-              <Td>{timesheetBadge(h.status)}</Td>
-            </tr>
-          ))}
-        </tbody>
-      </TableWrap>
-      <div style={{ fontSize: 11, color: C.textDim, marginTop: 8 }}>
-        Showing the latest {rows.length} — full register with column picker + CSV export is a coming step.
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3 }}>From</div>
+          <input type="date" style={{ ...inputStyle, padding: '6px 8px', fontSize: 13, width: 140 }} value={from} onChange={e => setFrom(e.target.value)} />
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3 }}>To</div>
+          <input type="date" style={{ ...inputStyle, padding: '6px 8px', fontSize: 13, width: 140 }} value={to} onChange={e => setTo(e.target.value)} />
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3 }}>Status</div>
+          <select style={{ ...inputStyle, padding: '6px 8px', fontSize: 13, width: 150 }} value={status} onChange={e => setStatus(e.target.value)}>
+            <option value="all">All statuses</option>
+            {statusOptions.map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+          </select>
+        </div>
+        <button type="button" onClick={exportCSV} disabled={!filtered.length} style={{ ...btnSecondary, padding: '7px 12px', fontSize: 12, opacity: filtered.length ? 1 : 0.5 }}>
+          ⬇ Export CSV ({filtered.length})
+        </button>
+        <button type="button" onClick={buildBundle} disabled={bundling || !approvedCount}
+          title={approvedCount ? `Builds ONE PDF holding all ${approvedCount} approved timesheets in the range — hours only, safe to send to the client.` : 'No approved timesheets in this range.'}
+          style={{ ...btnPrimary, padding: '7px 12px', fontSize: 12, opacity: (bundling || !approvedCount) ? 0.6 : 1 }}>
+          {bundling ? 'Building…' : `📦 Weekly PDF bundle (${approvedCount})`}
+        </button>
       </div>
+      {filtered.length ? (
+        <>
+          <TableWrap>
+            <thead><tr><Th>Date</Th><Th>Worker</Th><Th>Project</Th><Th>Role</Th><Th>Hours</Th><Th>Status</Th><Th>PDF emailed</Th></tr></thead>
+            <tbody>
+              {filtered.map(h => (
+                <tr key={h.id}>
+                  <Td style={{ fontFamily: MONO, fontSize: 12 }}>{dateLabel(h)}</Td>
+                  <Td><strong>{h.workers?.name || '—'}</strong></Td>
+                  <Td>{h.project || '—'}</Td>
+                  <Td>{h.role || '—'}</Td>
+                  <Td style={{ fontFamily: MONO }}>{h.total_hours != null ? Number(h.total_hours).toFixed(2) : '—'}</Td>
+                  <Td>{timesheetBadge(h.status)}</Td>
+                  <Td style={{ fontFamily: MONO, fontSize: 12 }}>{h.pdf_emailed_at ? fmtDate(h.pdf_emailed_at) : '—'}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableWrap>
+          <div style={{ fontSize: 11, color: C.textDim, marginTop: 8 }}>
+            {filtered.length} timesheet{filtered.length === 1 ? '' : 's'} · {filteredHours.toFixed(2)}h in range · bundle covers approved sheets only
+          </div>
+        </>
+      ) : (
+        <EmptyState message="No timesheets match this range and status." icon="🕐" />
+      )}
     </div>
   );
 }
