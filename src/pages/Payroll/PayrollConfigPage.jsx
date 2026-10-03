@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary } from '../../theme';
 import { Spinner, TableWrap, Th, Td } from '../../components';
+import { MyobConnectCard } from '../../components/accounting/MyobConnectCard';
 
 // The team asked for the config to read as "Regular Rates" plus clearly separated
 // groups, instead of one flat list of code keys. The keys themselves are
@@ -109,6 +110,7 @@ export function PayrollConfigPage({ showToast }) {
 
   return (
     <div>
+      <MyobConnectCard showToast={showToast} />
       <div style={{ background: 'rgba(249,115,22,0.07)', border: '1px solid rgba(249,115,22,0.2)', borderRadius: 10, padding: '12px 16px', marginBottom: 20, fontSize: 13, color: C.textMuted }}>
         ⚙ <strong style={{ color: C.text }}>Payroll Config</strong> — the portal-wide rules. Changes apply on the next payroll calculation.
         Looking for a <strong style={{ color: C.text }}>client&apos;s</strong> rates? Those live in <strong style={{ color: C.text }}>Clients &amp; Rates → Schedule of Rates</strong> (one per client), with the reusable master card under <strong style={{ color: C.text }}>Default Rates</strong>.
