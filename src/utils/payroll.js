@@ -308,6 +308,22 @@ export function chargeRateSource(clientRecord, rateLine, match) {
 // bottom, so bucket hours and the dollar total can never drift apart. The dollar
 // amounts are identical to what this function paid before the split was exposed;
 // only the reporting is new.
+// A subcontractor's pay depends on the role they did that day. When a
+// worker_role_rates row matches the timesheet's role, its two rates replace
+// the person's own A/B for that row only. No match: the person's A/B as before.
+export function withRoleRate(worker, role, roleRates) {
+  if (!worker || worker.worker_type !== 'subcontractor' || !role) return worker;
+  const key = String(role).trim().toLowerCase();
+  const hit = (roleRates || []).find(r => r.worker_id === worker.id && String(r.role_name || '').trim().toLowerCase() === key);
+  if (!hit) return { ...worker, _rate_source: 'person' };
+  return {
+    ...worker,
+    pay_rate_regular:  hit.rate_normal,
+    pay_rate_overtime: hit.rate_overtime,
+    _rate_source: `role: ${hit.role_name}`,
+  };
+}
+
 export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLine = null, rateMatch = 'none') {
   const OT_MULT      = parseFloat(config.ot_multiplier               ?? 1.5);
   const GEO_PCT      = parseFloat(config.geo_loading_pct             ?? 0.10);
@@ -423,6 +439,7 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
     awj_reference: ts.awj_reference || '',
     xero_pay_item: worker.worker_type === 'subcontractor' ? 'SubcontractorFee' : 'OrdinaryTime',
     rate_missing:  rateMissing,
+    pay_rate_source: worker._rate_source || null,
   };
 }
 

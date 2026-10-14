@@ -12,6 +12,7 @@ import { WORKER_TYPES } from '../../constants/scenarios';
 import { onboardLink, publicProfileLink, whatsappLink, inviteMessage, normaliseMobileE164AU } from '../../utils/inviteLinks';
 import { addAdminNotification } from '../../utils/notify';
 import { WORKER_SAFE_COLS } from '../../utils/workerCols';
+import { RoleRatesEditor, checkRoleRates, saveRoleRates } from '../../components/workers/RoleRatesEditor';
 
 const ARCHIVE_REASONS = [
   { value: 'resigned',        label: 'Resigned (left voluntarily)' },
@@ -125,6 +126,8 @@ export function WorkersPage({ showToast, currentWorker }) {
   const [editCerts, setEditCerts] = useState([]);
   const [payroll, setPayroll]     = useState(null);
   const [medical, setMedical]     = useState(null);
+  const [roleRates, setRoleRates] = useState([]);          // subcontractor rates by role
+  const [roleRateIds, setRoleRateIds] = useState([]);      // ids as loaded, to archive removed rows
   const draftKey = modal === 'add'
     ? 'worker_add'
     : modal && typeof modal === 'object'
@@ -171,7 +174,7 @@ export function WorkersPage({ showToast, currentWorker }) {
     })();
   }, []);
 
-  const openAdd = () => { setEditCerts([]); setModal('add'); };
+  const openAdd = () => { setEditCerts([]); setRoleRates([]); setRoleRateIds([]); setModal('add'); };
   const openEdit = async (w) => {
     setModal(w);
     setForm({
@@ -193,6 +196,19 @@ export function WorkersPage({ showToast, currentWorker }) {
     const { data } = await supabase.from('certifications').select('*').eq('worker_id', w.id).order('expiry', { ascending: true });
     setEditCerts(data || []);
 
+    setRoleRates([]); setRoleRateIds([]);
+    if (canSeeRates) {
+      const { data: rr } = await supabase.from('worker_role_rates')
+        .select('id, role_name, rate_normal, rate_overtime')
+        .eq('worker_id', w.id).is('archived_at', null).order('role_name');
+      const loaded = (rr || []).map(r => ({
+        id: r.id, role_name: r.role_name,
+        rate_normal: r.rate_normal ?? '', rate_overtime: r.rate_overtime ?? '',
+      }));
+      setRoleRates(loaded);
+      setRoleRateIds(loaded.map(r => r.id));
+    }
+
     // RLS gates these to admin/manager roles. Non-admins get empty results
     // silently; save attempts will surface a clear error if they try to write.
     const [pd, md] = await Promise.all([
@@ -212,6 +228,11 @@ export function WorkersPage({ showToast, currentWorker }) {
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.email.trim()) { showToast('Name and email are required.', 'error'); return; }
+    const writeRoleRates = canSeeRates && form.worker_type === 'subcontractor';
+    if (writeRoleRates) {
+      const problem = checkRoleRates(roleRates);
+      if (problem) { showToast(problem, 'error'); return; }
+    }
     setSaving(true);
     const n = v => v === '' ? null : parseFloat(v);
     const A = n(form.pay_rate_a);
@@ -243,6 +264,10 @@ export function WorkersPage({ showToast, currentWorker }) {
     if (modal === 'add') {
       const { data, error } = await supabase.from('workers').insert([payload]).select('id, name, email, profile_token').single();
       if (error) { showToast(error.message, 'error'); setSaving(false); return; }
+      if (writeRoleRates && roleRates.length) {
+        const rrErr = await saveRoleRates(data.id, roleRates, []);
+        if (rrErr) showToast(`Worker saved, but the rates by role were not: ${rrErr}`, 'error');
+      }
 
       if (!canSeeRates) {
         addAdminNotification({
@@ -280,6 +305,10 @@ export function WorkersPage({ showToast, currentWorker }) {
     } else {
       const { error } = await supabase.from('workers').update(payload).eq('id', modal.id);
       if (error) { showToast(error.message, 'error'); setSaving(false); return; }
+      if (writeRoleRates) {
+        const rrErr = await saveRoleRates(modal.id, roleRates, roleRateIds);
+        if (rrErr) { showToast(`Rates by role: ${rrErr}`, 'error'); setSaving(false); return; }
+      }
 
       // Upsert sensitive details. RLS gates these — non-admin users won't
       // even get the payroll/medical fields rendered in the modal, so this
@@ -764,6 +793,9 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
                       placeholder={form.worker_type === 'subcontractor' ? 'type the rate' : 'auto from A × 2'} />
                   </Field>
                 </div>
+                {form.worker_type === 'subcontractor' && (
+                  <RoleRatesEditor rows={roleRates} setRows={setRoleRates} />
+                )}
                 {form.worker_type === 'subcontractor' ? (
                   <div style={{ fontSize: 11, color: C.warning, marginTop: 4 }}>
                     Subcontractor: nothing auto-fills. Type A, B and C by hand — their rates change with the role and their overtime is not 1.5× / 2×.

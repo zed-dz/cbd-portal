@@ -3,7 +3,7 @@ import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnSecondary, btnSmall } from '../../theme';
 import { fmtDate } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
-import { computePayrollRow, buildXeroCSV, buildPayBreakdownCSV, buildInvoiceCSV, applyFullTimeMinDay, findRateLine } from '../../utils/payroll';
+import { computePayrollRow, buildXeroCSV, buildPayBreakdownCSV, buildInvoiceCSV, applyFullTimeMinDay, findRateLine, withRoleRate } from '../../utils/payroll';
 import { Spinner, TableWrap, Th, Td, EmptyState, presetBounds } from '../../components';
 
 const XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize';
@@ -22,6 +22,7 @@ export function PayrollTrackerPage({ showToast }) {
   const [workers, setWorkers] = useState([]);
   const [clients, setClients] = useState([]);
   const [rateCards, setRateCards] = useState([]);
+  const [roleRates, setRoleRates] = useState([]);
   const [configMap, setConfigMap] = useState({});
   const [loading, setLoading] = useState(true);
   // First visit defaults to the current pay week; afterwards the stored choice
@@ -74,7 +75,7 @@ export function PayrollTrackerPage({ showToast }) {
       .order('date', { ascending: false });
     if (dateFrom) q = q.gte('date', dateFrom);
     if (dateTo) q = q.lte('date', dateTo);
-    const [t, w, cl, cfg, rc] = await Promise.all([
+    const [t, w, cl, cfg, rc, rr] = await Promise.all([
       q,
       supabase.from('v_workers_admin').select('id, name, worker_type, pay_rate_regular, pay_rate_overtime, subcontractor_abn').order('name'),
       supabase.from('clients').select('id, name, rate_a, rate_b, rate_c, rate_regular, rate_overtime, rate_night, rate_weekend').order('name'),
@@ -83,12 +84,15 @@ export function PayrollTrackerPage({ showToast }) {
       // that matches the timesheet's role, so a night shift is billed at the
       // loaded rate instead of the flat one.
       supabase.from('client_rate_cards').select('client_id, role_name, rate_a, rate_b, rate_c'),
+      // Subcontractor pay by role: the row matching the timesheet's role wins.
+      supabase.from('worker_role_rates').select('worker_id, role_name, rate_normal, rate_overtime').is('archived_at', null),
     ]);
     if (t.error) showToast(t.error.message, 'error');
     else setTimesheets(t.data || []);
     if (w.data) setWorkers(w.data);
     if (cl.data) setClients(cl.data);
     if (rc.data) setRateCards(rc.data);
+    if (rr.data) setRoleRates(rr.data);
     if (cfg.data) {
       const map = {};
       cfg.data.forEach(r => { map[r.config_key] = r.config_value; });
@@ -103,7 +107,7 @@ export function PayrollTrackerPage({ showToast }) {
   // (client still charged actual hours) before the per-row pay computation.
   const workersById = Object.fromEntries(workers.map(w => [w.id, w]));
   const payrollRows = applyFullTimeMinDay(timesheets, workersById, configMap).map(ts => {
-    const worker = workers.find(w => w.id === ts.worker_id) || {};
+    const worker = withRoleRate(workers.find(w => w.id === ts.worker_id) || {}, ts.role, roleRates);
     // Prefer the real foreign key. Falling back to the typed name is what caused
     // the wrong-rate bug: several clients share a name, differ only by site, and
     // carry different rate cards, so first-match-wins billed at whichever row
@@ -507,7 +511,14 @@ export function PayrollTrackerPage({ showToast }) {
                     />
                   )}
                 </Td>
-                <Td><strong>{r.worker_name}</strong></Td>
+                <Td>
+                  <strong>{r.worker_name}</strong>
+                  {r.pay_rate_source && r.pay_rate_source.startsWith('role: ') && (
+                    <div title="Paid at this subcontractor's rate for the role on the timesheet" style={{ fontSize: 10, color: C.textMuted, marginTop: 2 }}>
+                      {r.pay_rate_source.replace('role: ', '')} rate
+                    </div>
+                  )}
+                </Td>
                 <Td><span style={{ fontSize: 11, color: C.textMuted, fontFamily: '"DM Mono", monospace' }}>{r.worker_type}</span></Td>
                 <Td>
                   <div style={{ whiteSpace: 'nowrap' }}>{r.day_name ? `${r.day_name.slice(0, 3)} ` : ''}{fmtDate(r.date)}</div>
