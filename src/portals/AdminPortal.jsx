@@ -141,8 +141,26 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
 
   const navigate = (id) => { setActivePage(id); if (isMobile) setSidebarOpen(false); };
 
+  // The Portal Assistant answers "where is X?" from this. It is built from the
+  // same list the sidebar draws, so moving a menu item cannot leave it stale.
+  // Keep sign_out in step with the Sign out button at the bottom of `sidebar`.
+  const layoutKey = JSON.stringify(navSections.map(s => ({ section: s.label, items: s.items.map(i => i.label) })));
+  useEffect(() => {
+    window.__portalLayout = {
+      portal: 'office',
+      device: isMobile ? 'phone' : 'desktop',
+      menu: JSON.parse(layoutKey),
+      menu_location: isMobile
+        ? 'hidden behind the ☰ button at the top-left of the screen; tap ☰ to slide the menu open'
+        : 'always visible down the left side of the screen',
+      sign_out: isMobile
+        ? 'tap ☰ at the top-left, then "Sign out →" at the very bottom of the menu, under your name'
+        : '"Sign out →" button at the very bottom of the left sidebar, under "Signed in" and your name',
+    };
+  }, [layoutKey, isMobile]);
+
   const sidebar = (
-    <div style={{
+    <div data-area="left sidebar" style={{
       width: C.sidebarW, background: C.sidebar, height: '100vh', display: 'flex',
       flexDirection: 'column', borderRight: `1px solid ${C.border}`, flexShrink: 0, overflowY: 'auto',
       ...(isMobile ? { position: 'fixed', top: 0, left: 0, zIndex: 500, transform: sidebarOpen ? 'translateX(0)' : `translateX(-${C.sidebarW}px)`, transition: 'transform 0.25s ease', boxShadow: sidebarOpen ? '8px 0 32px rgba(0,0,0,0.5)' : 'none' } : {}),

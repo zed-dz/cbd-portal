@@ -11,6 +11,19 @@ import { roleChipStyle } from '../constants/roles';
 export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) {
   const [activeTab, setActiveTab] = useState('allocations');
 
+  // For the Portal Assistant ("how do I log out?"). Restores the office layout
+  // when an admin closes the Worker View preview.
+  useEffect(() => {
+    const prev = window.__portalLayout;
+    window.__portalLayout = {
+      portal: 'worker app',
+      device: isMobile ? 'phone' : 'desktop',
+      menu: 'tabs along the top, under the header',
+      sign_out: '"Sign Out" button in the header at the top-right, next to your name',
+    };
+    return () => { window.__portalLayout = prev; };
+  }, [isMobile]);
+
   const tabs = [
     { id: 'allocations', label: '📋 My Allocations' },
     { id: 'timesheets', label: '🕐 My Timesheets' },

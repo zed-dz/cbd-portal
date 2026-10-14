@@ -316,7 +316,13 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
   const NIGHT_THRESH = parseFloat(config.night_threshold_hours        ?? 8);
 
   const payRate    = parseFloat(worker.pay_rate_regular || 0);
-  const payRateOT  = parseFloat(worker.pay_rate_overtime || payRate * OT_MULT);
+  // Subcontractor overtime is typed by hand, never derived: a blank rate is
+  // flagged on the row (rate_missing) rather than paid as A x 1.5.
+  const isSub      = worker.worker_type === 'subcontractor';
+  const subOTRate  = parseFloat(worker.pay_rate_overtime);
+  const payRateOT  = isSub ? (isNaN(subOTRate) ? 0 : subOTRate)
+                           : parseFloat(worker.pay_rate_overtime || payRate * OT_MULT);
+  let rateMissing  = false;
 
   // Detect day type from date (use noon to avoid DST edge cases)
   const d   = ts.date ? new Date(ts.date + 'T12:00:00') : null;
@@ -357,6 +363,7 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
     ot15H    = ts.overtime_hours || 0;
     ordH     = Math.max(0, hours - ot15H);
     ot15Rate = payRateOT;
+    rateMissing = (ot15H > 0 && isNaN(subOTRate)) || (ordH > 0 && !payRate);
     if (ts.is_night_shift || ts.is_weekend || isSaturday || isSundayOrPH) loading = SUB_NIGHT;
   } else if (ts.is_night_shift && (isSaturday || isSundayOrPH)) {
     ot2xH = hours;                                   // Sat/Sun/PH night -> all 2x
@@ -415,6 +422,7 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
     charge_rate_source: chargeRateSource(clientRecord, rateLine, rateMatch),
     awj_reference: ts.awj_reference || '',
     xero_pay_item: worker.worker_type === 'subcontractor' ? 'SubcontractorFee' : 'OrdinaryTime',
+    rate_missing:  rateMissing,
   };
 }
 

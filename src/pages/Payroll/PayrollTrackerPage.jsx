@@ -547,7 +547,15 @@ export function PayrollTrackerPage({ showToast }) {
                     {!r.travel_allowance && !r.meal_allowance && !r.min_day_topup && !r.geo_loading && !r.is_weekend && '—'}
                   </div>
                 </Td>
-                <Td><span style={{ fontWeight: 700, color: C.success }}>${r.total_pay}</span></Td>
+                <Td>
+                  <span style={{ fontWeight: 700, color: C.success }}>${r.total_pay}</span>
+                  {r.rate_missing && (
+                    <div title="This subcontractor has no rate typed in for these hours. Open the worker, type the rate, and the pay updates."
+                      style={{ fontSize: 10, color: C.danger || C.warning, fontWeight: 700, marginTop: 2, cursor: 'help' }}>
+                      ⚠ rate missing
+                    </div>
+                  )}
+                </Td>
                 <Td>
                   <span style={{ color: C.warning }}>${r.charge_amount}</span>
                   {/* A row that never matched a priced line is billing the catch-all

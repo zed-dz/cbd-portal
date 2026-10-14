@@ -76,13 +76,30 @@ const workerDefaults = {
 };
 
 // Auto-fill B = A * 1.5 and C = A * 2 when the admin hasn't typed those yet.
+// Never for subcontractors: their rate depends on the role they do on the day
+// and their overtime is not 1.5x / 2x, so all three are typed by hand.
 function autoCalcBC(form) {
+  if (form.worker_type === 'subcontractor') return form;
   const A = parseFloat(form.pay_rate_a);
   if (!A || isNaN(A)) return form;
   return {
     ...form,
     pay_rate_b: form.pay_rate_b === '' ? (A * 1.5).toFixed(2) : form.pay_rate_b,
     pay_rate_c: form.pay_rate_c === '' ? (A * 2).toFixed(2)   : form.pay_rate_c,
+  };
+}
+
+// Switching to subcontractor empties B and C only when they still hold the
+// numbers autoCalcBC put there, so a rate someone typed is never wiped.
+function clearAutoBCForSub(form) {
+  if (form.worker_type !== 'subcontractor') return form;
+  const A = parseFloat(form.pay_rate_a);
+  if (!A || isNaN(A)) return form;
+  const same = (v, x) => v !== '' && Math.abs(parseFloat(v) - x) < 0.005;
+  return {
+    ...form,
+    pay_rate_b: same(form.pay_rate_b, A * 1.5) ? '' : form.pay_rate_b,
+    pay_rate_c: same(form.pay_rate_c, A * 2)   ? '' : form.pay_rate_c,
   };
 }
 
@@ -200,17 +217,20 @@ export function WorkersPage({ showToast, currentWorker }) {
     const A = n(form.pay_rate_a);
     const { send_invite, casual_loading, ...rest } = form;
     const base = n(form.pay_rate_base);
+    const isSub = form.worker_type === 'subcontractor';
+    const autoB = isSub || A == null ? null : +(A * 1.5).toFixed(2);
+    const autoC = isSub || A == null ? null : +(A * 2).toFixed(2);
     const payload = {
       ...rest,
       pay_rate_a: A,
-      pay_rate_b: n(form.pay_rate_b) ?? (A != null ? +(A * 1.5).toFixed(2) : null),
-      pay_rate_c: n(form.pay_rate_c) ?? (A != null ? +(A * 2).toFixed(2)   : null),
+      pay_rate_b: n(form.pay_rate_b) ?? autoB,
+      pay_rate_c: n(form.pay_rate_c) ?? autoC,
       pay_rate_base: base,
       casual_loading_pct: (form.worker_type === 'casual' && casual_loading && base != null) ? CASUAL_LOADING_PCT : null,
       // Keep legacy columns in sync until they're dropped, so existing payroll
       // calculations relying on them keep working during the transition.
       pay_rate_regular:  A,
-      pay_rate_overtime: n(form.pay_rate_b) ?? (A != null ? +(A * 1.5).toFixed(2) : null),
+      pay_rate_overtime: n(form.pay_rate_b) ?? autoB,
     };
 
     if (!canSeeRates) {
@@ -656,7 +676,7 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
               </select>
             </Field>
             <Field label="Worker Type">
-              <select style={inputStyle} value={form.worker_type} onChange={e => setForm(f => ({ ...f, worker_type: e.target.value }))}>
+              <select style={inputStyle} value={form.worker_type} onChange={e => setForm(f => clearAutoBCForSub({ ...f, worker_type: e.target.value }))}>
                 {WORKER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </Field>
@@ -735,18 +755,25 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
                     <input style={inputStyle} type="number" step="0.01" min="0"
                       value={form.pay_rate_b}
                       onChange={e => setForm(f => ({ ...f, pay_rate_b: e.target.value }))}
-                      placeholder="auto from A × 1.5" />
+                      placeholder={form.worker_type === 'subcontractor' ? 'type the rate' : 'auto from A × 1.5'} />
                   </Field>
                   <Field label="C — OT 2× (Sun/PH/Sat >8h)">
                     <input style={inputStyle} type="number" step="0.01" min="0"
                       value={form.pay_rate_c}
                       onChange={e => setForm(f => ({ ...f, pay_rate_c: e.target.value }))}
-                      placeholder="auto from A × 2" />
+                      placeholder={form.worker_type === 'subcontractor' ? 'type the rate' : 'auto from A × 2'} />
                   </Field>
                 </div>
-                <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
-                  Leave B and C blank to auto-fill from A (×1.5 and ×2). Override per worker if their rates differ.
-                </div>
+                {form.worker_type === 'subcontractor' ? (
+                  <div style={{ fontSize: 11, color: C.warning, marginTop: 4 }}>
+                    Subcontractor: nothing auto-fills. Type A, B and C by hand — their rates change with the role and their overtime is not 1.5× / 2×.
+                    A blank B is flagged in Payroll, never guessed.
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
+                    Leave B and C blank to auto-fill from A (×1.5 and ×2). Override per worker if their rates differ.
+                  </div>
+                )}
               </div>
             </div>
             ) : (

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { C } from '../../theme';
 import { supabase } from '../../supabaseClient';
+import { buildScreenMap } from '../../utils/screenMap';
 
 // Omni Knowledge help bubble. Talks to Venture Command's ecosystem API:
 //  - /api/ecosystem/config  → is Omni Knowledge toggled on for this venture?
@@ -63,7 +64,15 @@ export function OmniHelpBubble() {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token) {
         const { data, error } = await supabase.functions.invoke('portal-assistant', {
-          body: { question, page: window.__portalPage || '' },
+          // layout + screen let it answer "where is X?" from the live page,
+          // never from a stale description.
+          body: {
+            question,
+            page: window.__portalPage || '',
+            layout: window.__portalLayout || null,
+            screen: buildScreenMap(),
+            viewport: { w: window.innerWidth, h: window.innerHeight },
+          },
         });
         if (!error && data?.answer) text = data.answer;
       }
@@ -88,7 +97,7 @@ export function OmniHelpBubble() {
   return (
     <>
       {open && (
-        <div style={{ position: 'fixed', bottom: 88, right: 20, width: 340, maxWidth: 'calc(100vw - 40px)', height: 460, maxHeight: 'calc(100vh - 140px)', background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: '0 16px 48px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', zIndex: 9999, overflow: 'hidden' }}>
+        <div data-assistant-root style={{ position: 'fixed', bottom: 88, right: 20, width: 340, maxWidth: 'calc(100vw - 40px)', height: 460, maxHeight: 'calc(100vh - 140px)', background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: '0 16px 48px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', zIndex: 9999, overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ fontWeight: 700, color: C.text, fontSize: 14 }}>💬 Portal Assistant</div>
             <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', color: C.textMuted, cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>×</button>
@@ -113,7 +122,7 @@ export function OmniHelpBubble() {
           </div>
         </div>
       )}
-      <button onClick={() => setOpen((o) => !o)} title="Portal help" style={{ position: 'fixed', bottom: 20, right: 20, width: 56, height: 56, borderRadius: '50%', background: C.accent, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 24, boxShadow: '0 8px 24px rgba(0,0,0,0.35)', zIndex: 9999 }}>
+      <button data-assistant-root onClick={() => setOpen((o) => !o)} title="Portal help" style={{ position: 'fixed', bottom: 20, right: 20, width: 56, height: 56, borderRadius: '50%', background: C.accent, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 24, boxShadow: '0 8px 24px rgba(0,0,0,0.35)', zIndex: 9999 }}>
         {open ? '×' : '💬'}
       </button>
     </>
