@@ -264,7 +264,7 @@ export function PayrollTrackerPage({ showToast }) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch(
-        'https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-push',
+        `${process.env.REACT_APP_SUPABASE_URL}/functions/v1/xero-push`,
         {
           method: 'POST',
           headers: {

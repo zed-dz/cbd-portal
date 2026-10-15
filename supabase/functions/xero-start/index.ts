@@ -25,7 +25,7 @@ const SUPABASE_ANON_KEY    = Deno.env.get('SUPABASE_ANON_KEY')!;
 
 // Must match xero-callback's REDIRECT_URI byte-for-byte (Xero refuses the
 // token exchange otherwise) and the redirect URI registered on the Xero app.
-const REDIRECT_URI  = 'https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-callback';
+const REDIRECT_URI  = `${Deno.env.get('SUPABASE_URL')}/functions/v1/xero-callback`;   // portal-agnostic (mirrors)
 const XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize';
 const STATE_TTL_MS  = 10 * 60 * 1000;
 

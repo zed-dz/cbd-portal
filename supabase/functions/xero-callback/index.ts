@@ -18,7 +18,7 @@ const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 // Function secret PORTAL_URL (production host since 2026-10-15). The fallback
 // is the same host so a missing secret never sends anyone to a vercel.app page.
 const PORTAL_URL         = (Deno.env.get('PORTAL_URL') || 'https://portal.cbdpnl.com.au').replace(/\/+$/, '');
-const REDIRECT_URI       = `https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-callback`;
+const REDIRECT_URI       = `${Deno.env.get('SUPABASE_URL')}/functions/v1/xero-callback`;   // portal-agnostic (mirrors)
 
 // Every exit is a redirect to the portal root; App.jsx reads xero_connected /
 // xero_error off the query string and shows a toast.

@@ -3,7 +3,7 @@ import { supabase } from '../../supabaseClient';
 import { C, btnSmall, btnSecondary, btnPrimary } from '../../theme';
 import { Spinner, TableWrap, Th, Td, EmptyState } from '../../components';
 
-const EDGE = 'https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-data';
+const EDGE = `${process.env.REACT_APP_SUPABASE_URL}/functions/v1/xero-data`;
 
 const TABS = [
   { id: 'employees',  label: 'Employees',    key: 'employees' },
