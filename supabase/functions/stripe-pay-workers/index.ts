@@ -16,7 +16,9 @@ const SUPABASE_URL         = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const SUPABASE_ANON_KEY    = Deno.env.get('SUPABASE_ANON_KEY')!;
 
+// The live portal plus the two legacy Vercel hosts (still kept for roll-back).
 const ALLOWED_ORIGINS = [
+  'https://portal.cbdpnl.com.au',
   'https://cbd-portal-gray.vercel.app',
   'https://cbd-portal-zeta.vercel.app',
   'http://localhost:3000',
@@ -26,9 +28,39 @@ function corsHeaders(origin: string | null) {
   const allow = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
     'Access-Control-Allow-Origin': allow,
+    'Vary': 'Origin',
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
   };
+}
+
+// ── Caller gate (hardening 2026-10-15) ──────────────────────────────────────
+// OFFICE = anyone who uses the office portal (workers.role = 'admin', or an
+// access_level of admin/accounts); MONEY = access_level admin/accounts only.
+// Internal callers (other edge functions, cron) pass the service-role key as
+// the bearer and skip the worker lookup. Email match is exact (lower-cased):
+// `ilike` would treat `_` and `%` as wildcards.
+type GateLevel = 'office' | 'money';
+type GateResult =
+  | { ok: true; via: 'service' | 'user'; email: string | null; worker: { id: string; name: string | null; role: string | null; access_level: string | null } | null }
+  | { ok: false; status: number; error: string };
+async function gateCaller(req: Request, level: GateLevel): Promise<GateResult> {
+  const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  if (!bearer) return { ok: false, status: 401, error: 'Unauthorized' };
+  if (bearer === SUPABASE_SERVICE_KEY) return { ok: true, via: 'service', email: null, worker: null };
+  const { data: { user }, error } = await createClient(SUPABASE_URL, SUPABASE_ANON_KEY).auth.getUser(bearer);
+  if (error || !user?.email) return { ok: false, status: 401, error: 'Unauthorized' };
+  const { data: w } = await createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY).from('workers')
+    .select('id, name, role, access_level')
+    .eq('email', user.email.toLowerCase())
+    .is('archived_at', null)
+    .maybeSingle();
+  const money  = !!w && ['admin', 'accounts'].includes(w.access_level || '');
+  const office = money || (!!w && w.role === 'admin');
+  if (level === 'money' ? !money : !office) {
+    return { ok: false, status: 403, error: level === 'money' ? 'Admin or accounts only' : 'Office staff only' };
+  }
+  return { ok: true, via: 'user', email: user.email, worker: w };
 }
 
 function form(params: Record<string, string | number | undefined>) {
@@ -61,16 +93,12 @@ serve(async (req) => {
   const json = (data: unknown, status = 200) =>
     new Response(JSON.stringify(data), { status, headers: { ...corsHeaders(origin), 'Content-Type': 'application/json' } });
 
-  const auth = req.headers.get('Authorization');
-  if (!auth) return json({ error: 'Unauthorized' }, 401);
+  // MONEY gate: admin/accounts only (the old 'manager' acceptance is gone).
+  const gate = await gateCaller(req, 'money');
+  if (!gate.ok) return json({ error: gate.error }, gate.status);
+  const callerId: string | null = gate.worker?.id ?? null;
 
   const service = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-  const { data: { user }, error: authErr } = await createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    .auth.getUser(auth.replace('Bearer ', ''));
-  if (authErr || !user?.email) return json({ error: 'Unauthorized' }, 401);
-  const { data: caller } = await service.from('workers')
-    .select('id, access_level').ilike('email', user.email).maybeSingle();
-  if (!caller || !['admin', 'manager'].includes(caller.access_level)) return json({ error: 'Admin only' }, 403);
 
   const body = await req.json().catch(() => ({}));
   const { periodFrom, periodTo } = body;
@@ -131,7 +159,7 @@ serve(async (req) => {
 
   const { data: run } = await service.from('payment_runs').insert([{
     period_from: periodFrom, period_to: periodTo, status: 'draft',
-    total_cents, currency, created_by: caller.id,
+    total_cents, currency, created_by: callerId,
   }]).select().single();
 
   const results: any[] = [];

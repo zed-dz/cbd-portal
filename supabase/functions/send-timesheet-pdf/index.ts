@@ -16,8 +16,12 @@
 //     trigger can only cause a legitimate send of an approved sheet to the
 //     contact already on file.
 //   * Idempotent: pdf_emailed_at guards double sends (force:true to resend).
+//     force:true is OFFICE-only (or the service key) — hardening 2026-10-15:
+//     before, anyone with the anon key could re-send a client's PDF forever.
 //   * Resend-first from the company domain with the PDF attached; Gmail is the
 //     fallback (same attachment, raw MIME). Both fail -> admin bell lights up.
+//   * DB text (client, project, worker name, approver) is HTML-escaped before
+//     it is interpolated into the email body.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -26,6 +30,7 @@ import { encodeBase64 } from 'https://deno.land/std@0.224.0/encoding/base64.ts';
 
 const SUPABASE_URL         = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const SUPABASE_ANON_KEY    = Deno.env.get('SUPABASE_ANON_KEY')!;
 const RESEND_API_KEY       = Deno.env.get('RESEND_API_KEY') || '';
 const MAIL_FROM            = Deno.env.get('MAIL_FROM') || '';
 const GMAIL_CLIENT_ID      = Deno.env.get('GMAIL_CLIENT_ID') || '';
@@ -49,6 +54,43 @@ const escLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
 // the send: strip "$" from it before drawing. The throw in text() stays as the
 // money-leak tripwire for anything WE compose (layout strings, computed cells).
 const stripUser = (s: unknown) => String(s ?? '').replace(/\$/g, '');
+
+// DB text that lands in the email HTML is escaped; a client or project named
+// with "<" or "&" renders as text, never as markup.
+const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+// Mail headers are single-line: a CR/LF inside a DB string must not become a
+// second header in the raw Gmail MIME.
+const oneLine = (s: unknown) => String(s ?? '').replace(/[\r\n]+/g, ' ').trim();
+
+// ── Caller gate (hardening 2026-10-15) ──────────────────────────────────────
+// OFFICE = anyone who uses the office portal (workers.role = 'admin', or an
+// access_level of admin/accounts); MONEY = access_level admin/accounts only.
+// Internal callers (other edge functions, cron) pass the service-role key as
+// the bearer and skip the worker lookup. Email match is exact (lower-cased):
+// `ilike` would treat `_` and `%` as wildcards.
+type GateLevel = 'office' | 'money';
+type GateResult =
+  | { ok: true; via: 'service' | 'user'; email: string | null; worker: { id: string; name: string | null; role: string | null; access_level: string | null } | null }
+  | { ok: false; status: number; error: string };
+async function gateCaller(req: Request, level: GateLevel): Promise<GateResult> {
+  const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  if (!bearer) return { ok: false, status: 401, error: 'Unauthorized' };
+  if (bearer === SUPABASE_SERVICE_KEY) return { ok: true, via: 'service', email: null, worker: null };
+  const { data: { user }, error } = await createClient(SUPABASE_URL, SUPABASE_ANON_KEY).auth.getUser(bearer);
+  if (error || !user?.email) return { ok: false, status: 401, error: 'Unauthorized' };
+  const { data: w } = await createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY).from('workers')
+    .select('id, name, role, access_level')
+    .eq('email', user.email.toLowerCase())
+    .is('archived_at', null)
+    .maybeSingle();
+  const money  = !!w && ['admin', 'accounts'].includes(w.access_level || '');
+  const office = money || (!!w && w.role === 'admin');
+  if (level === 'money' ? !money : !office) {
+    return { ok: false, status: 403, error: level === 'money' ? 'Admin or accounts only' : 'Office staff only' };
+  }
+  return { ok: true, via: 'user', email: user.email, worker: w };
+}
 
 // ── PDF ─────────────────────────────────────────────────────────────────────
 const fmtTime = (iso: string | null) => iso
@@ -248,6 +290,14 @@ serve(async (req) => {
   let body: { token?: string; header_id?: string; reason?: string; force?: boolean };
   try { body = await req.json(); } catch { return json({ error: 'invalid_json' }, 400); }
 
+  // force:true re-sends a sheet that was already emailed — OFFICE only (or the
+  // service key). The public supervisor page and the pg_net auto-approve path
+  // never pass force, so they are unaffected.
+  if (body.force) {
+    const gate = await gateCaller(req, 'office');
+    if (!gate.ok) return json({ error: gate.error }, gate.status);
+  }
+
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
   const sel = 'id, client, project, role, status, comments, wet_hire, total_hours, client_approved, client_approved_by, client_approved_at, pdf_emailed_at, locked, version, worker_id, workers(name)';
@@ -308,7 +358,7 @@ serve(async (req) => {
   }
 
   const dates = (lines || []).map((l: any) => l.date).filter(Boolean).sort();
-  const label = `${workerName} — ${h.project || h.client}${h.total_hours ? ` (${Number(h.total_hours).toFixed(2)}h)` : ''}`;
+  const label = oneLine(`${workerName} — ${h.project || h.client}${h.total_hours ? ` (${Number(h.total_hours).toFixed(2)}h)` : ''}`);
   const filename = `timesheet-${workerName.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${dates[0] || 'sheet'}.pdf`;
   const subject = `Approved timesheet — ${label}`;
   const rowsHtml = (lines || []).map((l: any) => {
@@ -317,13 +367,13 @@ serve(async (req) => {
   }).join('');
   const html = `
     <p>Hi,</p>
-    <p>The timesheet for <strong>${label}</strong> has been accepted${h.client_approved_by ? ` by ${h.client_approved_by}` : ''}${body.reason === 'auto' ? ' (finalised automatically after 7 days with no response)' : ''}. A PDF copy is attached for your records.</p>
+    <p>The timesheet for <strong>${esc(label)}</strong> has been accepted${h.client_approved_by ? ` by ${esc(h.client_approved_by)}` : ''}${body.reason === 'auto' ? ' (finalised automatically after 7 days with no response)' : ''}. A PDF copy is attached for your records.</p>
     <table cellpadding="6" cellspacing="0" border="1" style="border-collapse:collapse;border-color:#ddd;font-family:Arial,sans-serif;font-size:13px">
       <tr style="background:#f6f4f1"><th align="left">Date</th><th align="left">Start</th><th align="left">Finish</th><th align="left">Break</th><th align="right">Hours</th></tr>
       ${rowsHtml}
       <tr><td colspan="4" align="right"><strong>Total</strong></td><td align="right"><strong>${Number(h.total_hours || 0).toFixed(2)} h</strong></td></tr>
     </table>
-    <p style="color:#777;font-size:12px">Sent automatically by the ${BRAND} portal when a timesheet is approved. Hours only — no rates are shown.</p>`;
+    <p style="color:#777;font-size:12px">Sent automatically by the ${esc(BRAND)} portal when a timesheet is approved. Hours only — no rates are shown.</p>`;
 
   const toArr = [...to], ccArr = [...cc];
 

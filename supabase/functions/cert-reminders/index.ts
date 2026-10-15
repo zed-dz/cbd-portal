@@ -1,9 +1,12 @@
 // cert-reminders — daily certificate/ticket expiry reminders (Dashpivot X5).
 //
 // Meant for pg_cron (daily 21:00 UTC = 7am Sydney; schedule statement lives in
-// migrations/20260928_dashpivot_c.sql). Deploy with --no-verify-jwt: the cron
-// caller only holds the anon key, and the function reads nothing from the
-// request — worst case an anonymous hit just re-runs an idempotent scan.
+// migrations/20260928_dashpivot_c.sql). Deployed with verify_jwt=false, so the
+// request MUST carry the shared secret: header `x-digest-secret` equal to the
+// DIGEST_SECRET function secret (same header send-daily-digest checks). The
+// cron job's headers must include it; without it the run is refused with 401.
+// (Hardening 2026-10-15 — before this anyone could fire reminder emails at the
+// whole roster.)
 //
 // What one run does:
 //   1. Finds certifications whose expiry is EXACTLY 30 / 14 / 7 / 0 days away,
@@ -32,10 +35,11 @@ const RESEND_API_KEY       = Deno.env.get('RESEND_API_KEY') || '';
 const MAIL_FROM            = Deno.env.get('MAIL_FROM') || '';
 const BRAND                = Deno.env.get('GMAIL_SENDER_NAME') || 'CBD Plant & Labour';
 const RESEND_ON            = !!(RESEND_API_KEY && MAIL_FROM);
+const DIGEST_SECRET        = Deno.env.get('DIGEST_SECRET') || '';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-digest-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 const json = (b: unknown, s = 200) =>
@@ -70,6 +74,9 @@ async function sendViaResend(to: string, subject: string, html: string) {
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST')    return json({ error: 'Method not allowed' }, 405);
+
+  // Fail closed: no secret configured, or a missing/wrong header → 401.
+  if (!DIGEST_SECRET || req.headers.get('x-digest-secret') !== DIGEST_SECRET) return json({ error: 'unauthorized' }, 401);
 
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 

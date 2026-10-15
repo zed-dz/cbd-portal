@@ -22,14 +22,37 @@ pop3_port = 54326
 enabled = true
 
 [auth]
-site_url = "https://cbd-portal-zeta.vercel.app"
+site_url = "https://portal.cbdpnl.com.au"
 additional_redirect_urls = ["https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-callback"]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
 refresh_token_reuse_interval = 10
 
+# ── Edge functions deployed WITHOUT JWT verification ─────────────────────────
+# Mirrors the live project (tsizneslellcqusjwtub, functions list API,
+# 2026-10-15). Every function not listed here is deployed with verify_jwt=true
+# and gates the caller again inside the function body (OFFICE / MONEY gate).
+
+[functions.cert-reminders]
+verify_jwt = false   # pg_cron caller — guarded by the x-digest-secret header
+
+[functions.gmail-callback]
+verify_jwt = false   # Google redirects the browser here (no Supabase JWT) — guarded by OAuth state
+
+[functions.myob-callback]
+verify_jwt = false   # MYOB redirects the browser here (no Supabase JWT) — guarded by OAuth state
+
+[functions.ops-health-check]
+verify_jwt = false   # deployed 2026-10-15 by the ops/notify work; flag mirrored from the live list
+
+[functions.send-daily-digest]
+verify_jwt = false   # pg_cron caller — guarded by the x-digest-secret header
+
+[functions.timesheet-reminders]
+verify_jwt = false   # deployed 2026-10-15 by the ops/notify work; flag mirrored from the live list
+
+[functions.worker-finalize]
+verify_jwt = false   # public onboarding page, no session yet — the opaque profile_token is the bearer
+
 [functions.xero-callback]
 verify_jwt = false   # Xero hits this directly — no Supabase JWT
-
-[functions.xero-push]
-verify_jwt = false   # We manually verify in the function body

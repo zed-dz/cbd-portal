@@ -40,8 +40,13 @@ const CORS = {
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const daysFromNow = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+// Calendar dates are SYDNEY dates (same helper as cert-reminders' sydneyToday).
+// The UTC date only flips at 10/11am Sydney, so the old toISOString() version
+// answered "who is on site today" with yesterday's roster for most of the
+// working morning. en-CA formats as YYYY-MM-DD.
+const sydneyDate = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney' }).format(d);
+const todayISO = () => sydneyDate(new Date());
+const daysFromNow = (n: number) => sydneyDate(new Date(Date.now() + n * 86400000));
 
 // ── The live snapshot ───────────────────────────────────────────────────────
 // Row counts here are small (tens to low hundreds), so one broad snapshot beats
@@ -268,8 +273,10 @@ serve(async (req) => {
   const { data: { user }, error: authErr } = await sb.auth.getUser(auth.replace('Bearer ', ''));
   if (authErr || !user?.email) return json({ error: 'Unauthorized' }, 401);
 
+  // Exact (lower-cased) match: `ilike` treats `_` and `%` as wildcards, and
+  // workers.email is stored lower-case (verified 2026-10-15: 0 mixed-case rows).
   const { data: me } = await sb.from('workers')
-    .select('id, name, role, access_level').ilike('email', user.email).maybeSingle();
+    .select('id, name, role, access_level').eq('email', user.email.toLowerCase()).maybeSingle();
   const isStaff = !!me && (['admin', 'manager'].includes(me.access_level) || me.role === 'admin');
 
   const snapshot = await buildSnapshot(sb, isStaff, me?.id ?? null);

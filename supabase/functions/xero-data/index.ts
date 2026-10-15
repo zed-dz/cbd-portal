@@ -9,6 +9,10 @@
 //   payitems       — earnings rates, leave rates, deductions, reimbursements
 //   contacts       — Xero accounting contacts (clients/customers) — requires accounting.contacts.read
 //   all            — everything in parallel (default)
+//
+// GATE: MONEY (hardening 2026-10-15) — this returns pay templates, bank and
+// tax details, so only access_level admin/accounts may call it. Before, any
+// valid login (a worker on their phone) could pull the whole payroll.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -22,17 +26,64 @@ const XERO_CLIENT_SECRET   = Deno.env.get('XERO_CLIENT_SECRET')!;
 const PAYROLL    = 'https://api.xero.com/payroll.xro/1.0';
 const ACCOUNTING = 'https://api.xero.com/api.xro/2.0';
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders() });
+// The live portal plus the two legacy Vercel hosts (still kept for roll-back).
+const ALLOWED_ORIGINS = [
+  'https://portal.cbdpnl.com.au',
+  'https://cbd-portal-gray.vercel.app',
+  'https://cbd-portal-zeta.vercel.app',
+  'http://localhost:3000',
+];
 
-  const auth = req.headers.get('Authorization');
-  if (!auth) return json({ error: 'Unauthorized' }, 401);
+function corsHeaders(origin: string | null) {
+  const allow = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    'Access-Control-Allow-Origin': allow,
+    'Vary': 'Origin',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  };
+}
+
+// ── Caller gate (hardening 2026-10-15) ──────────────────────────────────────
+// OFFICE = anyone who uses the office portal (workers.role = 'admin', or an
+// access_level of admin/accounts); MONEY = access_level admin/accounts only.
+// Internal callers (other edge functions, cron) pass the service-role key as
+// the bearer and skip the worker lookup. Email match is exact (lower-cased):
+// `ilike` would treat `_` and `%` as wildcards.
+type GateLevel = 'office' | 'money';
+type GateResult =
+  | { ok: true; via: 'service' | 'user'; email: string | null; worker: { id: string; name: string | null; role: string | null; access_level: string | null } | null }
+  | { ok: false; status: number; error: string };
+async function gateCaller(req: Request, level: GateLevel): Promise<GateResult> {
+  const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  if (!bearer) return { ok: false, status: 401, error: 'Unauthorized' };
+  if (bearer === SUPABASE_SERVICE_KEY) return { ok: true, via: 'service', email: null, worker: null };
+  const { data: { user }, error } = await createClient(SUPABASE_URL, SUPABASE_ANON_KEY).auth.getUser(bearer);
+  if (error || !user?.email) return { ok: false, status: 401, error: 'Unauthorized' };
+  const { data: w } = await createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY).from('workers')
+    .select('id, name, role, access_level')
+    .eq('email', user.email.toLowerCase())
+    .is('archived_at', null)
+    .maybeSingle();
+  const money  = !!w && ['admin', 'accounts'].includes(w.access_level || '');
+  const office = money || (!!w && w.role === 'admin');
+  if (level === 'money' ? !money : !office) {
+    return { ok: false, status: 403, error: level === 'money' ? 'Admin or accounts only' : 'Office staff only' };
+  }
+  return { ok: true, via: 'user', email: user.email, worker: w };
+}
+
+serve(async (req) => {
+  const origin = req.headers.get('Origin');
+  const json = (data: unknown, status = 200) =>
+    new Response(JSON.stringify(data), { status, headers: { ...corsHeaders(origin), 'Content-Type': 'application/json' } });
+
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders(origin) });
+
+  const gate = await gateCaller(req, 'money');
+  if (!gate.ok) return json({ error: gate.error }, gate.status);
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-
-  const { data: { user }, error: authErr } = await createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    .auth.getUser(auth.replace('Bearer ', ''));
-  if (authErr || !user) return json({ error: 'Unauthorized' }, 401);
 
   const url      = new URL(req.url);
   const entity   = url.searchParams.get('entity') || 'all';
@@ -147,19 +198,4 @@ function xeroGet(url: string, token: string, tenantId: string) {
       'Accept': 'application/json',
     },
   });
-}
-
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { ...corsHeaders(), 'Content-Type': 'application/json' },
-  });
-}
-
-function corsHeaders() {
-  return {
-    'Access-Control-Allow-Origin': 'https://cbd-portal-gray.vercel.app',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  };
 }

@@ -3,9 +3,14 @@
 // email) plus the email+password they chose as a fallback.
 //
 // Called from the signup page right after supabase.auth.signUp() succeeds.
-// Runs with verify_jwt=false (the browser has no user JWT yet) and uses the
-// service-role key to (a) mint a magic link via admin.generateLink and (b) send
-// via Gmail directly, falling back to Resend.
+//
+// HARDENING 2026-10-15: deployed with verify_jwt=true and the caller must be
+// the person being welcomed — the bearer must be a valid user JWT whose email
+// equals the body email (the signup page has the new session by then). Before,
+// anyone with the anon key could mint a MAGIC SIGN-IN LINK for any address and
+// have it emailed. Internal callers may present the service-role key instead.
+// Uses the service-role key to (a) mint a magic link via admin.generateLink and
+// (b) send via Gmail directly, falling back to Resend.
 //
 // Request body: { email: string, name?: string }
 
@@ -14,6 +19,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SUPABASE_URL         = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const SUPABASE_ANON_KEY    = Deno.env.get('SUPABASE_ANON_KEY')!;
 const GMAIL_CLIENT_ID      = Deno.env.get('GMAIL_CLIENT_ID')  || '';
 const GMAIL_CLIENT_SECRET  = Deno.env.get('GMAIL_CLIENT_SECRET') || '';
 const SENDER_DISPLAY_NAME  = Deno.env.get('GMAIL_SENDER_NAME') || 'CBD Plant & Labour';
@@ -113,6 +119,15 @@ serve(async (req) => {
   const email = (body.email || '').trim();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ error: 'invalid_email' }, 400);
   const firstName = (body.name || '').trim().split(/\s+/)[0] || 'there';
+
+  // Caller must be the welcomed user (JWT email == body email) or the service key.
+  const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  if (!bearer) return json({ error: 'Unauthorized' }, 401);
+  if (bearer !== SUPABASE_SERVICE_KEY) {
+    const { data: { user }, error: authErr } = await createClient(SUPABASE_URL, SUPABASE_ANON_KEY).auth.getUser(bearer);
+    if (authErr || !user?.email) return json({ error: 'Unauthorized' }, 401);
+    if (user.email.toLowerCase() !== email.toLowerCase()) return json({ error: 'email does not match the signed-in user' }, 403);
+  }
 
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 

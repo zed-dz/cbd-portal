@@ -60,9 +60,11 @@ serve(async (req) => {
   const email = userData?.user?.email;
   if (userErr || !email) return json({ error: 'not authenticated' }, 401);
 
+  // Exact (lower-cased) match: `ilike` treats `_` and `%` as wildcards, and
+  // workers.email is stored lower-case (verified 2026-10-15: 0 mixed-case rows).
   const { data: adminRows } = await sb.from('workers')
     .select('id, name, access_level')
-    .ilike('email', email)
+    .eq('email', email.toLowerCase())
     .eq('access_level', 'admin')
     .is('archived_at', null)
     .limit(1);

@@ -11,7 +11,26 @@ const MYOB_CLIENT_SECRET   = Deno.env.get('MYOB_CLIENT_SECRET') || '';
 const PORTAL_URL           = Deno.env.get('PORTAL_URL') || '/';
 
 Deno.serve(async (req) => {
-  const code = new URL(req.url).searchParams.get('code');
+  const url  = new URL(req.url);
+  const code = url.searchParams.get('code');
+  const sb   = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+  // OAuth state (hardening 2026-10-15): minted by myob-start and stored in
+  // integration_secrets as 'oauth_state:myob:<state>' with its expiry as the
+  // value. Single use; a missing, unknown or expired state is refused BEFORE
+  // any token exchange.
+  const state = url.searchParams.get('state') || '';
+  if (!/^[a-f0-9]{32,128}$/.test(state)) {
+    return new Response('Missing or malformed OAuth state — start the MYOB connection again from the portal.', { status: 400 });
+  }
+  const stateKey = `oauth_state:myob:${state}`;
+  const { data: st } = await sb.from('integration_secrets').select('value').eq('key', stateKey).maybeSingle();
+  await sb.from('integration_secrets').delete().eq('key', stateKey);
+  await sb.from('integration_secrets').delete().like('key', 'oauth_state:%').lt('value', new Date().toISOString());
+  if (!st || String(st.value) < new Date().toISOString()) {
+    return new Response('OAuth state is unknown or expired — start the MYOB connection again from the portal.', { status: 400 });
+  }
+
   if (!code) return new Response('Missing ?code from MYOB.', { status: 400 });
   if (!MYOB_CLIENT_ID || !MYOB_CLIENT_SECRET) {
     return new Response('MYOB secrets are not configured on this project.', { status: 503 });
@@ -47,7 +66,6 @@ Deno.serve(async (req) => {
     if (cf.ok) companyFiles = await cf.json();
   } catch (_e) { /* company-file listing is best-effort */ }
 
-  const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   const { error } = await sb.from('myob_tokens').upsert({
     id: 1,
     access_token: tok.access_token,

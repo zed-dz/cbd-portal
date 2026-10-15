@@ -196,7 +196,11 @@ function buildMime(opts: { from: string; to: string; subject: string; text: stri
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
-  if (DIGEST_SECRET && req.headers.get('x-digest-secret') !== DIGEST_SECRET) return json({ error: 'unauthorized' }, 401);
+  // Fail CLOSED (hardening 2026-10-15): with verify_jwt off, the shared secret
+  // is the only gate. No DIGEST_SECRET configured, or a missing/wrong
+  // `x-digest-secret` header, means nobody can trigger a digest — before, an
+  // unset secret let anyone on the internet fire it.
+  if (!DIGEST_SECRET || req.headers.get('x-digest-secret') !== DIGEST_SECRET) return json({ error: 'unauthorized' }, 401);
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY);
 

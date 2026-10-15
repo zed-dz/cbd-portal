@@ -26,9 +26,15 @@ export function MyobConnectCard({ showToast }) {
     }
   }, [load, showToast]);
 
-  const connect = () => {
-    // Same-tab redirect: the OAuth consent flow must own the page.
-    window.location.href = `${process.env.REACT_APP_SUPABASE_URL}/functions/v1/myob-start`;
+  const connect = async () => {
+    // myob-start is office-gated and returns the consent URL (with a one-time
+    // `state` the callback checks). Same-tab redirect: OAuth must own the page.
+    const { data, error } = await supabase.functions.invoke('myob-start', { method: 'GET' });
+    if (error || !data?.auth_url) {
+      showToast?.(`Could not start the MYOB connection: ${error?.message || data?.error || 'not configured yet'}`, 'error');
+      return;
+    }
+    window.location.href = data.auth_url;
   };
 
   const pickFile = async (f) => {

@@ -17,6 +17,25 @@ serve(async (req) => {
   const url   = new URL(req.url);
   const code  = url.searchParams.get('code');
   const err   = url.searchParams.get('error');
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+  // OAuth state (hardening 2026-10-15): minted by gmail-start and stored in
+  // integration_secrets as 'oauth_state:gmail:<state>' with its expiry as the
+  // value. Single use — the row is deleted on first sight — and a missing,
+  // unknown or expired state is refused BEFORE any token exchange, so a forged
+  // redirect cannot bind a stranger's Google account to the portal inbox.
+  const state = url.searchParams.get('state') || '';
+  if (!/^[a-f0-9]{32,128}$/.test(state)) {
+    return Response.redirect(`${PORTAL_URL}?gmail_error=missing_state`, 302);
+  }
+  const stateKey = `oauth_state:gmail:${state}`;
+  const { data: st } = await supabase.from('integration_secrets').select('value').eq('key', stateKey).maybeSingle();
+  await supabase.from('integration_secrets').delete().eq('key', stateKey);
+  // Sweep any other expired state rows while we are here (best-effort).
+  await supabase.from('integration_secrets').delete().like('key', 'oauth_state:%').lt('value', new Date().toISOString());
+  if (!st || String(st.value) < new Date().toISOString()) {
+    return Response.redirect(`${PORTAL_URL}?gmail_error=bad_state`, 302);
+  }
 
   if (err || !code) {
     return Response.redirect(`${PORTAL_URL}?gmail_error=${encodeURIComponent(err || 'no_code')}`, 302);
@@ -59,7 +78,6 @@ serve(async (req) => {
   }
 
   const expiresAt = new Date(Date.now() + (tokens.expires_in || 3600) * 1000).toISOString();
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
   // If Google didn't return a refresh_token (it only does on the first consent
   // unless prompt=consent), keep the existing one to avoid breaking the connection.

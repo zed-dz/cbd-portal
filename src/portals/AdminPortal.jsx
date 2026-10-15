@@ -246,9 +246,10 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <NotificationBell />
             <button onClick={() => setNotifSettingsOpen(true)} title="Notification settings" style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.text, borderRadius: R.md, padding: '6px 10px', cursor: 'pointer', fontSize: 15, lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}>⚙</button>
-            <button onClick={() => setPreviewMode(true)} style={{ ...btnSecondary, padding: '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>👁 Worker View</button>
-            <button onClick={() => setScanOpen(true)} style={{ ...btnSecondary, padding: '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📷 Scan</button>
-            <button onClick={() => setBlastOpen(true)} style={{ ...btnPrimary, padding: '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📢 Send Blast</button>
+            {/* Phones (360 px): icon-only buttons so the bar never scrolls sideways. */}
+            <button onClick={() => setPreviewMode(true)} title="Worker View" aria-label="Worker View" style={{ ...btnSecondary, padding: isMobile ? '6px 9px' : '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>👁{!isMobile && ' Worker View'}</button>
+            <button onClick={() => setScanOpen(true)} title="Scan" aria-label="Scan" style={{ ...btnSecondary, padding: isMobile ? '6px 9px' : '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📷{!isMobile && ' Scan'}</button>
+            <button onClick={() => setBlastOpen(true)} title="Send Blast" aria-label="Send Blast" style={{ ...btnPrimary, padding: isMobile ? '6px 9px' : '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📢{!isMobile && ' Send Blast'}</button>
           </div>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? 12 : 24 }}>
