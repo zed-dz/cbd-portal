@@ -14,10 +14,14 @@
 // Response:
 //   { ok, sent, failed, total, batch_id, firstError? }
 //
-// Required env (Supabase project secrets):
+// Twilio config (2026-10-15): read from Edge Function secrets if present,
+// otherwise from the RLS-locked `integration_secrets` table — the same rows
+// the deployed send-sms uses (twilio_account_sid, twilio_auth_token,
+// twilio_from, twilio_messaging_service_sid; optionally twilio_api_key_sid /
+// twilio_api_key_secret and twilio_whatsapp_from). Env names, when set:
 //   TWILIO_ACCOUNT_SID
-//   TWILIO_AUTH_TOKEN
-//   TWILIO_SMS_FROM         — e.g. "+61498765432" (any of your Twilio numbers)
+//   TWILIO_AUTH_TOKEN       — or TWILIO_API_KEY_SID + TWILIO_API_KEY_SECRET
+//   TWILIO_SMS_FROM         — "+61..." number, or an "MG…" Messaging Service SID
 //   TWILIO_WHATSAPP_FROM    — e.g. "whatsapp:+14155238886" (sandbox)
 //                                  or "whatsapp:+61498765432" (production sender)
 //
@@ -30,10 +34,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const TWILIO_ACCOUNT_SID    = Deno.env.get('TWILIO_ACCOUNT_SID')    || '';
-const TWILIO_AUTH_TOKEN     = Deno.env.get('TWILIO_AUTH_TOKEN')     || '';
-const TWILIO_SMS_FROM       = Deno.env.get('TWILIO_SMS_FROM')       || '';
-const TWILIO_WHATSAPP_FROM  = Deno.env.get('TWILIO_WHATSAPP_FROM')  || '';
 const SUPABASE_URL          = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const SUPABASE_ANON_KEY     = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -81,6 +81,45 @@ async function gateCaller(req: Request, level: GateLevel): Promise<GateResult> {
   return { ok: true, via: 'user', email: user.email, worker: w };
 }
 
+// ── Twilio config: env first, then integration_secrets (as send-sms does) ───
+type TwilioCfg = {
+  accountSid?: string; apiKeySid?: string; apiKeySecret?: string; authToken?: string;
+  smsFrom?: string; whatsappFrom?: string;
+};
+
+async function loadConfig(): Promise<TwilioCfg> {
+  const env = (k: string) => Deno.env.get(k) || undefined;
+  const cfg: TwilioCfg = {
+    accountSid:   env('TWILIO_ACCOUNT_SID'),
+    apiKeySid:    env('TWILIO_API_KEY_SID'),
+    apiKeySecret: env('TWILIO_API_KEY_SECRET'),
+    authToken:    env('TWILIO_AUTH_TOKEN'),
+    smsFrom:      env('TWILIO_SMS_FROM') || env('TWILIO_FROM'),
+    whatsappFrom: env('TWILIO_WHATSAPP_FROM'),
+  };
+  const needTable = !cfg.accountSid || !cfg.smsFrom || (!cfg.apiKeySecret && !cfg.authToken);
+  if (needTable) {
+    try {
+      const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+      const { data } = await sb.from('integration_secrets').select('key,value').like('key', 'twilio_%');
+      const m: Record<string, string> = Object.fromEntries(
+        ((data ?? []) as Array<{ key: string; value: string }>).map((r) => [r.key, r.value]),
+      );
+      cfg.accountSid   ||= m.twilio_account_sid;
+      cfg.apiKeySid    ||= m.twilio_api_key_sid;
+      cfg.apiKeySecret ||= m.twilio_api_key_secret;
+      cfg.authToken    ||= m.twilio_auth_token;
+      // send-sms sends from twilio_from (an "MG…" value there is a Messaging
+      // Service); the explicit messaging-service row is the fallback.
+      cfg.smsFrom      ||= m.twilio_from || m.twilio_messaging_service_sid;
+      cfg.whatsappFrom ||= m.twilio_whatsapp_from;
+    } catch (_) {
+      // fall through; guard below returns a clear 503
+    }
+  }
+  return cfg;
+}
+
 // Normalise an AU mobile to E.164 ("+61..."). Accepts: "0412 345 678",
 // "+61 412 345 678", "0412345678", "61412345678".
 function normaliseAUE164(mobile: string): string {
@@ -93,7 +132,7 @@ function normaliseAUE164(mobile: string): string {
   return d.startsWith('+') ? d : `+${d}`;
 }
 
-async function sendOne(opts: {
+async function sendOne(cfg: TwilioCfg, opts: {
   channel: 'sms' | 'whatsapp',
   to:      string,
   body:    string,
@@ -101,24 +140,26 @@ async function sendOne(opts: {
   const e164 = normaliseAUE164(opts.to);
   if (!e164) return { ok: false, error: 'invalid_mobile' };
 
-  const isWA = opts.channel === 'whatsapp';
-  const fromEnv = isWA ? TWILIO_WHATSAPP_FROM : TWILIO_SMS_FROM;
-  if (!fromEnv) return { ok: false, error: isWA ? 'twilio_whatsapp_from_not_set' : 'twilio_sms_from_not_set' };
+  const isWA   = opts.channel === 'whatsapp';
+  const sender = isWA ? cfg.whatsappFrom : cfg.smsFrom;
+  if (!sender) return { ok: false, error: isWA ? 'twilio_whatsapp_from_not_set' : 'twilio_sms_from_not_set' };
 
-  const to   = isWA ? `whatsapp:${e164}` : e164;
-  const from = isWA && !fromEnv.startsWith('whatsapp:') ? `whatsapp:${fromEnv}` : fromEnv;
-
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`;
   const form = new URLSearchParams();
-  form.set('To', to);
-  form.set('From', from);
+  form.set('To', isWA ? `whatsapp:${e164}` : e164);
   form.set('Body', opts.body);
+  if (isWA)                         form.set('From', sender.startsWith('whatsapp:') ? sender : `whatsapp:${sender}`);
+  else if (sender.startsWith('MG')) form.set('MessagingServiceSid', sender);   // Messaging Service, as send-sms does
+  else                              form.set('From', sender);
 
+  // Prefer a scoped API key over the master auth token, as send-sms does.
+  const user = cfg.apiKeySid || cfg.accountSid;
+  const pass = cfg.apiKeySecret || cfg.authToken;
+  const url  = `https://api.twilio.com/2010-04-01/Accounts/${cfg.accountSid}/Messages.json`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type':  'application/x-www-form-urlencoded',
-      'Authorization': 'Basic ' + btoa(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`),
+      'Authorization': 'Basic ' + btoa(`${user}:${pass}`),
     },
     body: form.toString(),
   });
@@ -135,10 +176,11 @@ serve(async (req) => {
   const gate = await gateCaller(req, 'office');
   if (!gate.ok) return json({ error: gate.error }, gate.status);
 
-  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
+  const cfg = await loadConfig();
+  if (!cfg.accountSid || (!cfg.apiKeySecret && !cfg.authToken)) {
     return json({
       error: 'twilio_not_configured',
-      message: 'Add TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN to Supabase Edge Function secrets.',
+      message: 'No Twilio account sid + auth token (or api key) in Edge Function secrets or integration_secrets.',
     }, 503);
   }
 
@@ -148,6 +190,13 @@ serve(async (req) => {
   const channel = body?.channel;
   if (channel !== 'sms' && channel !== 'whatsapp') {
     return json({ error: "channel must be 'sms' or 'whatsapp'" }, 400);
+  }
+  // A missing sender is a config problem, not 200 "failed" rows in message_log.
+  if (channel === 'sms' && !cfg.smsFrom) {
+    return json({ error: 'twilio_sms_from_not_set', message: 'Set TWILIO_SMS_FROM or the integration_secrets row twilio_from / twilio_messaging_service_sid.' }, 503);
+  }
+  if (channel === 'whatsapp' && !cfg.whatsappFrom) {
+    return json({ error: 'twilio_whatsapp_from_not_set', message: 'Set TWILIO_WHATSAPP_FROM or the integration_secrets row twilio_whatsapp_from.' }, 503);
   }
   const text = (body?.body || '').toString();
   if (!text.trim()) return json({ error: 'body_required' }, 400);
@@ -185,7 +234,7 @@ serve(async (req) => {
         });
         continue;
       }
-      const result = await sendOne({ channel, to: mobile, body: text });
+      const result = await sendOne(cfg, { channel, to: mobile, body: text });
       await supa.from('message_log').insert({
         batch_id: batchId, channel, audience,
         recipient_id: r.id || null,
