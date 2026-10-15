@@ -56,7 +56,9 @@ export function ReportsPage({ showToast }) {
         const rows = data.map(({ workers, ...r }) => ({ worker_name: workers?.name, ...r }));
         downloadCSV(`certifications_export_${todayISO()}.csv`, rows);
       } else if (type === 'clients') {
-        const { data, error } = await supabase.from('clients').select('*');
+        // Admins get money columns through the view; others get the safe columns.
+        let { data, error } = await supabase.from('v_clients_admin').select('*');
+        if (error || !data?.length) ({ data, error } = await supabase.from('clients').select('id, name, site, contact, contact_email, contact_phone, notes, created_at, email_domains, rate_set_id, award_profile, archived_at'));
         if (error) throw error;
         downloadCSV(`clients_export_${todayISO()}.csv`, data);
       }

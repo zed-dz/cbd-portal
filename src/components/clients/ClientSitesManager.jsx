@@ -62,13 +62,14 @@ export function ClientSitesManager({ client, onClose, showToast }) {
     setSiteForm(null); load();
   };
 
-  const removeSite = async (site) => {
-    const n = contacts.filter(c => c.site_id === site.id).length;
-    // eslint-disable-next-line no-restricted-globals
-    if (!window.confirm(`Delete "${site.name}"${n ? ` and its ${n} contact${n === 1 ? '' : 's'}` : ''}?\n\nAllocations already recorded against this site keep the site name they were saved with.`)) return;
-    const { error } = await supabase.from('client_sites').delete().eq('id', site.id);
+  // Sites are master data: deactivate, never delete (audit P1 / Dashpivot rule).
+  // An inactive site leaves the pick-lists; old allocations keep it.
+  const toggleSiteActive = async (site) => {
+    const deactivating = site.is_active !== false;
+    if (deactivating && !window.confirm(`Deactivate "${site.name}"?\n\nIt leaves the pick-lists. Allocations already recorded against it are unchanged, and you can reactivate it any time.`)) return;
+    const { error } = await supabase.from('client_sites').update({ is_active: !deactivating }).eq('id', site.id);
     if (error) { showToast(error.message, 'error'); return; }
-    showToast('Site deleted.', 'success'); load();
+    showToast(deactivating ? 'Site deactivated.' : 'Site reactivated.', 'success'); load();
   };
 
   const saveContact = async () => {
@@ -130,7 +131,7 @@ export function ClientSitesManager({ client, onClose, showToast }) {
               </div>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                 <button style={btnSmall} onClick={() => setSiteForm({ ...site })}>Edit</button>
-                <button style={{ ...btnSmall, ...btnDanger }} onClick={() => removeSite(site)}>Delete</button>
+                <button style={btnSmall} onClick={() => toggleSiteActive(site)}>{site.is_active === false ? 'Reactivate' : 'Deactivate'}</button>
               </div>
             </div>
 

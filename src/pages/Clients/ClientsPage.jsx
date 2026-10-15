@@ -9,6 +9,10 @@ import { EmailHistoryPanel } from '../../components/inbox/EmailHistoryPanel';
 import { ActivityFeed } from '../../components/activity/ActivityFeed';
 import { logActivity } from '../../utils/activity';
 
+// Column grants hide the money columns on `clients` from non-admins (audit P1).
+const CLIENT_SAFE_COLS = 'id, name, site, contact, contact_email, contact_phone, notes, created_at, email_domains, rate_set_id, award_profile, archived_at';
+const CLIENT_MONEY_COLS = 'rate_regular, rate_overtime, rate_night, rate_weekend, charge_travel, charge_meal, rate_a, rate_b, rate_c';
+
 const clientDefaults = {
   name: '', site: '', contact: '', contact_email: '', contact_phone: '',
   award_profile: '',   // '' = project default; A/B/C = Dashpivot rules, PORTAL = legacy 7.6h+RDO
@@ -146,14 +150,24 @@ function ClientsList({ showToast, canSeeRates = true }) {
 
   const load = useCallback(async () => {
     setLoading(true);
+    // Money columns are no longer on the table grant: admins read them from
+    // the v_clients_admin view and merge by id (audit P1, money is private).
     const { data, error } = await supabase
       .from('clients')
-      .select('*, client_jobs(id), client_rate_cards(id)')
+      .select(`${CLIENT_SAFE_COLS}, client_jobs(id), client_rate_cards(id)`)
       .order('name');
-    if (error) showToast(error.message, 'error');
-    else setClients(data || []);
+    if (error) { showToast(error.message, 'error'); setLoading(false); return; }
+    let rows = data || [];
+    if (canSeeRates) {
+      const { data: money } = await supabase.from('v_clients_admin').select(`id, ${CLIENT_MONEY_COLS}`);
+      if (money) {
+        const byId = new Map(money.map(r => [r.id, r]));
+        rows = rows.map(r => ({ ...r, ...(byId.get(r.id) || {}) }));
+      }
+    }
+    setClients(rows);
     setLoading(false);
-  }, [showToast]);
+  }, [showToast, canSeeRates]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -240,18 +254,12 @@ function ClientsList({ showToast, canSeeRates = true }) {
     load();
   };
 
-  const handleDelete = async (c) => {
-    if (!window.confirm(`Delete client "${c.name}"? All their jobs and rate cards will also be deleted.\n\nPrefer Archive — it keeps the history.`)) return;
-    const { error } = await supabase.from('clients').delete().eq('id', c.id);
-    if (error) showToast(error.message, 'error');
-    else {
-      logActivity({ verb: 'deleted', object_type: 'client', after: { name: c.name } });
-      showToast('Client deleted', 'success'); load();
-    }
-  };
+  // Clients are master data: archive, never delete (audit P1 / Dashpivot rule).
 
   const handleExport = async () => {
-    const { data, error } = await supabase.from('clients').select('*');
+    const { data, error } = await (canSeeRates
+      ? supabase.from('v_clients_admin').select('*')
+      : supabase.from('clients').select(CLIENT_SAFE_COLS));
     if (error) { showToast(error.message, 'error'); return; }
     downloadCSV(`clients_export_${todayISO()}.csv`, data);
     showToast('Clients exported', 'success');
@@ -301,7 +309,6 @@ function ClientsList({ showToast, canSeeRates = true }) {
       onOpenProjects={() => setJobsClient({ ...selected, _initialTab: 'jobs' })}
       onOpenSites={() => setSitesFor(selected)}
       onArchive={() => toggleArchive(selected)}
-      onDelete={() => handleDelete(selected)}
     />
   ) : (
     <EmptyState message={clients.length ? 'Select a client on the left.' : 'No clients yet. Add your first client to get started.'} />
@@ -477,7 +484,7 @@ function ClientsList({ showToast, canSeeRates = true }) {
 
 // ── Right-hand client detail: header + Sites/Rates/Timesheets/Activity ──────
 
-function ClientDetail({ client, detailTab, setDetailTab, refreshKey, onEdit, onOpenRates, onOpenProjects, onOpenSites, onArchive, onDelete, canSeeRates = true, showToast }) {
+function ClientDetail({ client, detailTab, setDetailTab, refreshKey, onEdit, onOpenRates, onOpenProjects, onOpenSites, onArchive, canSeeRates = true, showToast }) {
   const rateCount = client.client_rate_cards?.length || 0;
   const projCount = client.client_jobs?.length || 0;
   const abc = canSeeRates && (client.rate_a ?? client.rate_regular) != null
@@ -518,7 +525,6 @@ function ClientDetail({ client, detailTab, setDetailTab, refreshKey, onEdit, onO
             </button>
             <button onClick={onOpenSites} style={btnSmall}>Manage sites</button>
             <button onClick={onArchive} style={btnSmall}>{client.archived_at ? 'Unarchive' : 'Archive'}</button>
-            <button onClick={onDelete} style={btnDanger}>Delete</button>
           </div>
         </div>
       </div>
@@ -888,7 +894,7 @@ function RatesPanel({ client, showToast }) {
         .order('category', { ascending: true, nullsFirst: false })
         .order('sort_order', { ascending: true })
         .order('role_name',  { ascending: true }),
-      supabase.from('job_roles').select('*').order('name'),
+      supabase.from('job_roles').select('*').is('archived_at', null).order('name'),
     ]);
     if (c.data) setCards(c.data);
     if (r.data) setAllRoles(r.data);
@@ -1287,7 +1293,7 @@ function JobsPanel({ client, showToast }) {
     setLoading(true);
     const [j, r] = await Promise.all([
       supabase.from('client_jobs').select('*').eq('client_id', client.id).order('created_at', { ascending: false }),
-      supabase.from('job_roles').select('*').order('name'),
+      supabase.from('job_roles').select('*').is('archived_at', null).order('name'),
     ]);
     if (j.data) setJobs(j.data);
     if (r.data) setAllRoles(r.data);
@@ -1819,7 +1825,7 @@ function JobRolesList({ showToast }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('job_roles').select('*').order('name');
+    const { data, error } = await supabase.from('job_roles').select('*').is('archived_at', null).order('name');
     if (error) showToast(error.message, 'error');
     else setRoles(data || []);
     setLoading(false);
@@ -1837,11 +1843,12 @@ function JobRolesList({ showToast }) {
     setSaving(false);
   };
 
+  // Roles are master data: archive, never delete. Old timesheets keep the name.
   const handleDelete = async (r) => {
-    if (!window.confirm(`Remove role "${r.name}"?`)) return;
-    const { error } = await supabase.from('job_roles').delete().eq('id', r.id);
+    if (!window.confirm(`Archive role "${r.name}"? It leaves the pick-lists; timesheets that already use it are unchanged.`)) return;
+    const { error } = await supabase.from('job_roles').update({ archived_at: new Date().toISOString() }).eq('id', r.id);
     if (error) showToast(error.message, 'error');
-    else { showToast('Role removed', 'success'); load(); }
+    else { showToast('Role archived', 'success'); load(); }
   };
 
   return (

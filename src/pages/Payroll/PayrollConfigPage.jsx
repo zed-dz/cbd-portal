@@ -56,7 +56,7 @@ export function PayrollConfigPage({ showToast }) {
 
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase.from('payroll_config').select('*').order('config_key');
+      const { data, error } = await supabase.from('v_payroll_config').select('*').order('config_key');
       if (error) showToast(error.message, 'error');
       else {
         setConfigs(data || []);

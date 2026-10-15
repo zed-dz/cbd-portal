@@ -1,11 +1,18 @@
+// All display formatting is pinned to Sydney (audit P2): an admin or the
+// developer viewing from another time zone used to see shifted dates/times.
 export function fmtDate(str) {
   if (!str) return '—';
-  return new Date(str).toLocaleDateString('en-AU');
+  // A date-only string is a calendar day, not an instant: never let it drift.
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(String(str)) ? new Date(`${str}T12:00:00`) : new Date(str);
+  if (isNaN(d)) return '—';
+  return d.toLocaleDateString('en-AU', { timeZone: 'Australia/Sydney' });
 }
 
 export function fmtDateTime(str) {
   if (!str) return '—';
-  return new Date(str).toLocaleString('en-AU', { dateStyle: 'short', timeStyle: 'short' });
+  const d = new Date(str);
+  if (isNaN(d)) return '—';
+  return d.toLocaleString('en-AU', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Australia/Sydney' });
 }
 
 // Local 'YYYY-MM-DD'. NEVER use toISOString() for a calendar date: that reads the

@@ -1,13 +1,13 @@
 import { C, btnPrimary, btnSecondary } from '../../theme';
-import { fmtDate, fmtDateTime } from '../../utils/dates';
+import { fmtDate, fmtDateTime, sydneyTime } from '../../utils/dates';
 import { dayFromDate } from '../../utils/payroll';
 import { timesheetBadge } from '../ui/Badge';
 
 const BRAND_DEFAULT = 'CBD Plant & Labour';
 
-const fmtTime = (iso) => iso
-  ? new Date(iso).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })
-  : '—';
+// Sydney-pinned (audit P2): the sheet, the print view and the supervisor page
+// showed shifted times to anyone outside Sydney.
+const fmtTime = (iso) => sydneyTime(iso);
 
 const lineRdo = (l) => parseFloat(l.rdo_hours) || 0;
 const lineOT = (l) => l.overtime_hours != null

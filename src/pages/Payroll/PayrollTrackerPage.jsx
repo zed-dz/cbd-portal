@@ -6,10 +6,7 @@ import { downloadCSV } from '../../utils/csv';
 import { computePayrollRow, buildXeroCSV, buildPayBreakdownCSV, buildInvoiceCSV, applyFullTimeMinDay, findRateLine, withRoleRate } from '../../utils/payroll';
 import { Spinner, TableWrap, Th, Td, EmptyState, presetBounds } from '../../components';
 
-const XERO_AUTH_URL = 'https://login.xero.com/identity/connect/authorize';
 const XERO_CLIENT_ID = process.env.REACT_APP_XERO_CLIENT_ID || '';
-const REDIRECT_URI = 'https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-callback';
-const XERO_SCOPES = 'openid profile email offline_access payroll.employees payroll.payruns payroll.payslip accounting.contacts.read';
 
 // Sticky filters: every access is try/catch'd because localStorage throws in
 // private windows and when site data is blocked — the page must still work.
@@ -52,18 +49,17 @@ export function PayrollTrackerPage({ showToast }) {
     setXeroConnected(!!data?.id);
   };
 
-  const connectXero = () => {
-    const state = Math.random().toString(36).slice(2);
-    sessionStorage.setItem('xero_oauth_state', state);
-    const params = new URLSearchParams({
-      response_type: 'code',
-      client_id:     XERO_CLIENT_ID,
-      redirect_uri:  REDIRECT_URI,
-      scope:         XERO_SCOPES,
-      state,
-    });
-    window.location.href = `${XERO_AUTH_URL}?${params}`;
+  const connectXero = async () => {
+    // The consent URL (with a one-time state the callback checks) comes from
+    // the money-gated xero-start function (audit P3: OAuth state).
+    const { data, error } = await supabase.functions.invoke('xero-start', { method: 'GET' });
+    if (error || !data?.auth_url) {
+      showToast(`Could not start the Xero connection: ${error?.message || data?.error || 'not configured yet'}`, 'error');
+      return;
+    }
+    window.location.href = data.auth_url;
   };
+
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -78,8 +74,8 @@ export function PayrollTrackerPage({ showToast }) {
     const [t, w, cl, cfg, rc, rr] = await Promise.all([
       q,
       supabase.from('v_workers_admin').select('id, name, worker_type, pay_rate_regular, pay_rate_overtime, subcontractor_abn').order('name'),
-      supabase.from('clients').select('id, name, rate_a, rate_b, rate_c, rate_regular, rate_overtime, rate_night, rate_weekend').order('name'),
-      supabase.from('payroll_config').select('config_key, config_value'),
+      supabase.from('v_clients_admin').select('id, name, rate_a, rate_b, rate_c, rate_regular, rate_overtime, rate_night, rate_weekend').order('name'),
+      supabase.from('v_payroll_config').select('config_key, config_value'),
       // Per-client Schedule of Rates. Charging bills column A/B/C off the line
       // that matches the timesheet's role, so a night shift is billed at the
       // loaded rate instead of the flat one.

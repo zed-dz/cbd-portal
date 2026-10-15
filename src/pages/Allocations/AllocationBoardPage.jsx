@@ -51,6 +51,8 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
   const [workers, setWorkers] = useState([]);
   const [allocs, setAllocs] = useState([]);
   const [tickets, setTickets] = useState({});       // worker_id → [{ name, expiry }]
+  const [away, setAway] = useState([]);             // worker_unavailability rows touching the week
+  const [awayForm, setAwayForm] = useState(null);   // { worker_id, name, from_date, to_date, reason }
   const [notes, setNotes] = useState('');
   const [savedNotes, setSavedNotes] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
@@ -72,7 +74,7 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [w, a, c1, c2, n] = await Promise.all([
+    const [w, a, c1, c2, n, u] = await Promise.all([
       supabase.from('workers').select(WORKER_SAFE_COLS).is('archived_at', null).order('name'),
       supabase.from('allocations')
         .select('id, worker_id, client, site, project, role, status, start_date, end_date, start_time, group_id, allocation_groups(positions)')
@@ -81,7 +83,10 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
       supabase.from('certifications').select('worker_id, cert_name, expiry'),
       supabase.from('worker_certificates').select('worker_id, name, expiry_date'),
       supabase.from('allocation_board_notes').select('notes').eq('week_start', weekStart).maybeSingle(),
+      supabase.from('worker_unavailability').select('id, worker_id, from_date, to_date, reason')
+        .lte('from_date', weekEnd).gte('to_date', weekStart).order('from_date'),
     ]);
+    setAway(u.data || []);
     if (w.error) showToast(w.error.message, 'error');
     if (a.error) showToast(a.error.message, 'error');
     setWorkers(w.data || []);
@@ -102,6 +107,29 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
     allocs.forEach(a => { (m[a.worker_id] = m[a.worker_id] || []).push(a); });
     return m;
   }, [allocs]);
+  const awayByWorker = useMemo(() => {
+    const m = {};
+    away.forEach(r => { (m[r.worker_id] = m[r.worker_id] || []).push(r); });
+    return m;
+  }, [away]);
+  const isAway = (wid, day) => (awayByWorker[wid] || []).some(r => r.from_date <= day && r.to_date >= day);
+
+  const saveAway = async () => {
+    if (!awayForm?.from_date || !awayForm?.to_date) { showToast('Pick the first and last day.', 'error'); return; }
+    if (awayForm.to_date < awayForm.from_date) { showToast('The last day is before the first day.', 'error'); return; }
+    const { error } = await supabase.from('worker_unavailability').insert([{
+      worker_id: awayForm.worker_id, from_date: awayForm.from_date, to_date: awayForm.to_date,
+      reason: awayForm.reason || null, created_by: currentWorker?.name || null,
+    }]);
+    if (error) { showToast(error.message, 'error'); return; }
+    showToast(`${awayForm.name} marked not available.`, 'success');
+    setAwayForm(null); load();
+  };
+  const removeAway = async (r) => {
+    const { error } = await supabase.from('worker_unavailability').delete().eq('id', r.id);
+    if (error) { showToast(error.message, 'error'); return; }
+    load();
+  };
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -111,7 +139,7 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
       const active = (w.app_status || '') === 'Active';
       if (statusFilter === 'active' && !active) return false;
       if (statusFilter === 'onboarding' && active) return false;
-      if (freeOn && (byWorker[w.id] || []).some(a => covers(a, freeOn))) return false;
+      if (freeOn && ((byWorker[w.id] || []).some(a => covers(a, freeOn)) || isAway(w.id, freeOn))) return false;
       if (q) {
         const hay = [w.name, w.job_title, w.licences, w.mobile, w.email, w.address, w.worker_type,
           (tickets[w.id] || []).map(t => t.name).join(' ')].join(' ').toLowerCase();
@@ -119,7 +147,8 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
       }
       return true;
     });
-  }, [workers, includeOffice, typeFilter, statusFilter, freeOn, search, byWorker, tickets]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workers, includeOffice, typeFilter, statusFilter, freeOn, search, byWorker, tickets, awayByWorker]);
 
   const groups = useMemo(() => {
     const g = {};
@@ -172,6 +201,14 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
 
   const dayCell = (w, day) => {
     const items = (byWorker[w.id] || []).filter(a => covers(a, day));
+    const awayRow = (awayByWorker[w.id] || []).find(r => r.from_date <= day && r.to_date >= day);
+    if (awayRow && !items.length) {
+      return (
+        <span title={awayRow.reason || 'Not available'} style={{ display: 'inline-block', fontSize: 11, color: '#fca5a5', background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, padding: '2px 7px' }}>
+          not available{awayRow.reason ? ` · ${awayRow.reason}` : ''}
+        </span>
+      );
+    }
     if (!items.length) return <span style={{ fontSize: 11, color: C.textDim }}>free</span>;
     return items.map(a => {
       const s = CELL[a.status] || CELL.pending;
@@ -344,7 +381,10 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
                       <td key={d} style={{ ...td, minWidth: 118, background: d === today ? 'rgba(249,115,22,0.04)' : undefined }}>{dayCell(w, d)}</td>
                     ))}
                     <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                      <button style={btnSmall} onClick={() => onAllocate?.([w.id], '')}>Allocate</button>
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        <button style={btnSmall} onClick={() => onAllocate?.([w.id], '')}>Allocate</button>
+                        <button style={{ ...btnSmall, color: C.textMuted }} onClick={() => setAwayForm({ worker_id: w.id, name: w.name, from_date: weekStart, to_date: weekStart, reason: '' })}>Away…</button>
+                      </div>
                     </td>
                   </tr>
                   {expanded === w.id && (
@@ -372,7 +412,10 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
                   {subLine(w)}
                   <div style={{ marginTop: 5 }}>{ticketSummary(w.id)}</div>
                 </div>
-                <button style={{ ...btnSmall, flexShrink: 0 }} onClick={() => onAllocate?.([w.id], '')}>Allocate</button>
+                <div style={{ display: 'grid', gap: 4, flexShrink: 0 }}>
+                  <button style={btnSmall} onClick={() => onAllocate?.([w.id], '')}>Allocate</button>
+                  <button style={{ ...btnSmall, color: C.textMuted }} onClick={() => setAwayForm({ worker_id: w.id, name: w.name, from_date: weekStart, to_date: weekStart, reason: '' })}>Away…</button>
+                </div>
               </div>
               <div style={{ marginTop: 10, display: 'grid', gap: 4 }}>
                 {days.map((d, i) => (
@@ -387,6 +430,44 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
           ))}
         </div>
       ))}
+    </div>
+  );
+
+  // "Not available" list (from Zeff's sheet) + the small form behind "Away…".
+  const awayBox = (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: R.lg, padding: 14, marginTop: 16 }} data-area="not available list">
+      <div style={{ fontWeight: 700, color: C.text, marginBottom: 6 }}>🚫 Not available this week</div>
+      {away.length === 0 && !awayForm && <div style={{ fontSize: 12.5, color: C.textDim }}>Nobody marked away. Use “Away…” next to a worker.</div>}
+      <div style={{ display: 'grid', gap: 6 }}>
+        {away.map(r => {
+          const w = workers.find(x => x.id === r.worker_id);
+          return (
+            <div key={r.id} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 12.5, flexWrap: 'wrap' }}>
+              <strong style={{ color: C.text }}>{w?.name || 'Worker'}</strong>
+              <span style={{ color: C.textMuted, fontFamily: MONO, fontSize: 11 }}>{shortDate(r.from_date)}{r.to_date !== r.from_date ? ` – ${shortDate(r.to_date)}` : ''}</span>
+              {r.reason && <span style={{ color: C.textMuted }}>{r.reason}</span>}
+              <button style={{ ...btnSmall, marginLeft: 'auto', color: C.textMuted }} onClick={() => removeAway(r)}>Remove</button>
+            </div>
+          );
+        })}
+      </div>
+      {awayForm && (
+        <div style={{ marginTop: 10, padding: 12, background: C.bg, border: `1px solid ${C.border}`, borderRadius: R.md, display: 'grid', gap: 8 }}>
+          <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{awayForm.name} — not available</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <label style={{ fontSize: 11, color: C.textMuted }}>From<br />
+              <input type="date" style={{ ...inputStyle, width: 'auto' }} value={awayForm.from_date} onChange={e => setAwayForm(f => ({ ...f, from_date: e.target.value }))} /></label>
+            <label style={{ fontSize: 11, color: C.textMuted }}>To<br />
+              <input type="date" style={{ ...inputStyle, width: 'auto' }} value={awayForm.to_date} onChange={e => setAwayForm(f => ({ ...f, to_date: e.target.value }))} /></label>
+            <label style={{ fontSize: 11, color: C.textMuted, flex: '1 1 160px' }}>Reason (optional)<br />
+              <input style={inputStyle} value={awayForm.reason} placeholder="holiday, sick, other job…" onChange={e => setAwayForm(f => ({ ...f, reason: e.target.value }))} /></label>
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button style={btnSmall} onClick={() => setAwayForm(null)}>Cancel</button>
+            <button style={btnPrimary} onClick={saveAway}>Save</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -420,6 +501,7 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
         ))}
         <span>“free” = no live allocation that day</span>
       </div>
+      {awayBox}
       {notesBox}
     </div>
   );

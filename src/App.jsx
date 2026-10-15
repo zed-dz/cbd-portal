@@ -248,6 +248,13 @@ function AppShell() {
     return () => subscription.unsubscribe();
   }, [fetchWorker]);
 
+  // Profile edits (e.g. notification settings) ask for a fresh currentWorker.
+  useEffect(() => {
+    const onUpdated = () => { if (lastFetchedEmail.current) fetchWorker(lastFetchedEmail.current); };
+    window.addEventListener('cbd:worker-updated', onUpdated);
+    return () => window.removeEventListener('cbd:worker-updated', onUpdated);
+  }, [fetchWorker]);
+
   async function handleLogin(e) {
     e.preventDefault();
     setLoginError('');

@@ -118,7 +118,9 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         { id: 'rate_sets', label: '📚 Rate Sets' },
         { id: 'default_rates', label: '💲 Default Rates' },
         { id: 'payroll', label: '💰 Payroll', badge: badges.payroll || null, badgeColor: 'green' },
-        { id: 'payments', label: '💳 Payments' },
+        // Payments (Stripe) is hidden until its maths matches payroll/billing and
+        // the Stripe keys are set (audit P2). Set REACT_APP_PAYMENTS_ENABLED=1 to show it.
+        ...(process.env.REACT_APP_PAYMENTS_ENABLED === '1' ? [{ id: 'payments', label: '💳 Payments' }] : []),
         { id: 'payroll_config', label: '⚙ Payroll Config' },
         { id: 'xero_sync', label: '🔄 Xero Data' },
       ],
@@ -288,7 +290,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: C.bg, display: 'flex', flexDirection: 'column' }}>
           <div style={{ background: '#1a1a2e', borderBottom: `2px solid ${C.accent}`, padding: '8px 20px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
             <span style={{ fontSize: 11, color: C.accent, fontFamily: '"DM Mono", monospace', fontWeight: 700, letterSpacing: 1 }}>PREVIEW MODE — Worker Portal</span>
-            <span style={{ fontSize: 11, color: C.textMuted }}>Viewing as: {currentWorker?.name}</span>
+            <span style={{ fontSize: 11, color: C.textMuted }}>Viewing as: {currentWorker?.name} — anything you submit here is saved for real under your own name</span>
             <button onClick={() => setPreviewMode(false)} style={{ ...btnPrimary, marginLeft: 'auto', padding: '5px 14px', fontSize: 12 }}>✕ Exit Preview</button>
           </div>
           <div style={{ flex: 1, overflow: 'auto' }}>

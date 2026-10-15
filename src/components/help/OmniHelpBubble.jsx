@@ -10,7 +10,8 @@ import { buildScreenMap } from '../../utils/screenMap';
 //    (Q&A + config only, never actions) so it is safe in the client; rotate it
 //    in VC (/assets) any time. Override via REACT_APP_* if you prefer env vars.
 const VC_URL = process.env.REACT_APP_VC_URL || 'https://venture-command.vercel.app';
-const ECO_KEY = process.env.REACT_APP_ECOSYSTEM_KEY || 'eco_ad33269dae0847c08ecb6f01b0d7ff9d';
+// Set in Vercel (REACT_APP_ECOSYSTEM_KEY); no literal in git (audit P3).
+const ECO_KEY = process.env.REACT_APP_ECOSYSTEM_KEY || '';
 
 export function OmniHelpBubble() {
   // Always available: the answering path is this portal's own edge function now,

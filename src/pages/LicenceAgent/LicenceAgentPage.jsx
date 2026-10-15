@@ -118,7 +118,8 @@ export function LicenceAgentPage({ showToast }) {
     if (!matchSearch) return false;
     if (!filterStatus) return true;
     if (!c.expiry) return filterStatus === 'valid';
-    const exp = new Date(c.expiry);
+    // Valid for the whole expiry day (a date-only string parses as UTC midnight).
+    const exp = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(c.expiry)) ? `${c.expiry}T23:59:59` : c.expiry);
     const diff = (exp - now) / (1000 * 60 * 60 * 24);
     if (filterStatus === 'expired') return diff < 0;
     if (filterStatus === 'expiring') return diff >= 0 && diff < 30;

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnSmall, btnDanger } from '../../theme';
-import { todayISO, isTakeFiveDay, sydneyHHMM, sydneyInstant } from '../../utils/dates';
+import { todayISO, isTakeFiveDay, sydneyHHMM, sydneyInstant, sydneyTime } from '../../utils/dates';
 import {
   dayFromDate, computeLineTotalHours, computeLineRegularHours, autoMealAllowance, SHIFT_TYPES,
   splitDailyHours,
@@ -138,10 +138,11 @@ export function DailyTimesheetForm({
     (async () => {
       const [c, r, j, s, cfg] = await Promise.all([
         supabase.from('clients').select('id, name, award_profile').order('name'),
-        supabase.from('job_roles').select('name').order('name'),
+        supabase.from('job_roles').select('name').is('archived_at', null).order('name'),
         supabase.from('client_jobs').select('name, client_id').order('name'),
         supabase.from('client_sites').select('id, name, client_id, is_active').order('name'),
-        supabase.from('payroll_config').select('config_key, config_value'),
+        // v_payroll_config hides the client charge-rate defaults from workers.
+        supabase.from('v_payroll_config').select('config_key, config_value'),
       ]);
       if (!mounted) return;
       if (c.data) setClients(c.data);
@@ -750,7 +751,7 @@ export function DailyTimesheetForm({
           <div style={{ fontSize: 12, fontWeight: 700, color: C.warning, marginBottom: 4 }}>✎ Hours were adjusted after submission</div>
           {form.hours_lines.filter(l => l.adjusted_at).map((l, i) => (
             <div key={i} style={{ fontSize: 12, color: C.textMuted }}>
-              {l.date}: originally submitted {l.original_start_time ? new Date(l.original_start_time).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }) : '—'} – {l.original_end_time ? new Date(l.original_end_time).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }) : '—'} · adjusted by {l.adjusted_by || 'admin'}
+              {l.date}: originally submitted {sydneyTime(l.original_start_time)} – {sydneyTime(l.original_end_time)} · adjusted by {l.adjusted_by || 'admin'}
             </div>
           ))}
         </div>

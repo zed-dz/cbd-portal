@@ -129,7 +129,7 @@ export function WorkerCertificateUploads({ workerId, showToast, canEdit = false 
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>
           {rows.map((c) => {
-            const expired = c.expiry_date && new Date(c.expiry_date) < new Date();
+            const expired = c.expiry_date && new Date(`${String(c.expiry_date).slice(0, 10)}T23:59:59`) < new Date();
             return (
               <div key={c.id} style={{ background: C.card, borderRadius: 10, border: `1px solid ${expired ? C.error : C.border}`, padding: 18 }}>
                 <div style={{ fontWeight: 700, color: C.text, fontSize: 15, marginBottom: 8 }}>{c.name}</div>

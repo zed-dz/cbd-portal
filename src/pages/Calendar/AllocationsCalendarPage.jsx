@@ -5,6 +5,9 @@ import { Modal, Field, Spinner, EmptyState, DateField } from '../../components';
 import { PUBLIC_HOLIDAYS } from '../../utils/payroll';
 import { localISO } from '../../utils/dates';
 import { logActivity } from '../../utils/activity';
+import { notifyAllocationCreated } from '../../utils/allocationNotify';
+import { addAdminNotification } from '../../utils/notify';
+import { ROLE_GROUPS } from '../../constants/roles';
 
 // Calendar entry types — RDO / leave days get their own colours instead of the
 // per-worker colour, so the roster reads at a glance.
@@ -100,7 +103,7 @@ const ALLOC_COLORS = ['#f97316', '#22c55e', '#3b82f6', '#a855f7', '#ec4899', '#e
 const allocDefaults = {
   worker_id: '', site: '', client: '', project: '', address: '', site_manager: '',
   manager_phone: '', status: 'pending', start_date: '', end_date: '', notes: '',
-  allocation_type: 'work',
+  allocation_type: 'work', role: '', map_link: '',
 };
 
 export function AllocationsCalendarPage({ showToast }) {
@@ -110,6 +113,10 @@ export function AllocationsCalendarPage({ showToast }) {
   const [selectedWorkerId, setSelectedWorkerId] = useState(null);
   const [allocations, setAllocations] = useState([]);
   const [allWorkers, setAllWorkers] = useState([]);
+  // Pick-lists for the quick form (clients/sites are never free text — audit P2).
+  const [clients, setClients] = useState([]);
+  const [sites, setSites] = useState([]);
+  const [siteContacts, setSiteContacts] = useState([]);
   const [approvedSet, setApprovedSet] = useState(() => new Set()); // "workerId|date" with an approved timesheet
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null);
@@ -131,18 +138,24 @@ export function AllocationsCalendarPage({ showToast }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [a, w, t] = await Promise.all([
+    const [a, w, t, c, s, k] = await Promise.all([
       supabase.from('allocations')
         .select('*, workers(name, job_title)')
         .lte('start_date', rangeEnd)
         .or(`end_date.is.null,end_date.gte.${rangeStart}`),
-      supabase.from('workers').select('id, name, job_title').is('archived_at', null).order('name'),
+      supabase.from('workers').select('id, name, job_title, mobile, email').is('archived_at', null).order('name'),
       supabase.from('timesheets').select('worker_id, date')
         .eq('status', 'approved').gte('date', rangeStart).lte('date', rangeEnd),
+      supabase.from('clients').select('id, name').is('archived_at', null).order('name'),
+      supabase.from('client_sites').select('id, client_id, name, address, map_link').eq('is_active', true).order('name'),
+      supabase.from('client_site_contacts').select('id, site_id, name, phone, is_primary').order('name'),
     ]);
     if (a.error) showToast(a.error.message, 'error');
     else setAllocations(a.data || []);
     if (w.data) setAllWorkers(w.data);
+    if (c.data) setClients(c.data);
+    if (s.data) setSites(s.data);
+    if (k.data) setSiteContacts(k.data);
     setApprovedSet(new Set((t.data || []).map(r => `${r.worker_id}|${r.date}`)));
     setLoading(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -209,11 +222,30 @@ export function AllocationsCalendarPage({ showToast }) {
     }
 
     setSaving(true);
-    const payload = { ...form, end_date: form.end_date || null };
+    // Resolve the picked client/site to ids (same rule as the Allocations page):
+    // names stay as the human record, ids are what billing uses.
+    const cs = clients.filter(c => c.name === form.client);
+    const siteRow = sites.find(s => cs.some(c => c.id === s.client_id) && s.name === form.site) || null;
+    const clientRow = siteRow ? cs.find(c => c.id === siteRow.client_id) : (cs.length === 1 ? cs[0] : null);
+    const payload = {
+      ...form,
+      end_date: form.end_date || null,
+      role: form.role || null,
+      map_link: form.map_link || null,
+      client_id: clientRow?.id || null,
+      site_id: siteRow?.id || null,
+    };
     if (modal === 'add') {
-      const { error } = await supabase.from('allocations').insert([payload]);
+      const { data: inserted, error } = await supabase.from('allocations').insert([payload]).select().single();
       if (error) showToast(error.message, 'error');
-      else { showToast('Allocation created', 'success'); closeModal(); load(); }
+      else {
+        showToast('Allocation created', 'success');
+        // Work allocations are offers: the worker must hear about them.
+        if ((payload.allocation_type || 'work') === 'work') {
+          notifyAllocationCreated(inserted, allWorkers.find(w => w.id === inserted.worker_id), { showToast });
+        }
+        closeModal(); load();
+      }
     } else {
       const { error } = await supabase.from('allocations').update(payload).eq('id', modal.id);
       if (error) showToast(error.message, 'error');
@@ -280,13 +312,21 @@ export function AllocationsCalendarPage({ showToast }) {
       }));
       const { data: inserted, error } = await supabase.from('allocations').insert(rows).select();
       if (error) { showToast(error.message, 'error'); return; }
-      (inserted || []).forEach(r => logActivity({
-        verb: 'created', object_type: 'allocation', object_id: r.id,
-        after: {
-          worker: allWorkers.find(w => w.id === r.worker_id)?.name || null,
-          client: r.client, site: r.site, start_date: r.start_date, copied_from: dayISO,
-        },
-      }));
+      // Each worker is told (SMS + email); the office gets ONE summary.
+      (inserted || []).forEach(r => {
+        if ((r.allocation_type || 'work') === 'work') {
+          notifyAllocationCreated(r, allWorkers.find(w => w.id === r.worker_id), { showToast, adminQuiet: true });
+        } else {
+          logActivity({ verb: 'created', object_type: 'allocation', object_id: r.id,
+            after: { worker: allWorkers.find(w => w.id === r.worker_id)?.name || null, type: r.allocation_type, start_date: r.start_date, copied_from: dayISO } });
+        }
+      });
+      addAdminNotification({
+        type: 'allocation_sent',
+        title: `Copied ${(inserted || []).length} allocation${(inserted || []).length === 1 ? '' : 's'} to ${next}`,
+        body: `From ${dayISO}. Each worker has been asked to accept again.`,
+        allocation_id: inserted?.[0]?.id || null, worker_id: null,
+      }).then(() => window.dispatchEvent(new CustomEvent('cbd:notify'))).catch(() => {});
       const skipNote = skipped.length
         ? ` Skipped ${skipped.length}: ${[...new Set(skipped.map(a => a.workers?.name || 'Worker'))].join(', ')} — already allocated on ${next}.`
         : '';
@@ -333,7 +373,7 @@ export function AllocationsCalendarPage({ showToast }) {
   if (view === 'monthly') {
     return (
       <MonthlyWorkerView
-        workers={allWorkers}
+        workers={allWorkers} clients={clients} sites={sites} siteContacts={siteContacts}
         allocations={allocations}
         approvedSet={approvedSet}
         loading={loading}
@@ -496,7 +536,7 @@ export function AllocationsCalendarPage({ showToast }) {
         </div>
       )}
 
-      {modal && <AllocationModal {...{ modal, form, setForm, closeModal, handleSave, saving, allWorkers }} />}
+      {modal && <AllocationModal {...{ modal, form, setForm, closeModal, handleSave, saving, allWorkers, clients, sites, siteContacts }} />}
     </div>
   );
 }
@@ -504,7 +544,7 @@ export function AllocationsCalendarPage({ showToast }) {
 // ── Monthly per-worker view ────────────────────────────────────────────────
 
 function MonthlyWorkerView({
-  workers, allocations, approvedSet, loading, monthDate, prevMonth, nextMonth, goThisMonth,
+  workers, clients = [], sites = [], siteContacts = [], allocations, approvedSet, loading, monthDate, prevMonth, nextMonth, goThisMonth,
   selectedWorkerId, setSelectedWorkerId, workerColorMap, viewToggle,
   openCreate, openEdit, modal, form, setForm, closeModal, handleSave, saving,
 }) {
@@ -651,7 +691,7 @@ function MonthlyWorkerView({
               color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 15, fontWeight: 700, letterSpacing: 0.5, flexShrink: 0,
             }}>
-              {selectedWorker.name.split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase()}
+              {(selectedWorker.name || '?').split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase()}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 18, fontWeight: 700, color: C.text }}>{selectedWorker.name}</div>
@@ -794,7 +834,7 @@ function MonthlyWorkerView({
         </>
       )}
 
-      {modal && <AllocationModal {...{ modal, form, setForm, closeModal, handleSave, saving, allWorkers: workers }} />}
+      {modal && <AllocationModal {...{ modal, form, setForm, closeModal, handleSave, saving, allWorkers: workers, clients, sites, siteContacts }} />}
     </div>
   );
 }
@@ -845,7 +885,22 @@ function fmtRange(start, end) {
     : `${s.getDate()}/${s.getMonth() + 1}–${e.getDate()}/${e.getMonth() + 1}`;
 }
 
-function AllocationModal({ modal, form, setForm, closeModal, handleSave, saving, allWorkers }) {
+function AllocationModal({ modal, form, setForm, closeModal, handleSave, saving, allWorkers, clients = [], sites = [], siteContacts = [] }) {
+  const clientIds = clients.filter(c => c.name === form.client).map(c => c.id);
+  const clientSites = sites.filter(s => clientIds.includes(s.client_id));
+  const pickSite = (v) => {
+    const hit = clientSites.find(s => s.name === v);
+    const contact = hit
+      ? siteContacts.find(k => k.site_id === hit.id && k.is_primary) || siteContacts.find(k => k.site_id === hit.id)
+      : null;
+    setForm(f => ({
+      ...f, site: v,
+      ...(hit?.address && !f.address ? { address: hit.address } : {}),
+      ...(hit?.map_link && !f.map_link ? { map_link: hit.map_link } : {}),
+      ...(contact && !f.site_manager ? { site_manager: contact.name } : {}),
+      ...(contact?.phone && !f.manager_phone ? { manager_phone: contact.phone } : {}),
+    }));
+  };
   return (
     <Modal title={modal === 'add' ? 'Create Allocation' : 'Edit Allocation'} onClose={closeModal} width={540}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
@@ -866,8 +921,34 @@ function AllocationModal({ modal, form, setForm, closeModal, handleSave, saving,
         </div>
         <Field label="Start Date *"><DateField value={form.start_date} onChange={v => setForm(f => ({ ...f, start_date: v }))} /></Field>
         <Field label="End Date" hint="Leave empty for a single day."><DateField value={form.end_date} onChange={v => setForm(f => ({ ...f, end_date: v }))} /></Field>
-        <Field label="Client"><input style={inputStyle} value={form.client} onChange={e => setForm(f => ({ ...f, client: e.target.value }))} /></Field>
-        <Field label="Site"><input style={inputStyle} value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} /></Field>
+        {/* Pick-lists only (audit P2): free-typed names made duplicate clients and $0 billing. */}
+        <Field label="Client">
+          <select style={inputStyle} value={form.client}
+            onChange={e => setForm(f => ({ ...f, client: e.target.value, site: '', address: '', map_link: '' }))}>
+            <option value="">Select a client…</option>
+            {[...new Set(clients.map(c => c.name).filter(Boolean))].map(n => <option key={n} value={n}>{n}</option>)}
+            {form.client && !clients.some(c => c.name === form.client) && <option value={form.client}>{form.client}</option>}
+          </select>
+        </Field>
+        <Field label="Site" hint={form.client ? `${clientSites.length} site${clientSites.length === 1 ? '' : 's'} on file` : 'Pick a client first'}>
+          <select style={inputStyle} value={form.site} disabled={!form.client} onChange={e => pickSite(e.target.value)}>
+            <option value="">{form.client ? 'Select a site…' : 'Pick a client first'}</option>
+            {clientSites.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+            {form.site && !clientSites.some(s => s.name === form.site) && <option value={form.site}>{form.site}</option>}
+          </select>
+        </Field>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <Field label="Role to be performed">
+            <select style={inputStyle} value={form.role || ''} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
+              <option value="">Select a role…</option>
+              {ROLE_GROUPS.map(g => (
+                <optgroup key={g.category} label={g.category}>
+                  {g.roles.map(r => <option key={r.name} value={r.name}>{r.name}</option>)}
+                </optgroup>
+              ))}
+            </select>
+          </Field>
+        </div>
         <Field label="Project"><input style={inputStyle} value={form.project} onChange={e => setForm(f => ({ ...f, project: e.target.value }))} /></Field>
         <Field label="Site Manager"><input style={inputStyle} value={form.site_manager} onChange={e => setForm(f => ({ ...f, site_manager: e.target.value }))} /></Field>
         <Field label="Status">

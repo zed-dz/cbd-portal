@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
-import { fmtDate, fmtDateTime } from '../../utils/dates';
+import { fmtDate, fmtDateTime, sydneyHHMM, sydneyInstant } from '../../utils/dates';
 import { normaliseAUMobile, sendWorkerSms, addAdminNotification, allocationSmsBody, broadcastAdminSms, adminCreateSmsBody, sendAdminEmail, sendWorkerAllocationEmail } from '../../utils/notify';
 import { logActivity } from '../../utils/activity';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, DateField, ClockField } from '../../components';
@@ -145,9 +145,8 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
       // Extract time-only from stored datetime
       // Stored instants render back as LOCAL wall-clock (same tz contract as
       // timesheets — slicing the raw string showed UTC and drifted +10h).
-      arrival_time: a.start_time
-        ? (d => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`)(new Date(a.start_time))
-        : '',
+      // Sydney wall-clock, whatever zone the admin's browser is in (audit P2).
+      arrival_time: a.start_time ? sydneyHHMM(a.start_time) : '',
       notes: a.notes || '',
       map_link: a.map_link || '',
     });
@@ -216,7 +215,7 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
       // Combine date + time into full timestamp
       // Real UTC instant from the local date+time (naive strings shifted +10h).
       start_time: form.arrival_time && form.start_date
-        ? new Date(`${form.start_date}T${form.arrival_time}:00`).toISOString() : null,
+        ? sydneyInstant(form.start_date, form.arrival_time) : null,
       // Finish time removed from allocations (owner: "we don't know when they
       // finish") — actual hours come from the worker's timesheet.
       end_time: null,

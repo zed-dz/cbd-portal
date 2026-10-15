@@ -11,7 +11,7 @@
 // Used by: WorkersPage (Add Worker → Send Invite, Copy Link buttons),
 // PendingWorkersPage (Send Reminder, Copy Link, SMS, WhatsApp).
 
-const PROD_FALLBACK = 'https://cbd-portal-gray.vercel.app';
+const PROD_FALLBACK = 'https://portal.cbdpnl.com.au';
 
 export function portalBaseUrl() {
   const envUrl = process.env.REACT_APP_PORTAL_URL;

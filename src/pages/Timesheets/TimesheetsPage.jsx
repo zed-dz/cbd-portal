@@ -128,7 +128,7 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
       // stale (audit P1).
       supabase.from('timesheets').select('*, workers(name)').is('header_id', null).order('created_at', { ascending: false }),
       supabase.from('workers').select('id, name, worker_type').is('archived_at', null).order('name'),
-      supabase.from('payroll_config').select('config_key, config_value'),
+      supabase.from('v_payroll_config').select('config_key, config_value'),
       supabase.from('clients').select('id, name').order('name'),
     ]);
     if (t.error) showToast(t.error.message, 'error');

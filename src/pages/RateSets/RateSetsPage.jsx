@@ -68,14 +68,7 @@ export function RateSetsPage({ showToast }) {
     setSetForm(null); load();
   };
 
-  const removeSet = async (s) => {
-    const used = clients.filter(c => c.rate_set_id === s.id);
-    if (!window.confirm(`Delete "${s.name}" and its lines?${used.length ? `\n\n${used.length} client(s) point at it — their own Schedule of Rates keeps the copied lines.` : ''}\n\nPrefer Archive if you might need it again.`)) return;
-    const { error } = await supabase.from('rate_sets').delete().eq('id', s.id);
-    if (error) { showToast(error.message, 'error'); return; }
-    logActivity({ verb: 'deleted', object_type: 'rate set', after: { name: s.name } });
-    showToast('Rate set deleted.', 'success'); load();
-  };
+  // Rate sets are master data: archive, never delete (audit P1 / Dashpivot rule).
 
   const toggleArchive = async (s) => {
     const archiving = !s.archived_at;
@@ -230,7 +223,6 @@ export function RateSetsPage({ showToast }) {
                 <button style={btnSmall} onClick={() => exportSetCSV(s)}>↓ CSV</button>
                 <button style={btnSmall} onClick={() => setImportFor(s)}>↑ Import</button>
                 <button style={btnSmall} onClick={() => toggleArchive(s)}>{s.archived_at ? 'Unarchive' : 'Archive'}</button>
-                <button style={{ ...btnSmall, ...btnDanger }} onClick={() => removeSet(s)}>Delete</button>
               </div>
             </div>
 

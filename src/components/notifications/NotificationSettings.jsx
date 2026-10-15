@@ -37,8 +37,8 @@ export function NotificationSettings({ currentWorker, showToast, onClose }) {
       .eq('id', currentWorker.id);
     setSaving(false);
     if (error) { showToast?.(error.message, 'error'); return; }
-    // Keep the in-session object roughly in sync (no re-render needed).
-    if (currentWorker) { currentWorker.notify_mode = mode; currentWorker.notify_sms = sms; currentWorker.notify_email = email; }
+    // Ask the app shell to reload the signed-in profile (no prop mutation, audit P3).
+    window.dispatchEvent(new CustomEvent('cbd:worker-updated'));
     showToast?.('Notification settings saved', 'success');
     onClose?.();
   };

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../supabaseClient';
+
 import { C, inputStyle, btnPrimary, btnSecondary, btnDanger, btnSmall } from '../../theme';
 import { fmtDate, todayISO } from '../../utils/dates';
 import { SendBlastModal } from '../../components/blast/SendBlastModal';
@@ -13,6 +14,9 @@ import { onboardLink, publicProfileLink, whatsappLink, inviteMessage, normaliseM
 import { addAdminNotification } from '../../utils/notify';
 import { WORKER_SAFE_COLS } from '../../utils/workerCols';
 import { RoleRatesEditor, checkRoleRates, saveRoleRates } from '../../components/workers/RoleRatesEditor';
+
+// Sequence counter for openEdit (see there). Module-level: one Workers page.
+const openEditSeq = { n: 0 };
 
 const ARCHIVE_REASONS = [
   { value: 'resigned',        label: 'Resigned (left voluntarily)' },
@@ -176,6 +180,10 @@ export function WorkersPage({ showToast, currentWorker }) {
 
   const openAdd = () => { setEditCerts([]); setRoleRates([]); setRoleRateIds([]); setModal('add'); };
   const openEdit = async (w) => {
+    // Opening a second worker before the first finished loading used to land
+    // the first worker's certs/payroll/medical in the second modal (audit P2).
+    const seq = ++openEditSeq.n;
+    const stale = () => seq !== openEditSeq.n;
     setModal(w);
     setForm({
       name: w.name, email: w.email, mobile: w.mobile || '', role: w.role,
@@ -194,6 +202,7 @@ export function WorkersPage({ showToast, currentWorker }) {
       send_invite: false,
     });
     const { data } = await supabase.from('certifications').select('*').eq('worker_id', w.id).order('expiry', { ascending: true });
+    if (stale()) return;
     setEditCerts(data || []);
 
     setRoleRates([]); setRoleRateIds([]);
@@ -201,6 +210,7 @@ export function WorkersPage({ showToast, currentWorker }) {
       const { data: rr } = await supabase.from('worker_role_rates')
         .select('id, role_name, rate_normal, rate_overtime')
         .eq('worker_id', w.id).is('archived_at', null).order('role_name');
+      if (stale()) return;
       const loaded = (rr || []).map(r => ({
         id: r.id, role_name: r.role_name,
         rate_normal: r.rate_normal ?? '', rate_overtime: r.rate_overtime ?? '',
@@ -215,6 +225,7 @@ export function WorkersPage({ showToast, currentWorker }) {
       supabase.from('worker_payroll_details').select('*').eq('worker_id', w.id).maybeSingle(),
       supabase.from('worker_medical_details').select('*').eq('worker_id', w.id).maybeSingle(),
     ]);
+    if (stale()) return;
     setPayroll(pd.data || { ...EMPTY_PAYROLL, worker_id: w.id });
     setMedical(md.data || { ...EMPTY_MEDICAL, worker_id: w.id });
   };

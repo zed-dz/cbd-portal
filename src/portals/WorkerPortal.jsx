@@ -545,14 +545,42 @@ function WorkerClockIn({ currentWorker, showToast }) {
     // Hours round to 0.25 h like every other timesheet line (audit P2).
     const hours = Math.round(((out - clockInTime) / (1000 * 60 * 60)) * 4) / 4;
     setSaving(true);
-    const { error } = await supabase.from('timesheets').insert([{
-      worker_id: currentWorker.id,
-      date: todayISO(),
-      start_time: clockInTime.toISOString(),
-      end_time: out.toISOString(),
-      hours,
-      status: 'pending',
-    }]);
+    // Clock-out becomes a proper daily sheet (client / project / role from
+    // today's allocation) instead of a header-less line that showed up in the
+    // office's Line Timesheets and pending badge (audit P2).
+    const today = todayISO();
+    const { data: allocs } = await supabase.from('allocations')
+      .select('client, project, site, role')
+      .eq('worker_id', currentWorker.id)
+      .in('status', ['confirmed', 'completed'])
+      .lte('start_date', today)
+      .or(`end_date.is.null,end_date.gte.${today}`)
+      .order('start_date', { ascending: false })
+      .limit(1);
+    const a = allocs?.[0];
+    if (!a || !a.client) {
+      showToast('No accepted allocation for today — open My Timesheets and fill in the sheet instead.', 'error');
+      setSaving(false);
+      return;
+    }
+    const { error } = await supabase.rpc('save_daily_timesheet', {
+      p_header_id: null,
+      p_worker_id: currentWorker.id,
+      p_client: a.client,
+      p_project: a.project || a.site || a.client,
+      p_role: a.role || currentWorker.job_title || 'General Labourer',
+      p_wet_hire: false,
+      p_comments: 'Clock in / out',
+      p_client_signature: null,
+      p_allowance_lines: [],
+      p_status: 'pending',
+      p_lines: [{
+        date: today, shift_type: 'Day', scenario: 'standard',
+        start_time: clockInTime.toISOString(), end_time: out.toISOString(),
+        total_break_hours: 0, total_hours: hours, regular_hours: hours,
+        meal_allowance: 0, meal_allowance_override: false,
+      }],
+    });
     if (error) { showToast(error.message, 'error'); }
     else {
       showToast(`Clocked out — ${hours} hours logged`, 'success');
