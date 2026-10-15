@@ -18,7 +18,8 @@ export function useDraft(key, initial, { enabled = true } = {}) {
   const initialRef = useRef(initial);
   initialRef.current = initial;
 
-  const first = readDraft(fullKey, initialRef.current);
+  // Lazy: parse localStorage once, not on every render.
+  const [first] = useState(() => readDraft(fullKey, initialRef.current));
   const [value, setValue] = useState(first.value);
   const [draftRestored, setDraftRestored] = useState(first.hadDraft);
   const lastKey = useRef(fullKey);

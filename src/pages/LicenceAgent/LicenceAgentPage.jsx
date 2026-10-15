@@ -79,10 +79,10 @@ export function LicenceAgentPage({ showToast }) {
 
   const viewPhoto = async (docUrl, bucket = 'cert-photos') => {
     if (!docUrl) return;
-    if (/^https?:\/\//.test(docUrl)) { window.open(docUrl, '_blank'); return; }
+    if (/^https?:\/\//.test(docUrl)) { window.open(docUrl, '_blank', 'noopener'); return; }
     const { data, error } = await supabase.storage.from(bucket).createSignedUrl(docUrl, 3600);
     if (error || !data?.signedUrl) { showToast(error?.message || 'Could not open the photo.', 'error'); return; }
-    window.open(data.signedUrl, '_blank');
+    window.open(data.signedUrl, '_blank', 'noopener');
   };
 
   const handleDelete = async (c) => {

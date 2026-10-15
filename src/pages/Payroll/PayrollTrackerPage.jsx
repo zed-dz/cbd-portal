@@ -265,31 +265,40 @@ export function PayrollTrackerPage({ showToast }) {
     setPushing(true);
     showToast('Pushing to Xero…', 'info');
 
-    const { data: { session } } = await supabase.auth.getSession();
-    const res = await fetch(
-      'https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-push',
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session?.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          timesheetIds: [...selectedIds],
-          periodFrom: dateFrom,
-          periodTo: dateTo,
-        }),
-      }
-    );
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(
+        'https://tsizneslellcqusjwtub.supabase.co/functions/v1/xero-push',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session?.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            timesheetIds: [...selectedIds],
+            periodFrom: dateFrom,
+            periodTo: dateTo,
+          }),
+        }
+      );
 
-    const result = await res.json();
-    if (!res.ok) {
-      showToast(result.error || 'Push failed', 'error');
-    } else {
-      showToast(`Pushed ${result.pushed} timesheets to Xero${result.skipped ? ` (${result.skipped} skipped — no matching Xero employee)` : ''}`, result.errors ? 'error' : 'success');
-      if (result.pushed > 0) { setSelectedIds(new Set()); load(); }
+      // A gateway error page is HTML, not JSON — read as text first so the
+      // button never stays stuck on "Pushing…" (audit P2).
+      const text = await res.text();
+      let result = {};
+      try { result = JSON.parse(text); } catch { result = { error: text.slice(0, 160) || `HTTP ${res.status}` }; }
+      if (!res.ok) {
+        showToast(result.error || `Push failed (HTTP ${res.status})`, 'error');
+      } else {
+        showToast(`Pushed ${result.pushed} timesheets to Xero${result.skipped ? ` (${result.skipped} skipped — no matching Xero employee)` : ''}`, result.errors ? 'error' : 'success');
+        if (result.pushed > 0) { setSelectedIds(new Set()); load(); }
+      }
+    } catch (e) {
+      showToast(`Push failed: ${e?.message || 'network error'}`, 'error');
+    } finally {
+      setPushing(false);
     }
-    setPushing(false);
   };
 
   return (

@@ -11,6 +11,7 @@ import { RateSetsPage } from '../pages/RateSets/RateSetsPage';
 import { SentTimesheetsPage } from '../pages/SentTimesheets/SentTimesheetsPage';
 import { AllocationsPage } from '../pages/Allocations/AllocationsPage';
 import { AllocationsCalendarPage } from '../pages/Calendar/AllocationsCalendarPage';
+import { AllocationBoardPage } from '../pages/Allocations/AllocationBoardPage';
 import { TimesheetsPage } from '../pages/Timesheets/TimesheetsPage';
 import { localISO } from '../utils/dates';
 import { ClientsPage } from '../pages/Clients/ClientsPage';
@@ -43,6 +44,8 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
   const [blastOpen, setBlastOpen] = useState(false);
   const [scanOpen, setScanOpen]   = useState(false);
   const [notifSettingsOpen, setNotifSettingsOpen] = useState(false);
+  // Allocation Board → "Allocate" hands the Allocations page a pre-ticked crew.
+  const [allocPrefill, setAllocPrefill] = useState(null);
   const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, licence_agent: 0, pending_workers: 0, payroll: 0, applications: 0 });
 
   const refreshBadge = useCallback(async () => {
@@ -98,6 +101,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         { id: 'dashboard', label: '📊 Dashboard' },
         { id: 'workers', label: '👷 Workers', badge: badges.workers || null, badgeColor: 'green' },
         { id: 'allocations', label: '📋 Allocations', badge: badges.allocations || null, badgeColor: 'orange' },
+        { id: 'board', label: '🗓 Allocation Board' },
         { id: 'calendar', label: '📅 Calendar' },
         { id: 'timesheets', label: '🕐 Timesheets', badge: badges.timesheets || null, badgeColor: 'red' },
         { id: 'sent_timesheets', label: '📤 Sent Timesheets' },
@@ -250,7 +254,9 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? 12 : 24 }}>
           {activePage === 'dashboard'        && <DashboardPage showToast={showToast} currentWorker={currentWorker} onNavigate={navigate} />}
           {activePage === 'workers'          && <WorkersPage showToast={showToast} currentWorker={currentWorker} />}
-          {activePage === 'allocations'      && <AllocationsPage showToast={showToast} />}
+          {activePage === 'allocations'      && <AllocationsPage showToast={showToast} prefill={allocPrefill} onPrefillUsed={() => setAllocPrefill(null)} />}
+          {activePage === 'board'            && <AllocationBoardPage showToast={showToast} isMobile={isMobile} currentWorker={currentWorker}
+                                                   onAllocate={(ids, date) => { setAllocPrefill({ workerIds: ids, date }); navigate('allocations'); }} />}
           {activePage === 'calendar'         && <AllocationsCalendarPage showToast={showToast} />}
           {activePage === 'pending_workers'  && <PendingWorkersPage showToast={showToast} />}
           {activePage === 'applications'     && <ApplicationsPage    showToast={showToast} onNavigate={navigate} />}

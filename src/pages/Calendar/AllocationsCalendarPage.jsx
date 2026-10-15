@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, R, MONO, inputStyle, btnPrimary, btnSecondary, btnSmall } from '../../theme';
 import { Modal, Field, Spinner, EmptyState, DateField } from '../../components';
@@ -170,7 +170,17 @@ export function AllocationsCalendarPage({ showToast }) {
   };
   const closeModal = () => { setModal(null); setForm(allocDefaults); };
 
+  // Double-tap guard (audit P1): the conflict query below runs before `saving`
+  // flips, so two quick taps used to create two allocations.
+  const saveLock = useRef(false);
   const handleSave = async () => {
+    if (saveLock.current) return;
+    saveLock.current = true;
+    try { await handleSaveInner(); }
+    finally { saveLock.current = false; }
+  };
+
+  const handleSaveInner = async () => {
     if (!form.worker_id || !form.start_date) { showToast('Worker and start date are required.', 'error'); return; }
 
     // JIT conflict check — the in-memory `allocations` is range-filtered for

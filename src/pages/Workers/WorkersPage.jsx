@@ -430,7 +430,7 @@ export function WorkersPage({ showToast, currentWorker }) {
   const shareViaWhatsApp = (w) => {
     if (!w.profile_token) { showToast('Worker has no profile token yet. Re-save the record.', 'error'); return; }
     const firstName = (w.name || '').split(' ')[0];
-    window.open(whatsappLink({ mobile: w.mobile, body: inviteMessage({ firstName, link: onboardLink(w.profile_token) }) }), '_blank');
+    window.open(whatsappLink({ mobile: w.mobile, body: inviteMessage({ firstName, link: onboardLink(w.profile_token) }) }), '_blank', 'noopener');
   };
 
   const archivedCount = workers.filter(w => w.archived_at).length;
@@ -446,7 +446,7 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
     if (archiveView === 'archived' && !w.archived_at) return false;
     if (workView === 'working' && !isWorking(w)) return false;
     if (workView === 'free'    &&  isWorking(w)) return false;
-    const matchSearch = !search || w.name.toLowerCase().includes(search.toLowerCase()) || w.email.toLowerCase().includes(search.toLowerCase()) || (w.licences || '').toLowerCase().includes(search.toLowerCase());
+    const matchSearch = !search || (w.name || '').toLowerCase().includes(search.toLowerCase()) || (w.email || '').toLowerCase().includes(search.toLowerCase()) || (w.licences || '').toLowerCase().includes(search.toLowerCase());
     const matchType = !filterType || (w.worker_type || 'casual') === filterType;
     const matchStatus = !filterStatus || w.status === filterStatus;
     const matchAppStatus = !filterAppStatus || (w.app_status || 'Active') === filterAppStatus;
@@ -1150,10 +1150,10 @@ function WorkerTicketsSection({ workerId, certs, setCerts, showToast }) {
 
   const viewPhoto = async (docUrl) => {
     if (!docUrl) return;
-    if (/^https?:\/\//.test(docUrl)) { window.open(docUrl, '_blank'); return; }
+    if (/^https?:\/\//.test(docUrl)) { window.open(docUrl, '_blank', 'noopener'); return; }
     const { data, error } = await supabase.storage.from('cert-photos').createSignedUrl(docUrl, 3600);
     if (error || !data?.signedUrl) { showToast(error?.message || 'Could not open the photo.', 'error'); return; }
-    window.open(data.signedUrl, '_blank');
+    window.open(data.signedUrl, '_blank', 'noopener');
   };
 
   const save = async () => {

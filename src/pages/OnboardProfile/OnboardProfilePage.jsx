@@ -168,9 +168,16 @@ export function OnboardProfilePage({ token }) {
       });
       if (finErr || (fin && fin.error)) {
         console.error('worker-finalize failed:', finErr || fin?.error);
+        // Do NOT show "your login is ready" when it is not (audit P1).
+        setError('Your profile was saved, but your login could not be created. Tap Submit again in a minute, or contact the office and they will finish it for you.');
+        setSaving(false);
+        return;
       }
     } catch (e) {
       console.error('worker-finalize threw:', e);
+      setError('Your profile was saved, but your login could not be created (network error). Tap Submit again, or contact the office.');
+      setSaving(false);
+      return;
     }
 
     setSaved(true);

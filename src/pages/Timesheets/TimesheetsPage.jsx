@@ -11,6 +11,11 @@ import { approveTimesheet } from '../../utils/approve';
 
 // Sticky filters: every access is try/catch'd because localStorage throws in
 // private windows and when site data is blocked — the page must still work.
+// Module-level busy locks (no re-render needed): double-click guards for
+// Approve all and the full-view supervisor actions (audit P1/P2).
+const approveAllLock = { busy: false };
+const viewActionLock = { busy: false };
+
 const readStore = (key) => { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; } };
 const writeStore = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* storage unavailable — filters just won't stick */ } };
 
@@ -117,7 +122,11 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
   const load = useCallback(async () => {
     setLoading(true);
     const [t, w, cfg, c] = await Promise.all([
-      supabase.from('timesheets').select('*, workers(name)').order('created_at', { ascending: false }),
+      // Line Timesheets = legacy single lines only. Lines that belong to a daily
+      // sheet (header_id set) are managed through the sheet — showing them here
+      // let an admin "approve" or delete one line and leave the sheet's totals
+      // stale (audit P1).
+      supabase.from('timesheets').select('*, workers(name)').is('header_id', null).order('created_at', { ascending: false }),
       supabase.from('workers').select('id, name, worker_type').is('archived_at', null).order('name'),
       supabase.from('payroll_config').select('config_key, config_value'),
       supabase.from('clients').select('id, name').order('name'),
@@ -221,6 +230,12 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
   };
 
   const handleApproveAll = async () => {
+    if (approveAllLock.busy) return;   // double-click guard (audit P1)
+    approveAllLock.busy = true;
+    try { await handleApproveAllInner(); }
+    finally { approveAllLock.busy = false; }
+  };
+  const handleApproveAllInner = async () => {
     const pending = timesheets.filter(ts => ts.status === 'pending');
     if (!pending.length) { showToast('No pending timesheets to approve.', 'info'); return; }
     if (!window.confirm(`Approve all ${pending.length} pending timesheets? Daily-sheet rows are re-checked and locked on the server, and the client PDF is emailed.`)) return;
@@ -457,7 +472,8 @@ function LineTimesheetsPage({ showToast, refreshBadge }) {
           <Field label="Status">
             <select style={inputStyle} value={form.status} onChange={e => handleFormChange({ status: e.target.value })}>
               <option value="pending">Pending</option>
-              <option value="approved">Approved</option>
+              {/* Approval goes through the Approve action, never a status edit (audit P1). */}
+              {form.status === 'approved' && <option value="approved">Approved (locked)</option>}
               <option value="rejected">Rejected</option>
             </select>
           </Field>
@@ -504,6 +520,7 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
   const [approving, setApproving] = useState(false);
   const [modal, setModal] = useState(null);      // 'add' | header object | null
   const [viewing, setViewing] = useState(null);  // header (with embedded lines) shown in the full view
+  const [viewBusy, setViewBusy] = useState(false); // send-to-supervisor / mark-accepted in flight
   const [selected, setSelected] = useState(() => new Set()); // header ids ticked for bulk download
   const [bulkApprove, setBulkApprove] = useState(null);   // { done, total } while the loop runs
   const [bulkFailures, setBulkFailures] = useState([]);   // [{ worker, date, error }]
@@ -1000,18 +1017,26 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
               </div>
               {!viewing.client_approved && (
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }} onClick={async () => {
-                    const r = await sendTimesheetForClientApproval(viewing.id, { force: true });
-                    if (r.ok) { showToast(`Sent to site supervisor — ${r.sentTo}`, 'success'); load(); setViewing(null); }
-                    else showToast(r.error, 'error');
+                  <button style={{ ...btnSmall, color: '#93c5fd', borderColor: '#1e3a5f' }} disabled={viewBusy} onClick={async () => {
+                    if (viewActionLock.busy) return;   // double-tap guard (audit P2)
+                    viewActionLock.busy = true; setViewBusy(true);
+                    try {
+                      const r = await sendTimesheetForClientApproval(viewing.id, { force: true });
+                      if (r.ok) { showToast(`Sent to site supervisor — ${r.sentTo}`, 'success'); load(); setViewing(null); }
+                      else showToast(r.error, 'error');
+                    } finally { viewActionLock.busy = false; setViewBusy(false); }
                   }}>
                     {viewing.client_approval_sent_at ? '↻ Resend to supervisor' : '→ Send to supervisor'}
                   </button>
-                  <button style={{ ...btnSmall, color: '#4ade80', borderColor: '#16653a' }} onClick={async () => {
+                  <button style={{ ...btnSmall, color: '#4ade80', borderColor: '#16653a' }} disabled={viewBusy} onClick={async () => {
+                    if (viewActionLock.busy) return;
                     if (!window.confirm('Mark this timesheet as accepted by the client (e.g. approved verbally/by phone)? It becomes billable immediately.')) return;
-                    const r = await markClientApprovedManually(viewing.id, 'Marked by admin (verbal/phone approval)');
-                    if (r.ok) { showToast('Marked client-accepted — now billable', 'success'); load(); setViewing(null); }
-                    else showToast(r.error, 'error');
+                    viewActionLock.busy = true; setViewBusy(true);
+                    try {
+                      const r = await markClientApprovedManually(viewing.id, 'Marked by admin (verbal/phone approval)');
+                      if (r.ok) { showToast('Marked client-accepted — now billable', 'success'); load(); setViewing(null); }
+                      else showToast(r.error, 'error');
+                    } finally { viewActionLock.busy = false; setViewBusy(false); }
                   }}>
                     ✓ Mark accepted (verbal)
                   </button>

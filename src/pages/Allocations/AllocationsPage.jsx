@@ -32,7 +32,7 @@ const allocDefaults = {
   arrival_time: '', notes: '', map_link: '',
 };
 
-export function AllocationsPage({ showToast }) {
+export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
   const [allocations, setAllocations] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [clients, setClients] = useState([]);
@@ -51,6 +51,14 @@ export function AllocationsPage({ showToast }) {
   // Quick-add for a brand-new site while allocating — clients text new sites in
   // monthly, and leaving the modal to add one loses the half-filled allocation.
   const [quickSite, setQuickSite] = useState(null);
+  // "How many do you need?" for a multi-worker offer. '' = everyone ticked is
+  // needed (one position per worker — the old crew behaviour). Fewer than the
+  // ticked count turns it into a first-to-accept offer.
+  const [positions, setPositions] = useState('');
+  const needCount = Math.min(
+    Math.max(1, parseInt(positions, 10) || selectedWorkerIds.length || 1),
+    Math.max(1, selectedWorkerIds.length),
+  );
 
   const saveQuickSite = async () => {
     const clientRow = clients.find(c => c.name === form.client);
@@ -77,7 +85,7 @@ export function AllocationsPage({ showToast }) {
   const load = useCallback(async () => {
     setLoading(true);
     const [a, w, c, s, k] = await Promise.all([
-      supabase.from('allocations').select('*, workers(name, job_title)').order('created_at', { ascending: false }),
+      supabase.from('allocations').select('*, workers(name, job_title), allocation_groups(positions, filled_at)').order('created_at', { ascending: false }),
       supabase.from('workers').select('id, name, mobile, email').is('archived_at', null).order('name'),
       supabase.from('clients').select('id, name').order('name'),
       // A client can run several jobs at once, so sites are their own list and the
@@ -96,7 +104,18 @@ export function AllocationsPage({ showToast }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const openAdd = () => { setForm(allocDefaults); setSelectedWorkerIds([]); setWorkerSearch(''); setModal('add'); };
+  // Opened from the Allocation Board with workers (and maybe a day) pre-ticked.
+  useEffect(() => {
+    if (!prefill) return;
+    setForm({ ...allocDefaults, start_date: prefill.date || '' });
+    setSelectedWorkerIds(prefill.workerIds || []);
+    setPositions('');
+    setWorkerSearch('');
+    setModal('add');
+    onPrefillUsed?.();
+  }, [prefill, onPrefillUsed]);
+
+  const openAdd = () => { setForm(allocDefaults); setSelectedWorkerIds([]); setPositions(''); setWorkerSearch(''); setModal('add'); };
 
   // ⧉ Duplicate: same job details, dates + arrival CLEARED — the whole point is
   // re-sending the same job on a new day, so stale dates must not survive the
@@ -111,6 +130,7 @@ export function AllocationsPage({ showToast }) {
       notes: a.notes || '', map_link: a.map_link || '',
     });
     setSelectedWorkerIds(a.worker_id ? [a.worker_id] : []);
+    setPositions('');
     setWorkerSearch('');
     setModal('add');
   };
@@ -133,7 +153,7 @@ export function AllocationsPage({ showToast }) {
     });
     setModal(a);
   };
-  const closeModal = () => { setModal(null); setForm(allocDefaults); setSelectedWorkerIds([]); setWorkerSearch(''); };
+  const closeModal = () => { setModal(null); setForm(allocDefaults); setSelectedWorkerIds([]); setPositions(''); setWorkerSearch(''); };
 
   // One group per worker with clashes — add mode checks every ticked worker,
   // edit mode just the form's single worker (same shape either way).
@@ -214,13 +234,41 @@ export function AllocationsPage({ showToast }) {
           load();
         }
       } else {
-        // Crew allocation: one row per ticked worker, identical details.
+        // Crew / open offer: one row per ticked worker, linked by a group that
+        // says how many positions there are. Fewer positions than workers =
+        // the first to accept get them, the rest see "Position filled".
+        const { data: grp, error: gErr } = await supabase.from('allocation_groups').insert([{
+          positions: needCount,
+          client: payload.client || null, site: payload.site || null,
+          role: payload.role || null, start_date: payload.start_date,
+        }]).select().single();
+        if (gErr) { showToast(gErr.message, 'error'); setSaving(false); return; }
         const { data: insertedRows, error } = await supabase.from('allocations')
-          .insert(ids.map(wid => ({ ...payload, worker_id: wid }))).select();
+          .insert(ids.map(wid => ({ ...payload, worker_id: wid, group_id: grp.id }))).select();
         if (error) showToast(error.message, 'error');
         else {
-          showToast(`${(insertedRows || []).length} allocations created — one per worker`, 'success');
-          (insertedRows || []).forEach(r => notifyOnCreate(r, r.worker_id));
+          const rows = insertedRows || [];
+          showToast(needCount < ids.length
+            ? `Offer sent to ${ids.length} workers — the first ${needCount} to accept get the job.`
+            : `${rows.length} allocations created — one per worker`, 'success');
+          // Each worker gets their own SMS + email; the admin team gets ONE
+          // summary instead of one email per worker.
+          rows.forEach(r => notifyOnCreate(r, r.worker_id, { adminQuiet: true }));
+          const names = rows.map(r => workers.find(w => w.id === r.worker_id)?.name || 'Worker');
+          const where = payload.client || payload.site || 'a job';
+          const need = `${needCount} position${needCount === 1 ? '' : 's'}`;
+          addAdminNotification({
+            type: 'allocation_sent',
+            title: `Offer sent to ${names.length} workers — ${where}`,
+            body: `${need}${payload.role ? ` · ${payload.role}` : ''}${payload.start_date ? ` — starts ${payload.start_date}` : ''}. First to accept get it.`,
+            allocation_id: rows[0]?.id || null,
+            worker_id: null,
+          }).then(() => window.dispatchEvent(new CustomEvent('cbd:notify')));
+          broadcastAdminSms(`CBD: offer sent to ${names.length} workers for ${where}${payload.start_date ? ` on ${payload.start_date}` : ''} (${need}). First to accept get it.`);
+          sendAdminEmail(
+            `Admin update — ${names.length} workers offered ${where}`,
+            `FYI for the admin team (no action needed): ${names.join(', ')} were offered ${where}${payload.role ? ` as ${payload.role}` : ''}${payload.start_date ? ` starting ${payload.start_date}` : ''}. ${need} — the first to accept get it; everyone after that sees "Position filled". Each worker has been notified by SMS and email.`
+          );
           closeModal();
           load();
         }
@@ -236,7 +284,7 @@ export function AllocationsPage({ showToast }) {
   // After an allocation is created: text the worker + drop an admin notification.
   // Fire-and-forget — never blocks the UI. `inserted` is the new allocation row;
   // `workerIdArg` pins the subject worker (crew saves call this once per worker).
-  const notifyOnCreate = (inserted, workerIdArg) => {
+  const notifyOnCreate = (inserted, workerIdArg, opts = {}) => {
     const wid = workerIdArg || inserted?.worker_id || form.worker_id;
     const worker = workers.find(w => w.id === wid);
     const name = worker?.name || 'Worker';
@@ -266,6 +314,9 @@ export function AllocationsPage({ showToast }) {
       verb: 'created', object_type: 'allocation', object_id: inserted?.id || null,
       after: { worker: name, client, site, role, start_date: startDate },
     });
+
+    // Group offers send ONE admin summary from the caller instead.
+    if (opts.adminQuiet) return;
 
     // (b) Admin in-app notification.
     addAdminNotification({
@@ -297,6 +348,18 @@ export function AllocationsPage({ showToast }) {
 
   const filtered = allocations.filter(a => !filterStatus || a.status === filterStatus);
 
+  // "2 / 3 filled · 8 offered" per multi-worker group.
+  const groupStats = useMemo(() => {
+    const m = {};
+    allocations.forEach(a => {
+      if (!a.group_id) return;
+      const g = (m[a.group_id] = m[a.group_id] || { total: 0, confirmed: 0, positions: a.allocation_groups?.positions || 1 });
+      g.total += 1;
+      if (a.status === 'confirmed') g.confirmed += 1;
+    });
+    return m;
+  }, [allocations]);
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, gap: 12, flexWrap: 'wrap' }}>
@@ -306,6 +369,8 @@ export function AllocationsPage({ showToast }) {
           <option value="confirmed">Confirmed</option>
           <option value="completed">Completed</option>
           <option value="cancelled">Cancelled</option>
+          <option value="declined">Declined</option>
+          <option value="filled">Position filled</option>
         </select>
         <button onClick={openAdd} style={btnPrimary}>+ Create Allocation</button>
       </div>
@@ -337,7 +402,14 @@ export function AllocationsPage({ showToast }) {
                 </Td>
                 <Td>{a.start_date ? fmtDate(a.start_date) : fmtDateTime(a.start_time)}</Td>
                 <Td>{a.end_date ? fmtDate(a.end_date) : '—'}</Td>
-                <Td>{allocationBadge(a.status)}</Td>
+                <Td>
+                  {allocationBadge(a.status)}
+                  {a.group_id && groupStats[a.group_id] && (
+                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3, whiteSpace: 'nowrap' }}>
+                      {groupStats[a.group_id].confirmed} / {groupStats[a.group_id].positions} filled · {groupStats[a.group_id].total} offered
+                    </div>
+                  )}
+                </Td>
                 <Td>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button onClick={() => openEdit(a)} style={btnSmall}>Edit</button>
@@ -393,7 +465,7 @@ export function AllocationsPage({ showToast }) {
           })()}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
             <div style={{ gridColumn: '1 / -1' }}>
-              {modal === 'add' ? (
+              {modal === 'add' ? (<>
                 <Field label={`Workers * (${selectedWorkerIds.length} selected)`}
                   hint="Tick everyone going to this job — one allocation is created per worker.">
                   <>
@@ -414,7 +486,18 @@ export function AllocationsPage({ showToast }) {
                     </div>
                   </>
                 </Field>
-              ) : (
+                {selectedWorkerIds.length > 1 && (
+                  <Field label="How many do you need?"
+                    hint={needCount < selectedWorkerIds.length
+                      ? `${selectedWorkerIds.length} people get the offer. The first ${needCount} to tap Accept get the job; everyone after that sees "Position filled".`
+                      : 'Everyone ticked is needed (one position each). Lower this number to send an open offer where the first to accept win the spots.'}>
+                    <input type="number" min={1} max={selectedWorkerIds.length} step={1}
+                      style={{ ...inputStyle, maxWidth: 140 }}
+                      value={positions === '' ? selectedWorkerIds.length : positions}
+                      onChange={e => setPositions(e.target.value)} />
+                  </Field>
+                )}
+              </>) : (
                 <Field label="Worker *">
                   <select style={inputStyle} value={form.worker_id} onChange={e => setForm(f => ({ ...f, worker_id: e.target.value }))}>
                     <option value="">Select a worker…</option>
@@ -535,6 +618,8 @@ export function AllocationsPage({ showToast }) {
                 <option value="confirmed">Confirmed</option>
                 <option value="completed">Completed</option>
                 <option value="cancelled">Cancelled</option>
+                <option value="declined">Declined</option>
+                <option value="filled">Position filled</option>
               </select>
             </Field>
             <Field label="Arrival Time">

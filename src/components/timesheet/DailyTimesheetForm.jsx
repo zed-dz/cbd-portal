@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnSmall, btnDanger } from '../../theme';
 import { todayISO, isTakeFiveDay, sydneyHHMM, sydneyInstant } from '../../utils/dates';
@@ -375,7 +375,18 @@ export function DailyTimesheetForm({
   // statusOverride (from the manager Approve/Reject buttons) forces the saved
   // status; otherwise the form's own status is used. `rejectReason` rides along
   // only on the reject path and lands on timesheet_headers.rejection_reason.
+  // Double-tap guard (audit P1): the real save below awaits a Take 5 query
+  // before it flips `saving`, so two quick taps on Submit used to create two
+  // identical timesheets. The lock is taken synchronously, before any await.
+  const saveLock = useRef(false);
   const handleSave = async (statusOverride, rejectReason) => {
+    if (saveLock.current) return;
+    saveLock.current = true;
+    try { await handleSaveInner(statusOverride, rejectReason); }
+    finally { saveLock.current = false; }
+  };
+
+  const handleSaveInner = async (statusOverride, rejectReason) => {
     const overriding = statusOverride === 'approved' || statusOverride === 'rejected';
     if (!targetWorker) { showToast('No worker selected for this timesheet.', 'error'); return; }
     if (!form.client) { showToast('Client is required.', 'error'); return; }
@@ -769,7 +780,8 @@ export function DailyTimesheetForm({
         <Field label="Status">
           <select style={inputStyle} value={form.status} onChange={e => setField('status', e.target.value)}>
             <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
+            {/* Approval only through the Approve button (server locks + emails the PDF). */}
+            {form.status === 'approved' && <option value="approved">Approved (locked)</option>}
             <option value="rejected">Rejected</option>
           </select>
         </Field>

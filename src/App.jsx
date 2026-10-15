@@ -4,6 +4,7 @@ import { WORKER_SAFE_COLS } from './utils/workerCols';
 import { C, btnSecondary } from './theme';
 import { ToastContainer, Spinner } from './components';
 import { LoginPage } from './pages/Login/LoginPage';
+import { SetPasswordPage } from './pages/Login/SetPasswordPage';
 import { AdminPortal } from './portals/AdminPortal';
 import { WorkerPortal } from './portals/WorkerPortal';
 import { PublicProfilePage } from './pages/PublicProfile/PublicProfilePage';
@@ -11,6 +12,9 @@ import { OnboardProfilePage } from './pages/OnboardProfile/OnboardProfilePage';
 import { ApplyPage } from './pages/Apply/ApplyPage';
 import { ClientApprovePage } from './pages/ClientApprove/ClientApprovePage';
 import { OmniHelpBubble } from './components/help/OmniHelpBubble';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { OfflineBanner } from './components/OfflineBanner';
+import { installGlobalErrorHandlers } from './utils/clientErrors';
 
 const PUBLIC_ROUTE_PATTERNS = [
   { kind: 'profile',  re: /^\/p\/([0-9a-f-]{36})\/?$/i },
@@ -26,6 +30,29 @@ function matchPublicRoute(pathname) {
   }
   return null;
 }
+
+// Emailed auth links land here as `#access_token=…&type=recovery|invite|magiclink`
+// (or `#error=…&error_description=…` when the link is dead). supabase-js wipes
+// the hash while it signs the person in, so read it ONCE at module load —
+// module code runs before any of that async work can touch the URL.
+const ENTRY_AUTH = (() => {
+  try {
+    const hash = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+    const query = new URLSearchParams(window.location.search || '');
+    const type = hash.get('type') || query.get('type') || null;
+    const errDesc = hash.get('error_description') || query.get('error_description') || null;
+    const errCode = hash.get('error_code') || query.get('error_code') || null;
+    return { type, errDesc, errCode };
+  } catch {
+    return { type: null, errDesc: null, errCode: null };
+  }
+})();
+const PASSWORD_LINK_TYPES = ['recovery', 'invite', 'magiclink'];
+const ENTRY_LINK_NOTICE = ENTRY_AUTH.errDesc
+  ? (/expired|invalid/i.test(`${ENTRY_AUTH.errCode} ${ENTRY_AUTH.errDesc}`)
+      ? 'That email link has expired or was already used. Enter your email and tap “Forgot your password?” to get a fresh one.'
+      : ENTRY_AUTH.errDesc.replace(/\+/g, ' '))
+  : '';
 
 function GlobalStyles() {
   useEffect(() => {
@@ -109,23 +136,26 @@ function GlobalStyles() {
 
 export default function App() {
   const publicRoute = matchPublicRoute(window.location.pathname);
+  useEffect(() => { installGlobalErrorHandlers(); }, []);
   if (publicRoute) {
     return (
-      <>
+      <ErrorBoundary>
         <GlobalStyles />
+        <OfflineBanner />
         {publicRoute.kind === 'profile' ? <PublicProfilePage token={publicRoute.token} />
          : publicRoute.kind === 'onboard' ? <OnboardProfilePage token={publicRoute.token} />
          : publicRoute.kind === 'apply'   ? <ApplyPage />
          : publicRoute.kind === 'approvets' ? <ClientApprovePage token={publicRoute.token} />
          : null}
-      </>
+      </ErrorBoundary>
     );
   }
   return (
-    <>
+    <ErrorBoundary>
       <GlobalStyles />
+      <OfflineBanner />
       <AppShell />
-    </>
+    </ErrorBoundary>
   );
 }
 
@@ -136,6 +166,10 @@ function AppShell() {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  // Set when the person arrived through an emailed link (reset / invite /
+  // sign-in link) or when Supabase fires PASSWORD_RECOVERY: shows the
+  // Set-password screen before anything else.
+  const [needsPassword, setNeedsPassword] = useState(PASSWORD_LINK_TYPES.includes(ENTRY_AUTH.type) ? ENTRY_AUTH.type : null);
   const [loginLoading, setLoginLoading] = useState(false);
   const [toasts, setToasts] = useState([]);
   const toastId = useRef(0);
@@ -154,7 +188,7 @@ function AppShell() {
   const showToast = useCallback((message, type = 'info') => {
     const id = ++toastId.current;
     setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), type === 'error' ? 6500 : 3000);
   }, []);
 
   const removeToast = useCallback((id) => {
@@ -162,9 +196,14 @@ function AppShell() {
   }, []);
 
   const fetchWorker = useCallback(async (email) => {
-    const { data, error } = await supabase.from('workers').select(WORKER_SAFE_COLS).eq('email', email).maybeSingle();
+    // Case-insensitive match (RLS and every function use lower()); `_` and `%`
+    // are escaped so an email with an underscore cannot match another row.
+    // Archived people get "No worker profile found" instead of a stale portal.
+    const pattern = String(email || '').replace(/[\\%_]/g, m => '\\' + m);
+    const { data, error } = await supabase.from('workers').select(WORKER_SAFE_COLS)
+      .ilike('email', pattern).is('archived_at', null).order('created_at', { ascending: true }).limit(1);
     if (error) { showToast('Could not load profile: ' + error.message, 'error'); }
-    setCurrentWorker(data ?? null);
+    setCurrentWorker(data?.[0] ?? null);
     setAuthLoading(false);
   }, [showToast]);
 
@@ -187,7 +226,8 @@ function AppShell() {
       else setAuthLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') setNeedsPassword('recovery');
       setSession(session);
       if (!session) {
         lastFetchedEmail.current = null;
@@ -234,13 +274,25 @@ function AppShell() {
   return (
     <>
       <ToastContainer toasts={toasts} onRemove={removeToast} />
-      {session && currentWorker && <OmniHelpBubble />}
+      {session && currentWorker && !needsPassword && <OmniHelpBubble />}
       {!session ? (
         <LoginPage
           email={loginEmail} setEmail={setLoginEmail}
           password={loginPassword} setPassword={setLoginPassword}
           error={loginError} loading={loginLoading}
           onSubmit={handleLogin}
+          startNotice={ENTRY_LINK_NOTICE}
+        />
+      ) : needsPassword ? (
+        <SetPasswordPage
+          kind={needsPassword}
+          email={session.user?.email}
+          showToast={showToast}
+          onDone={() => {
+            setNeedsPassword(null);
+            try { window.history.replaceState({}, '', window.location.pathname); } catch { /* ignore */ }
+          }}
+          onSignOut={async () => { setNeedsPassword(null); await handleSignOut(); }}
         />
       ) : !currentWorker ? (
         <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: C.bg, gap: 16, padding: 24 }}>

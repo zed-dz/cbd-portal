@@ -5,7 +5,7 @@ import { todayISO, localISO, fmtDate, fmtDateTime } from '../utils/dates';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, timesheetBadge, DailyTimesheetForm, TimesheetDetailView } from '../components';
 import { WorkerCertificateUploads } from '../components/certificates/WorkerCertificateUploads';
 import { Take5Form } from '../components/take5/Take5Form';
-import { addAdminNotification, broadcastAdminSms, adminAcceptSmsBody, adminDeclineSmsBody, sendAdminEmail } from '../utils/notify';
+import { addAdminNotification } from '../utils/notify';
 import { roleChipStyle } from '../constants/roles';
 
 export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) {
@@ -76,7 +76,7 @@ function WorkerAllocations({ currentWorker, showToast }) {
   const [showPast, setShowPast] = useState(false);
 
   const load = useCallback(async () => {
-    const { data, error } = await supabase.from('allocations').select('*').eq('worker_id', currentWorker.id).order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('allocations').select('*, allocation_groups(positions, filled_at)').eq('worker_id', currentWorker.id).order('created_at', { ascending: false });
     if (error) showToast(error.message, 'error');
     else setAllocations(data || []);
     setLoading(false);
@@ -87,37 +87,47 @@ function WorkerAllocations({ currentWorker, showToast }) {
   // Worker responds to a pending allocation. accept → confirmed, decline → declined.
   // Updates the row, then drops an admin notification so the bell lights up.
   const respond = async (a, decision) => {
-    const newStatus = decision === 'accept' ? 'confirmed' : 'declined';
     setActing(a.id);
-    const { error } = await supabase.from('allocations').update({ status: newStatus }).eq('id', a.id);
+    // The database decides (respond_to_allocation): it checks the job is still
+    // open, counts the positions already taken, and gives the spot to whoever
+    // taps Accept first. Anyone after that gets `position_filled`.
+    const { data, error } = await supabase.rpc('respond_to_allocation', { p_allocation_id: a.id, p_decision: decision });
     if (error) {
       showToast(error.message, 'error');
       setActing(null);
       return;
     }
-    // Optimistic local update.
+    const result = data?.result;
+    const newStatus = data?.status || (decision === 'accept' ? 'confirmed' : 'declined');
     setAllocations(prev => prev.map(x => (x.id === a.id ? { ...x, status: newStatus } : x)));
+    if (result === 'position_filled') {
+      showToast('Sorry — this position has already been filled by someone who accepted first.', 'info');
+      setActing(null);
+      return;
+    }
+    if (result !== 'confirmed' && result !== 'declined') {
+      showToast('This allocation was already answered.', 'info');
+      setActing(null);
+      load();
+      return;
+    }
     const verb = decision === 'accept' ? 'ACCEPTED' : 'DECLINED';
     const where = a.client || a.site || 'a job';
+    const spots = data?.positions ? ` (${data.filled} of ${data.positions} filled)` : '';
     addAdminNotification({
       type: decision === 'accept' ? 'allocation_accepted' : 'allocation_declined',
-      title: `${currentWorker?.name || 'Worker'} ${verb} ${where}`,
+      title: `${currentWorker?.name || 'Worker'} ${verb} ${where}${spots}`,
       body: `${a.client || a.site || ''}${a.start_date ? ` — ${a.start_date}` : ''}`.trim() || null,
       allocation_id: a.id,
       worker_id: currentWorker.id,
     });
 
-    // Broadcast the response to every admin by SMS + email. Fire-and-forget.
-    const workerName = currentWorker?.name || 'Worker';
-    const clientLabel = a.client || a.site || '';
-    const smsBody = decision === 'accept'
-      ? adminAcceptSmsBody({ worker: workerName, client: clientLabel, start_date: a.start_date, role: a.role })
-      : adminDeclineSmsBody({ worker: workerName, client: clientLabel, start_date: a.start_date, role: a.role });
-    broadcastAdminSms(smsBody);
-    sendAdminEmail(
-      `${workerName} ${verb} — ${clientLabel || 'allocation'}`,
-      `${workerName} has ${decision === 'accept' ? 'ACCEPTED' : 'DECLINED'} the allocation for ${clientLabel || 'a job'}${a.role ? ` as ${a.role}` : ''}${a.start_date ? ` (${a.start_date})` : ''}.`
-    );
+    // Tell the admins by SMS + email through the server (notify-admins): the
+    // phone never sees admin numbers or addresses, and the text is built from
+    // the database row, not from what the phone sends. Fire-and-forget.
+    supabase.functions.invoke('notify-admins', {
+      body: { kind: decision === 'accept' ? 'allocation_accepted' : 'allocation_declined', allocation_id: a.id },
+    }).catch(e => console.error('notify-admins failed:', e));
 
     showToast(decision === 'accept' ? 'Allocation accepted — thanks!' : 'Allocation declined.', decision === 'accept' ? 'success' : 'info');
     setActing(null);
@@ -183,6 +193,11 @@ function WorkerAllocations({ currentWorker, showToast }) {
           <div style={{ color: C.textMuted, fontSize: 13 }}>Start: {fmtDateTime(a.start_time)}</div>
           {a.notes && <div style={{ color: C.textMuted, fontSize: 12, marginTop: 10, fontStyle: 'italic' }}>{a.notes}</div>}
 
+          {a.status === 'pending' && a.allocation_groups?.positions > 0 && (
+            <div style={{ marginTop: 10, fontSize: 12, color: '#fde047', fontWeight: 600 }}>
+              ⚡ {a.allocation_groups.positions} spot{a.allocation_groups.positions === 1 ? '' : 's'} on this job — the first to tap Accept get it.
+            </div>
+          )}
           {a.status === 'pending' && (
             <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
               <button
@@ -206,6 +221,11 @@ function WorkerAllocations({ currentWorker, showToast }) {
           )}
           {a.status === 'declined' && (
             <div style={{ marginTop: 12, fontSize: 12, color: '#fca5a5', fontWeight: 600 }}>✕ You declined this allocation</div>
+          )}
+          {a.status === 'filled' && (
+            <div style={{ marginTop: 12, fontSize: 12, color: C.textMuted, fontWeight: 600, lineHeight: 1.5 }}>
+              ⛔ Position filled — this job went to the people who accepted first. You will get the next one.
+            </div>
           )}
         </div>
   );
@@ -486,9 +506,13 @@ function ChangePassword({ showToast }) {
 function WorkerClockIn({ currentWorker, showToast }) {
   const [now, setNow] = useState(new Date());
   const storageKey = `clockIn_${currentWorker.id}`;
+  // localStorage throws in private browsing / blocked storage — never let that
+  // white-screen the tab (audit P2).
   const [clockInTime, setClockInTime] = useState(() => {
-    const stored = localStorage.getItem(storageKey);
-    return stored ? new Date(stored) : null;
+    try {
+      const stored = localStorage.getItem(storageKey);
+      return stored ? new Date(stored) : null;
+    } catch { return null; }
   });
   const [saving, setSaving] = useState(false);
   const [todayEntries, setTodayEntries] = useState([]);
@@ -511,14 +535,15 @@ function WorkerClockIn({ currentWorker, showToast }) {
   const handleClockIn = () => {
     const t = new Date();
     setClockInTime(t);
-    localStorage.setItem(storageKey, t.toISOString());
+    try { localStorage.setItem(storageKey, t.toISOString()); } catch { /* storage blocked */ }
     showToast(`Clocked in at ${t.toLocaleTimeString('en-AU', { timeStyle: 'short' })}`, 'success');
   };
 
   const handleClockOut = async () => {
     if (!clockInTime) return;
     const out = new Date();
-    const hours = Math.round(((out - clockInTime) / (1000 * 60 * 60)) * 100) / 100;
+    // Hours round to 0.25 h like every other timesheet line (audit P2).
+    const hours = Math.round(((out - clockInTime) / (1000 * 60 * 60)) * 4) / 4;
     setSaving(true);
     const { error } = await supabase.from('timesheets').insert([{
       worker_id: currentWorker.id,
@@ -531,7 +556,7 @@ function WorkerClockIn({ currentWorker, showToast }) {
     if (error) { showToast(error.message, 'error'); }
     else {
       showToast(`Clocked out — ${hours} hours logged`, 'success');
-      localStorage.removeItem(storageKey);
+      try { localStorage.removeItem(storageKey); } catch { /* storage blocked */ }
       setClockInTime(null);
       loadToday();
     }

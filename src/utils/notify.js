@@ -9,9 +9,11 @@
 // { error, code }. verify_jwt is on, so only authenticated portal users can send.
 
 import { supabase } from '../supabaseClient';
+import { portalBaseUrl } from './inviteLinks';
 
-// Public portal URL workers open to accept an allocation.
-export const PORTAL_URL = 'https://cbd-portal-gray.vercel.app';
+// Public portal URL workers open to accept an allocation — the real domain
+// (REACT_APP_PORTAL_URL / current origin), never the old vercel.app host.
+export const PORTAL_URL = portalBaseUrl();
 
 // Single address that mirrors every admin allocation notification by email.
 // This is the real, monitored team inbox (also the connected Gmail sender).

@@ -35,8 +35,9 @@ export function Badge({ label, color, size = 'md' }) {
 // stays consistent and there's only one place to add new statuses.
 
 export function allocationBadge(status) {
-  const map = { pending: 'yellow', confirmed: 'blue', completed: 'green', cancelled: 'red', declined: 'red' };
-  return <Badge label={status} color={map[status] || 'gray'} />;
+  const map = { pending: 'yellow', confirmed: 'blue', completed: 'green', cancelled: 'red', declined: 'red', filled: 'gray' };
+  // 'filled' = the job's positions were taken by workers who accepted first.
+  return <Badge label={status === 'filled' ? 'position filled' : status} color={map[status] || 'gray'} />;
 }
 
 export function timesheetBadge(status) {
@@ -46,7 +47,9 @@ export function timesheetBadge(status) {
 
 export function certBadge(expiry) {
   if (!expiry) return <Badge label="No expiry" color="gray" />;
-  const d = new Date(expiry);
+  // A date-only string parses as UTC midnight, which read as "Expired" from
+  // ~10 am Sydney on the expiry day itself. Treat the ticket as valid all day.
+  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(expiry)) ? `${expiry}T23:59:59` : expiry);
   const now = new Date();
   const diff = (d - now) / (1000 * 60 * 60 * 24);
   if (diff < 0) return <Badge label="Expired" color="red" />;

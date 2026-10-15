@@ -61,8 +61,8 @@ export function ApplicationsPage({ showToast, onNavigate }) {
     if (filterType   && a.type   !== filterType)   return false;
     if (search) {
       const s = search.toLowerCase();
-      if (!a.full_name.toLowerCase().includes(s)
-          && !a.email.toLowerCase().includes(s)
+      if (!(a.full_name || '').toLowerCase().includes(s)
+          && !(a.email || '').toLowerCase().includes(s)
           && !(a.phone || '').toLowerCase().includes(s)
           && !(a.message || '').toLowerCase().includes(s)) return false;
     }

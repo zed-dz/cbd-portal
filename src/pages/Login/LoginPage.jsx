@@ -4,10 +4,16 @@ import { C, R, MONO, inputStyle, btnPrimary } from '../../theme';
 import { Spinner, Field } from '../../components';
 import { portalBaseUrl } from '../../utils/inviteLinks';
 
-// Two-mode login screen. `signin` calls the parent's onSubmit (existing flow).
-// `signup` calls supabase.auth.signUp directly — a Postgres trigger on
-// auth.users creates the matching workers row (first user is auto-admin).
-export function LoginPage({ email, setEmail, password, setPassword, error, loading, onSubmit }) {
+// Login screen. `signin` calls the parent's onSubmit (existing flow).
+// `signup` (kept for first-run setups) calls supabase.auth.signUp directly — a
+// Postgres trigger on auth.users creates the matching workers row. Public
+// sign-up is switched OFF for the trial (Supabase "Allow new users to sign
+// up" = off), so the tab is hidden: people arrive by invite only.
+const LOGIN_TABS = [
+  { id: 'signin', label: 'Sign in' },
+];
+
+export function LoginPage({ email, setEmail, password, setPassword, error, loading, onSubmit, startNotice = '' }) {
   const [mode, setMode] = useState('signin');
   const [name, setName] = useState('');
   const [signupBusy, setSignupBusy]   = useState(false);
@@ -15,21 +21,21 @@ export function LoginPage({ email, setEmail, password, setPassword, error, loadi
   const [signupSuccess, setSignupSuccess] = useState(null);
   const [magicBusy, setMagicBusy] = useState(false);
   const [magicMsg, setMagicMsg]   = useState('');
-  const [notice, setNotice]       = useState('');
+  const [notice, setNotice]       = useState(startNotice);
 
-  // Passwordless recovery: send a one-tap sign-in link. Covers workers who were
-  // invited before they had a password, or who forgot it. shouldCreateUser:false
-  // so this never silently makes a brand-new account.
+  // Forgot password: send Supabase's *recovery* link (branded "Reset your
+  // password" email). When the link opens the portal, App.jsx sees the
+  // PASSWORD_RECOVERY event / type=recovery and shows the Set-password screen,
+  // so the person actually ends up with a password they know. (The old
+  // sign-in-link flow signed people in but never asked for a password — that
+  // is why "forgot password" left accounts with no password at all.)
   async function handleMagicLink() {
     setMagicMsg('');
     if (!email) { setMagicMsg('Enter your email above first.'); return; }
     setMagicBusy(true);
-    const { error: err } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: portalBaseUrl(), shouldCreateUser: false },
-    });
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: portalBaseUrl() });
     setMagicBusy(false);
-    setMagicMsg(err ? err.message : 'Check your email — we sent you a one-tap sign-in link. Once you\'re in, set a new password under My Profile so you can sign in normally next time.');
+    setMagicMsg(err ? err.message : 'Check your email — we sent you a reset link from CBD Portal. Tap it and you will be asked to set a new password. The link works once and expires after an hour.');
   }
 
   async function handleSignUp(e) {
@@ -62,7 +68,7 @@ export function LoginPage({ email, setEmail, password, setPassword, error, loadi
       !!data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0;
     if (alreadyRegistered) {
       setPassword('');
-      setNotice('That email already has an account. Sign in below with your password — or tap “Forgot your password? Email me a sign-in link” to get straight in.');
+      setNotice('That email already has an account. Sign in below with your password — or tap “Forgot your password? Email me a reset link” to set a new one.');
       setMode('signin');
       return;
     }
@@ -108,15 +114,14 @@ export function LoginPage({ email, setEmail, password, setPassword, error, loadi
           border: `1px solid ${C.border}`,
           boxShadow: '0 24px 60px -20px rgba(0,0,0,0.6)',
         }}>
-          <div style={{
+          {/* Self sign-up is OFF (invite only, audit P0). The tab strip only
+              renders when there is more than one tab. */}
+          {LOGIN_TABS.length > 1 && <div style={{
             display: 'flex', gap: 4, marginBottom: 22,
             background: C.bg, border: `1px solid ${C.border}`,
             borderRadius: R.md, padding: 3,
           }}>
-            {[
-              { id: 'signin', label: 'Sign in' },
-              { id: 'signup', label: 'Create account' },
-            ].map(t => {
+            {LOGIN_TABS.map(t => {
               const active = mode === t.id;
               return (
                 <button
@@ -133,7 +138,7 @@ export function LoginPage({ email, setEmail, password, setPassword, error, loadi
                 >{t.label}</button>
               );
             })}
-          </div>
+          </div>}
 
           {signupSuccess ? (
             <div style={{
@@ -225,11 +230,14 @@ export function LoginPage({ email, setEmail, password, setPassword, error, loadi
                   disabled={magicBusy}
                   style={{ background: 'none', border: 'none', color: C.textMuted, fontSize: 12.5, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
                 >
-                  {magicBusy ? 'Sending…' : 'Forgot your password? Email me a sign-in link'}
+                  {magicBusy ? 'Sending…' : 'Forgot your password? Email me a reset link'}
                 </button>
                 {magicMsg && (
                   <div style={{ marginTop: 8, fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>{magicMsg}</div>
                 )}
+                <div style={{ marginTop: 12, fontSize: 11.5, color: C.textDim, lineHeight: 1.5 }}>
+                  New here? Accounts are created by the office — ask for an invite email.
+                </div>
               </div>
             </>
           )}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { Fragment, useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, btnSmall, btnSecondary, btnPrimary } from '../../theme';
 import { Spinner, TableWrap, Th, Td, EmptyState } from '../../components';
@@ -110,20 +110,24 @@ export function XeroSyncPage({ showToast }) {
         return;
       }
 
-      // Fetch portal workers
-      const { data: workers, error } = await supabase.from('workers').select('id, name');
+      // Fetch portal workers (active only — never touch archived people)
+      const { data: workers, error } = await supabase.from('workers').select('id, name').is('archived_at', null);
       if (error) throw error;
 
+      const matches = workers.filter(w => xeroRates[(w.name || '').trim().toLowerCase()] != null);
+      const unmatched = workers.filter(w => xeroRates[(w.name || '').trim().toLowerCase()] == null).map(w => w.name);
+      if (!matches.length) { showToast('No portal worker name matches a Xero employee.', 'error'); setSyncingRates(false); return; }
+      if (!window.confirm(`Overwrite the ordinary pay rate (A) of ${matches.length} worker${matches.length === 1 ? '' : 's'} with the Xero pay-template rate?\n\n${matches.map(w => w.name).join(', ')}`)) {
+        setSyncingRates(false); return;
+      }
+
       let updated = 0;
-      const unmatched = [];
-      for (const w of workers) {
-        const key = (w.name || '').trim().toLowerCase();
-        if (xeroRates[key] != null) {
-          await supabase.from('workers').update({ pay_rate_regular: xeroRates[key] }).eq('id', w.id);
-          updated++;
-        } else {
-          unmatched.push(w.name);
-        }
+      for (const w of matches) {
+        const rate = xeroRates[(w.name || '').trim().toLowerCase()];
+        // Both columns: the Workers page shows pay_rate_a, payroll pays
+        // pay_rate_regular — updating only one made screen and pay disagree.
+        const { error: uErr } = await supabase.from('workers').update({ pay_rate_regular: rate, pay_rate_a: rate }).eq('id', w.id);
+        if (!uErr) updated++;
       }
 
       const msg = `Updated ${updated} worker${updated !== 1 ? 's' : ''}.${unmatched.length ? ` No Xero match for: ${unmatched.join(', ')}.` : ''}`;
@@ -235,8 +239,8 @@ export function XeroSyncPage({ showToast }) {
                   const payLine = (e.PayTemplate?.EarningsLines || []).find(l => l.RatePerUnit != null);
                   const rate = payLine?.RatePerUnit;
                   return (
-                  <>
-                    <tr key={e.EmployeeID} style={{ cursor: 'pointer' }} onClick={() => setExpandedEmp(expandedEmp === e.EmployeeID ? null : e.EmployeeID)}>
+                  <Fragment key={e.EmployeeID}>
+                    <tr style={{ cursor: 'pointer' }} onClick={() => setExpandedEmp(expandedEmp === e.EmployeeID ? null : e.EmployeeID)}>
                       <Td><strong>{e.FirstName} {e.LastName}</strong></Td>
                       <Td><span style={{ fontSize: 12, color: C.textMuted }}>{e.Email || '—'}</span></Td>
                       <Td>
@@ -253,7 +257,7 @@ export function XeroSyncPage({ showToast }) {
                       </Td>
                     </tr>
                     {expandedEmp === e.EmployeeID && (
-                      <tr key={`${e.EmployeeID}-detail`}>
+                      <tr>
                         <td colSpan={9} style={{ padding: 0 }}>
                           <div style={{ background: C.bg, borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`, padding: '14px 20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
                             <Section label="Personal">
@@ -297,7 +301,7 @@ export function XeroSyncPage({ showToast }) {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                   );
                 })}
               </tbody>

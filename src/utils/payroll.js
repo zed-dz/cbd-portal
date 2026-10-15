@@ -1,12 +1,20 @@
 // All payroll logic — pure functions, no React, no Supabase.
 
+// NSW public holidays (gazetted). The August "Bank Holiday" is NOT a public
+// holiday for construction/labour hire (banks only) — it was wrongly listed
+// here and paid at 2× (audit 2026-10-15). Check nsw.gov.au each December and
+// add the next year before 1 January, or every holiday pays as ordinary time.
 export const PUBLIC_HOLIDAYS = new Set([
   // 2025 NSW
   '2025-01-01','2025-01-27','2025-04-18','2025-04-19','2025-04-20','2025-04-21',
-  '2025-04-25','2025-06-09','2025-08-04','2025-10-06','2025-12-25','2025-12-26',
+  '2025-04-25','2025-06-09','2025-10-06','2025-12-25','2025-12-26',
   // 2026 NSW
   '2026-01-01','2026-01-26','2026-04-03','2026-04-04','2026-04-05','2026-04-06',
-  '2026-04-25','2026-06-08','2026-08-03','2026-10-05','2026-12-25','2026-12-28',
+  '2026-04-25','2026-06-08','2026-10-05','2026-12-25','2026-12-28',
+  // 2027 NSW (New Year, Australia Day, Easter Fri–Mon, Anzac Day Sun 25 Apr,
+  // King's Birthday, Labour Day, Christmas Sat + Mon 27, Boxing Day Sun + Tue 28)
+  '2027-01-01','2027-01-26','2027-03-26','2027-03-27','2027-03-28','2027-03-29',
+  '2027-04-25','2027-06-14','2027-10-04','2027-12-25','2027-12-26','2027-12-27','2027-12-28',
 ]);
 
 export function roundTo15Min(hours) {

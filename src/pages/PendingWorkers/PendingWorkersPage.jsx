@@ -90,7 +90,7 @@ export function PendingWorkersPage({ showToast }) {
     if (!w.profile_token) { showToast('No profile token — re-save the worker first.', 'error'); return; }
     const firstName = (w.name || '').split(' ')[0];
     const link = onboardLink(w.profile_token);
-    window.open(whatsappLink({ mobile: w.mobile, body: inviteMessage({ firstName, link }) }), '_blank');
+    window.open(whatsappLink({ mobile: w.mobile, body: inviteMessage({ firstName, link }) }), '_blank', 'noopener');
   };
 
   const appStatusColor = (s) => s === 'Invite Sent' ? 'blue' : s === 'Completing Profile' ? 'yellow' : s === 'Profile Incomplete' ? 'yellow' : 'gray';

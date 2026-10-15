@@ -110,10 +110,19 @@ export async function sendTimesheetForClientApproval(headerId, { force = false }
       return { ok: false, error: 'send failed on every channel (check Gmail/Twilio setup)' };
     }
 
-    await supabase.from('timesheet_headers').update({
+    const { error: stampErr } = await supabase.from('timesheet_headers').update({
       client_approval_sent_at: new Date().toISOString(),
       client_approval_sent_to: `${contact.name} (${sentVia.join(', ')})`,
     }).eq('id', h.id);
+    if (stampErr) {
+      // The link DID go out; an unstamped header would resend it on the next
+      // save. Tell the office instead of silently duplicating (audit P2).
+      addAdminNotification({
+        type: 'timesheet_signoff_stamp_failed',
+        title: `Sign-off sent but not recorded — ${h.workers?.name || 'worker'} / ${h.client || 'client'}`,
+        body: `Sent to ${contact.name} but the timesheet could not be stamped: ${stampErr.message}. Do not resend; open the sheet and check.`,
+      });
+    }
 
     return { ok: true, sentTo: `${contact.name} — ${sentVia.join(' + ')}` };
   } catch (e) {
@@ -124,11 +133,15 @@ export async function sendTimesheetForClientApproval(headerId, { force = false }
 // Admin fallback for verbal/phone approvals: same effect as the supervisor
 // clicking the link — signs off AND approves, so it lands in Payroll.
 export async function markClientApprovedManually(headerId, approverNote) {
+  // Approve = state change + LOCK (same as the supervisor link path), so a
+  // verbally-accepted sheet cannot drift afterwards without Reset workflow.
   const { error } = await supabase.from('timesheet_headers').update({
     client_approved: true,
     client_approved_at: new Date().toISOString(),
     client_approved_by: approverNote || 'Marked manually by admin',
     status: 'approved',
+    locked: true,
+    approved_at: new Date().toISOString(),
   }).eq('id', headerId);
   if (error) return { ok: false, error: error.message };
   const { error: e2 } = await supabase.from('timesheets')

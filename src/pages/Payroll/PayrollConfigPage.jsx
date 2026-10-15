@@ -69,6 +69,9 @@ export function PayrollConfigPage({ showToast }) {
   }, [showToast]);
 
   const handleSave = async (row) => {
+    // Numbers only: "7,6" saved as text became NaN in every payroll row (audit P2).
+    const raw = String(edits[row.id] ?? '').trim();
+    if (!/^-?\d+(\.\d+)?$/.test(raw)) { showToast(`${row.config_key}: enter a plain number (e.g. 7.6), no commas or symbols.`, 'error'); return; }
     setSaving(s => ({ ...s, [row.id]: true }));
     const { error } = await supabase.from('payroll_config')
       .update({ config_value: edits[row.id], updated_at: new Date().toISOString() })
