@@ -67,7 +67,9 @@ export function Take5Form({ workerId, showToast, prefill, onSubmitted }) {
 
   return (
     <>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
+      {/* One column on a 360 px phone (a date input will not shrink below ~170 px),
+          two side by side on wider screens. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0 12px', minWidth: 0 }}>
         <Field label="Date"><input type="date" style={inputStyle} value={f.work_date} onChange={set('work_date')} /></Field>
         <Field label="Client / site"><input style={inputStyle} value={f.site} onChange={set('site')} placeholder="Where are you working?" /></Field>
       </div>

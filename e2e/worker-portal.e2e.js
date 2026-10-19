@@ -12,6 +12,7 @@ test('worker portal: every tab renders', async ({ page, mock, isMobile }) => {
   const tabs = [
     ['My Allocations', page.getByText(SITE_NAME).first()],
     ['My Timesheets', page.getByRole('button', { name: '+ New Daily Timesheet' })],
+    ['Take 5', page.getByText('What task are you doing? *')],
     ['Clock In/Out', page.locator('[data-area="clock in / out"]')],
     ['Time off', page.getByText('🏖 Request time off')],
     ['Report incident', page.getByText(/Report an incident, near miss or hazard/)],
