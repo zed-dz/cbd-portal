@@ -13,6 +13,16 @@
 //   POST { kind: 'induction_signed',  id: site_induction_signatures.id }
 //   The row must belong to the caller (worker_id = caller) or it is a 403.
 //
+// Dry run (2026-10-20, for proving a path end to end without sending):
+//   Authorization: Bearer <service role key: the env key or the legacy service_role JWT>
+//   x-acting-worker-id: <workers.id to act as>
+//   POST { kind, id, dry_run: true }
+//   -> 200 { ok, dry_run: true, kind, sms_text, subject, title, bell_body,
+//            email_text, recipients: { sms, email, pool }, twilio_ready, would_dedupe }
+//   Builds everything, sends nothing, writes nothing. Counts only, never the
+//   admins' numbers or addresses. The service key is accepted ONLY with
+//   dry_run: true (anything else is a 401).
+//
 // Response:
 //   200 { ok: true, sms: n, email: n, bell: boolean, deduped?: true }
 //   400 invalid_json | invalid_kind | invalid_id · 401 unauthorized
@@ -224,6 +234,30 @@ function renderHtml(subject: string, lines: string[]) {
   </td></tr></table></td></tr></table></body></html>`;
 }
 
+// Constant-time compare for the service-key check (dry run only).
+function sameSecret(a: string, b: string) {
+  if (!a || !b || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+// A legacy service_role JWT that is not byte-equal to this function's env key
+// (the env can hold a newer secret key). Only tokens whose payload claims
+// service_role are probed, and the probe is an auth-admin call that succeeds
+// for a genuine service-role key only — the claim alone is never trusted.
+async function isServiceRoleJwt(jwt: string): Promise<boolean> {
+  try {
+    const part = jwt.split('.')[1];
+    if (!part) return false;
+    const payload = JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '=')));
+    if (payload?.role !== 'service_role') return false;
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/admin/users?page=1&per_page=1`, { headers: { apikey: jwt, Authorization: `Bearer ${jwt}` } });
+    try { await r.body?.cancel(); } catch { /* ignore */ }
+    return r.ok;
+  } catch { return false; }
+}
+
 // ── Handler ───────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
@@ -232,43 +266,63 @@ Deno.serve(async (req) => {
   try {
     const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
     if (!jwt) return json({ error: 'unauthorized' }, 401);
-    const anon = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    const { data: userData, error: userErr } = await anon.auth.getUser(jwt);
-    const email = (userData?.user?.email || '').trim().toLowerCase();
-    if (userErr || !email) return json({ error: 'unauthorized' }, 401);
+    const isService = sameSecret(jwt, SUPABASE_SERVICE_KEY) || await isServiceRoleJwt(jwt);
 
     const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-    let { data: worker } = await sb.from('workers').select('id, name, email, archived_at').eq('email', email).maybeSingle();
-    if (!worker) {
-      const pattern = email.replace(/[\\%_]/g, (m: string) => `\\${m}`);
-      const { data: alt } = await sb.from('workers').select('id, name, email, archived_at').ilike('email', pattern).limit(2);
-      worker = (alt || []).find((w: any) => String(w.email || '').trim().toLowerCase() === email) || null;
+    let worker: any = null;
+    if (isService) {
+      // Dry run only: act as the worker named in x-acting-worker-id.
+      const acting = (req.headers.get('x-acting-worker-id') || '').trim();
+      if (!UUID_RE.test(acting)) return json({ error: 'unauthorized' }, 401);
+      ({ data: worker } = await sb.from('workers').select('id, name, email, archived_at').eq('id', acting).maybeSingle());
+    } else {
+      const anon = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      const { data: userData, error: userErr } = await anon.auth.getUser(jwt);
+      const email = (userData?.user?.email || '').trim().toLowerCase();
+      if (userErr || !email) return json({ error: 'unauthorized' }, 401);
+
+      ({ data: worker } = await sb.from('workers').select('id, name, email, archived_at').eq('email', email).maybeSingle());
+      if (!worker) {
+        const pattern = email.replace(/[\\%_]/g, (m: string) => `\\${m}`);
+        const { data: alt } = await sb.from('workers').select('id, name, email, archived_at').ilike('email', pattern).limit(2);
+        worker = (alt || []).find((w: any) => String(w.email || '').trim().toLowerCase() === email) || null;
+      }
     }
     if (!worker || worker.archived_at) return json({ error: 'not_a_worker' }, 403);
 
-    let body: { kind?: string; id?: string } = {};
+    let body: { kind?: string; id?: string; dry_run?: boolean } = {};
     try { body = await req.json(); } catch { return json({ error: 'invalid_json' }, 400); }
+    // A worker's own call can never be a dry run, and the service key can
+    // never be anything else.
+    const dryRun = isService && body.dry_run === true;
+    if (isService && !dryRun) return json({ error: 'unauthorized' }, 401);
     const kind = String(body.kind || '') as Kind;
     const id = String(body.id || '').trim();
     if (!KINDS.includes(kind)) return json({ error: 'invalid_kind' }, 400);
     if (!UUID_RE.test(id)) return json({ error: 'invalid_id' }, 400);
 
     // Evidence for e-signatures: the caller's IP + user agent, as seen by the server.
-    const callerIp = (req.headers.get('x-forwarded-for') || req.headers.get('cf-connecting-ip') || '').split(',')[0].trim().slice(0, 64) || null;
+    // Same rule as the stamp_signature_evidence() trigger: the IP the edge
+    // (Cloudflare) attached, else the RIGHT-most X-Forwarded-For hop (the
+    // left-most is whatever the client chose to send).
+    const xffHops = (req.headers.get('x-forwarded-for') || '').split(',').map((h) => h.trim()).filter(Boolean);
+    const callerIp = ((req.headers.get('cf-connecting-ip') || '').trim() || xffHops[xffHops.length - 1] || '').slice(0, 64) || null;
     const callerUa = (req.headers.get('user-agent') || '').slice(0, 300) || null;
 
     if (kind === 'document_signed') {
       const { data: r } = await sb.from('document_signatures').select('id, worker_id').eq('id', id).maybeSingle();
       if (!r) return json({ error: 'not_found' }, 404);
       if (r.worker_id !== worker.id) return json({ error: 'not_yours' }, 403);
-      await sb.from('document_signatures').update({ ip: callerIp, user_agent: callerUa }).eq('id', id);
+      if (dryRun) return json({ ok: true, dry_run: true, kind, would_record: true });
+      // Fill only when the insert trigger could not; never overwrite evidence.
+      await sb.from('document_signatures').update({ ip: callerIp, user_agent: callerUa }).eq('id', id).is('ip', null);
       return json({ ok: true, sms: 0, email: 0, bell: false, recorded: true });
     }
 
     // Rate limit — bell rows for this worker in the last hour.
     const hourAgo = new Date(Date.now() - 3600_000).toISOString();
     const { count: recent } = await sb.from('notifications').select('id', { count: 'exact', head: true }).eq('worker_id', worker.id).gte('created_at', hourAgo);
-    if ((recent || 0) >= RATE_LIMIT_PER_HOUR) return json({ error: 'rate_limited' }, 429);
+    if (!dryRun && (recent || 0) >= RATE_LIMIT_PER_HOUR) return json({ error: 'rate_limited' }, 429);
 
     // Load the row, verify ownership, build the text server-side.
     let objectType = '';
@@ -340,7 +394,7 @@ Deno.serve(async (req) => {
       const { data: r } = await sb.from('site_induction_signatures').select('*, site_inductions(title, site_id, client_sites(name))').eq('id', id).maybeSingle();
       if (!r) return json({ error: 'not_found' }, 404);
       if (r.worker_id !== worker.id) return json({ error: 'not_yours' }, 403);
-      try { await sb.from('site_induction_signatures').update({ ip: callerIp, user_agent: callerUa }).eq('id', id); } catch { /* evidence only */ }
+      if (!dryRun) { try { await sb.from('site_induction_signatures').update({ ip: callerIp, user_agent: callerUa }).eq('id', id).is('ip', null); } catch { /* evidence only */ } }
       const ind: any = r.site_inductions || {};
       siteId = ind.site_id || null;
       const siteName = ind.client_sites?.name || 'site';
@@ -360,12 +414,12 @@ Deno.serve(async (req) => {
     const windowStart = new Date(Date.now() - DEDUPE_WINDOW_MIN * 60_000).toISOString();
     const { data: prior } = await sb.from('activity_events').select('id')
       .eq('verb', 'notified').eq('object_type', objectType).eq('object_id', id).gte('created_at', windowStart).limit(1);
-    if (prior && prior.length) return json({ ok: true, sms: 0, email: 0, bell: false, deduped: true });
+    if (!dryRun && prior && prior.length) return json({ ok: true, sms: 0, email: 0, bell: false, deduped: true });
 
     // Bell row (worker_id = caller, allowed by the notifications insert policy
     // too, but written here so the phone never has to).
     let bell = false;
-    try {
+    if (!dryRun) try {
       const { error: bellErr } = await sb.from('notifications').insert([{ type: kind, title, body: bellBody || null, allocation_id: null, worker_id: worker.id }]);
       bell = !bellErr;
       if (bellErr) console.error('bell insert failed:', bellErr.message);
@@ -393,6 +447,17 @@ Deno.serve(async (req) => {
       const key = e.toLowerCase();
       if (seenEmail.has(key)) continue;
       seenEmail.add(key); emailTargets.push(e);
+    }
+
+    if (dryRun) {
+      const cfg = smsTargets.length ? await loadTwilioConfig(sb) : null;
+      return json({
+        ok: true, dry_run: true, kind, sms_text: smsText, subject, title, bell_body: bellBody || null,
+        email_text: lines.join('\n'),
+        recipients: { sms: smsTargets.length, email: emailTargets.length, pool: pool.length },
+        twilio_ready: cfg ? twilioReady(cfg) : null,
+        would_dedupe: !!(prior && prior.length),
+      });
     }
 
     // SMS
