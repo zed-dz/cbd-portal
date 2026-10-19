@@ -155,10 +155,11 @@ serve(async (req) => {
   const { data: tokenRow } = await sb.from('xero_tokens').select('tenant_id, scope, expires_at').eq('id', 1).maybeSingle();
   const xeroConnected = !!tokenRow?.tenant_id;
   const scope = String(tokenRow?.scope || '');
-  const scopeOk = scope.includes('accounting.transactions');
+  // Granular scope (Xero apps since 2026 refuse 'accounting.transactions' at consent).
+  const scopeOk = scope.includes('accounting.invoices') || scope.includes('accounting.transactions');
   const scopeMsg = !xeroConnected
     ? 'Xero is not connected. Go to Payroll → "Connect Xero" first.'
-    : (!scopeOk ? 'Xero is connected but without invoice permission. Go to Payroll → "Reconnect" once to grant accounting.transactions.' : null);
+    : (!scopeOk ? 'Xero is connected but without invoice permission. Go to Payroll → "Reconnect" once to grant invoice access.' : null);
 
   // ── Client + its Schedule of Rates ────────────────────────────────────────
   const { data: client, error: cErr } = await sb.from('clients').select('*').eq('id', clientId).maybeSingle();

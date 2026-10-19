@@ -31,14 +31,14 @@ const STATE_TTL_MS  = 10 * 60 * 1000;
 
 // payroll employees/pay runs/payslips for the push, payroll.settings so the
 // push can read PayItems (overtime + casual-loading lines, 2026-10-19),
-// accounting.contacts + accounting.transactions so xero-invoice can match or
+// accounting.contacts + accounting.invoices so xero-invoice can match or
 // create the client contact and create DRAFT sales invoices, offline_access
 // for the refresh token. Adding a scope means the owner must click
 // "Reconnect" once — the stored token keeps the old scope list until then.
 const SCOPES = [
   'openid', 'profile', 'email', 'offline_access',
   'payroll.employees', 'payroll.payruns', 'payroll.payslip', 'payroll.settings',
-  'accounting.contacts', 'accounting.transactions',
+  'accounting.contacts', 'accounting.invoices',
 ].join(' ');
 
 const CORS = {

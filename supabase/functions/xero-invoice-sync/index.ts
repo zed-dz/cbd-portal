@@ -151,7 +151,9 @@ serve(async (req) => {
     const { data: tokenRow } = await sb.from('xero_tokens').select('tenant_id, scope').eq('id', 1).maybeSingle();
     const xeroConnected = !!tokenRow?.tenant_id;
     const scope = String(tokenRow?.scope || '');
-    const scopeOk = scope.includes('accounting.transactions');   // full or .read both cover GET Invoices
+    // Granular scope (Xero apps since 2026 refuse 'accounting.transactions' at consent);
+    // the old broad scope is still accepted if a token carries it.
+    const scopeOk = scope.includes('accounting.invoices') || scope.includes('accounting.transactions');
 
     if (!rows || !rows.length) {
       return json({ ok: true, checked: 0, changed: 0, errors: [], overdue_notified: 0, xero_connected: xeroConnected, scope_ok: scopeOk,
@@ -165,7 +167,7 @@ serve(async (req) => {
         xero_connected: xeroConnected, scope_ok: scopeOk, message });
     };
     if (!xeroConnected) return await failAll('not_connected', 'Xero is not connected. Go to Payroll → "Connect Xero" first.');
-    if (!scopeOk) return await failAll('scope_missing', 'Xero is connected without invoice permission. Go to Payroll → "Reconnect" once to grant accounting.transactions.');
+    if (!scopeOk) return await failAll('scope_missing', 'Xero is connected without invoice permission. Go to Payroll → "Reconnect" once to grant invoice access.');
     if (!XERO_CLIENT_ID || !XERO_CLIENT_SECRET) return await failAll('not_configured', 'Xero app keys are not set on the server.');
     const accessToken = await getAccessToken(sb);
     if (!accessToken) return await failAll('token_refresh_failed', 'Xero sign-in has expired. Reconnect Xero from the Payroll page.');
@@ -186,7 +188,7 @@ serve(async (req) => {
       if (!res.ok) {
         const text = (await res.text()).slice(0, 200);
         const msg = res.status === 401 || res.status === 403
-          ? 'Xero refused the request (missing invoice permission). Go to Payroll → "Reconnect" once to grant accounting.transactions.'
+          ? 'Xero refused the request (missing invoice permission). Go to Payroll → "Reconnect" once to grant invoice access.'
           : res.status === 429 ? 'Xero rate limit hit — try again in a minute.'
           : `Xero error ${res.status}${text ? `: ${text}` : ''}`;
         console.error('xero batch failed:', res.status);
