@@ -31,3 +31,43 @@ jobs:
         run: CI=true npm run build
         env:
           GENERATE_SOURCEMAP: 'false'
+
+  # Real browser tests (Playwright, Chromium): phone 360x740 touch + desktop
+  # 1280x800. The app is built against a FAKE Supabase host and every request
+  # is answered from e2e/fixtures — no secrets, no production data.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build against the fake Supabase
+        run: npm run e2e:build
+        env:
+          CI: 'true'
+          INLINE_RUNTIME_CHUNK: 'false'
+          GENERATE_SOURCEMAP: 'false'
+
+      - name: Browser tests
+        run: npx playwright test
+
+      - name: Upload report and traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
