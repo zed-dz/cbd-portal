@@ -16,6 +16,12 @@ import { addAdminNotification, normaliseAUMobile, sendWorkerSms } from '../../ut
 import { approveTimesheet } from '../../utils/approve';
 import { sendTimesheetForClientApproval, markClientApprovedManually } from '../../utils/clientApproval';
 import { ROLE_GROUPS, ALL_ROLE_NAMES, roleChipStyle } from '../../constants/roles';
+import { checkFatigue, fatigueKey, weekBounds } from '../../utils/fatigue';
+import { enqueue, isNetworkError } from '../../utils/offlineQueue';
+import { persistTimesheet } from '../../utils/saveTimesheet';
+import {
+  resizeImage, blobToDataUrl, uploadTimesheetPhotos, listTimesheetPhotos, removeTimesheetPhoto, MAX_PHOTOS,
+} from '../../utils/timesheetPhotos';
 
 const BREAK_OPTIONS = [0, 0.5, 0.75, 1];
 
@@ -134,6 +140,15 @@ export function DailyTimesheetForm({
   // `touched` = drawn THIS session; a signature loaded from an old sheet must
   // not re-trigger the approve-on-the-spot flow (it was recorded back then).
   const [sig, setSig] = useState({ name: '', company: '', touched: false });
+  // Fatigue context from the DB: when the worker's last saved shift ended and
+  // how many hours are already saved for this Mon–Sun week (other sheets).
+  const [fatigueCtx, setFatigueCtx] = useState({ previousEndMs: null, otherWeekHours: 0 });
+  const [fatigueConfirmed, setFatigueConfirmed] = useState(false);
+  // Photos: new ones wait in memory until the header id exists (post-save);
+  // saved ones come back from timesheet_photos with signed URLs.
+  const [photos, setPhotos] = useState([]);
+  const [savedPhotos, setSavedPhotos] = useState([]);
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   useEffect(() => { setForm(initial || blankDaily()); }, [initial]);
 
@@ -276,6 +291,115 @@ export function DailyTimesheetForm({
     })();
     return () => { mounted = false; };
   }, [allowAdmin, initial, targetWorker]);
+
+  // ---- Fatigue (owner brief 2026-10-19) --------------------------------------
+  // Earliest shift on the sheet drives the two DB lookups: the worker's last
+  // line ending before it (rest gap) and the other lines in its Mon–Sun week.
+  const firstShift = useMemo(() => {
+    const ls = form.hours_lines.filter(l => l.date && l.start_time)
+      .map(l => ({ date: l.date, start: l.start_time }))
+      .sort((a, b) => `${a.date}T${a.start}`.localeCompare(`${b.date}T${b.start}`));
+    return ls[0] || null;
+  }, [form.hours_lines]);
+  const firstKey = firstShift ? `${firstShift.date}|${firstShift.start}` : '';
+
+  useEffect(() => {
+    let mounted = true;
+    if (!targetWorker || !firstShift) { setFatigueCtx({ previousEndMs: null, otherWeekHours: 0 }); return undefined; }
+    (async () => {
+      const startISO = sydneyInstant(firstShift.date, firstShift.start);
+      const wk = weekBounds(firstShift.date);
+      const own = form.id || null;
+      const [p, w] = await Promise.all([
+        supabase.from('timesheets').select('end_time, header_id').eq('worker_id', targetWorker)
+          .not('end_time', 'is', null).lt('start_time', startISO).order('end_time', { ascending: false }).limit(5),
+        wk ? supabase.from('timesheets').select('total_hours, hours, header_id').eq('worker_id', targetWorker)
+          .gte('date', wk.from).lte('date', wk.to) : Promise.resolve({ data: [] }),
+      ]);
+      if (!mounted) return;
+      const prev = (p.data || []).find(r => !own || r.header_id !== own);
+      const other = (w.data || []).filter(r => !own || r.header_id !== own)
+        .reduce((s, r) => s + (parseFloat(r.total_hours ?? r.hours) || 0), 0);
+      setFatigueCtx({ previousEndMs: prev?.end_time ? Date.parse(prev.end_time) : null, otherWeekHours: +other.toFixed(2) });
+    })();
+    return () => { mounted = false; };
+    // firstShift is derived from firstKey; re-query only when the worker, the
+    // earliest shift or the header id changes — not on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetWorker, firstKey, form.id]);
+
+  const fatigue = useMemo(() => checkFatigue({
+    lines: form.hours_lines,
+    previousEndMs: fatigueCtx.previousEndMs,
+    otherWeekHours: fatigueCtx.otherWeekHours,
+    // Sydney-pinned instants so a stored UTC end_time compares with typed times.
+    toInstant: (d, t) => { const iso = sydneyInstant(d, t); return iso ? Date.parse(iso) : NaN; },
+  }), [form.hours_lines, fatigueCtx]);
+  const fKey = fatigueKey(fatigue.breaches);
+  // A changed breach set needs a fresh tick.
+  useEffect(() => { setFatigueConfirmed(false); }, [fKey]);
+
+  // ---- Photos ----------------------------------------------------------------
+  useEffect(() => {
+    let mounted = true;
+    if (!form.id) { setSavedPhotos([]); return undefined; }
+    listTimesheetPhotos(form.id).then(rows => { if (mounted) setSavedPhotos(rows); });
+    return () => { mounted = false; };
+  }, [form.id]);
+
+  const photoCount = photos.length + savedPhotos.length;
+  const addPhotos = async (fileList) => {
+    const files = Array.from(fileList || []).filter(f => f.type && f.type.startsWith('image/'));
+    if (!files.length) return;
+    const room = MAX_PHOTOS - photoCount;
+    if (room <= 0) { showToast(`Up to ${MAX_PHOTOS} photos per timesheet.`, 'error'); return; }
+    setPhotoBusy(true);
+    try {
+      const next = [];
+      for (const f of files.slice(0, room)) {
+        try {
+          const blob = await resizeImage(f);
+          next.push({ key: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, blob, preview: URL.createObjectURL(blob), caption: '' });
+        } catch (e) {
+          showToast(`Could not add ${f.name}: ${e.message}`, 'error');
+        }
+      }
+      setPhotos(p => [...p, ...next]);
+      if (files.length > room) showToast(`Only ${room} more photo${room === 1 ? '' : 's'} fit — max ${MAX_PHOTOS} per timesheet.`, 'info');
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+  const removePhoto = (key) => setPhotos(p => {
+    const hit = p.find(x => x.key === key);
+    if (hit) { try { URL.revokeObjectURL(hit.preview); } catch { /* already gone */ } }
+    return p.filter(x => x.key !== key);
+  });
+  const removeSavedPhoto = async (row) => {
+    if (!window.confirm('Remove this photo from the timesheet?')) return;
+    const r = await removeTimesheetPhoto(row);
+    if (!r.ok) { showToast(r.error, 'error'); return; }
+    setSavedPhotos(s => s.filter(x => x.id !== row.id));
+  };
+
+  // Network failure on a worker submit: park the exact save payload on the
+  // phone. Photos ride along as data URLs when they fit the quota.
+  const queueForLater = async (payload, followUp) => {
+    const firstDate = payload.rpcArgs.p_lines?.[0]?.date || todayISO();
+    const label = [form.client || 'Timesheet', form.project, firstDate].filter(Boolean).join(' · ');
+    let photoData = [];
+    try {
+      photoData = await Promise.all(photos.map(async p => ({ dataUrl: await blobToDataUrl(p.blob), caption: p.caption || '' })));
+    } catch { photoData = []; }
+    const r = enqueue({ label, payload, photos: photoData, followUp });
+    if (!r.ok) return false;
+    showToast('Saved on your phone — it will send when you are back online.', 'info');
+    if (r.droppedPhotos) showToast('The photos could not be kept offline. Add them again from My Timesheets once it has sent.', 'error');
+    photos.forEach(p => { try { URL.revokeObjectURL(p.preview); } catch { /* already gone */ } });
+    setPhotos([]);
+    onSaved?.(null);
+    return true;
+  };
 
   // "Copy last shift": client, project, role, shift type, start, end, break
   // from the most recent header + its first line. NEVER the date, comments or
@@ -458,6 +582,13 @@ export function DailyTimesheetForm({
       setTake5Block(null);
     }
 
+    // Fatigue check: never a hard block — the office decides — but the person
+    // submitting must tick that the hours are right when a limit is breached.
+    if (fatigue.breaches.length && !fatigueConfirmed) {
+      showToast('Fatigue check: tick "I confirm these hours are correct" under the totals before submitting.', 'error');
+      return;
+    }
+
     const approving = statusOverride === 'approved';
     // Office approval happens AFTER the save, via the approve-timesheet edge
     // function (server recomputes the split, locks, emails the PDF). Saving
@@ -471,53 +602,77 @@ export function DailyTimesheetForm({
       .map(l => ({ date: l.date, meal_allowance: parseFloat(l.meal_allowance) || 0 }));
 
     setSaving(true);
-    const { data, error } = await supabase.rpc('save_daily_timesheet', {
-      p_header_id: form.id || null,
-      p_worker_id: targetWorker,
-      p_client: form.client,
-      p_project: form.project,
-      p_role: form.role,
-      p_wet_hire: !!form.wet_hire,
-      p_comments: form.comments || null,
-      p_client_signature: form.client_signature || null,
-      p_allowance_lines: allowancePayload,
-      p_status: statusToUse,
-      p_lines: buildLinesPayload({ ...form, hours_lines: recalced }, config),
-    });
-    if (error) { setSaving(false); showToast(error.message, 'error'); return; }
-
-    // Reject keeps the direct status write (nothing locks on reject). The
-    // reason is stored on the header and pushed to the worker (bell + SMS).
-    if (overriding && !approving) {
-      const rejectId = form.id || data;
-      if (rejectId) {
-        await supabase.from('timesheet_headers').update({ status: 'rejected', rejection_reason: rejectReason || null }).eq('id', rejectId);
-        await supabase.from('timesheets').update({ status: 'rejected' }).eq('header_id', rejectId);
-      }
-      notifyWorkerRejected(rejectReason);
-    }
-
-    const savedHeaderId = form.id || data;
-
-    // Master-data ids + name snapshots (Dashpivot 1.1) — stamped right after
-    // the RPC and AWAITED: the approval paths below can lock the header, and
-    // these columns are not in the lock's allowed set (review #10 race).
-    if (savedHeaderId) {
-      const { clientId, siteId } = resolveMasterIds();
-      const { error: e1 } = await supabase.from('timesheet_headers').update({
+    // One payload for the live save AND the offline replay (saveTimesheet.js):
+    // the RPC args plus the post-save patch — master-data ids + name snapshots
+    // (Dashpivot 1.1), the early-finish answer and the fatigue flags. The
+    // patch is AWAITED inside persistTimesheet: the approval paths below can
+    // lock the header, and these columns are not in the lock's allowed set.
+    const { clientId, siteId } = resolveMasterIds();
+    const payload = {
+      rpcArgs: {
+        p_header_id: form.id || null,
+        p_worker_id: targetWorker,
+        p_client: form.client,
+        p_project: form.project,
+        p_role: form.role,
+        p_wet_hire: !!form.wet_hire,
+        p_comments: form.comments || null,
+        p_client_signature: form.client_signature || null,
+        p_allowance_lines: allowancePayload,
+        p_status: statusToUse,
+        p_lines: buildLinesPayload({ ...form, hours_lines: recalced }, config),
+      },
+      headerPatch: {
         client_id: clientId, site_id: siteId,
         finished_early: form.finished_early === true,
         finished_early_reason: form.finished_early === true ? String(form.finished_early_reason || '').trim().slice(0, 40) : null,
         client_name_snapshot: form.client || null,
         site_name_snapshot: form.project || null,
         role_name_snapshot: form.role || null,
-      }).eq('id', savedHeaderId);
-      if (e1) showToast(`Timesheet saved, but the client/site link failed: ${e1.message}`, 'error');
-      if (clientId || siteId) {
-        const { error: e2 } = await supabase.from('timesheets').update({ client_id: clientId, site_id: siteId })
-          .eq('header_id', savedHeaderId);
-        if (e2) showToast(`Timesheet saved, but the line client/site link failed: ${e2.message}`, 'error');
+        fatigue_flags: fatigue.breaches.length ? fatigue.breaches : null,
+      },
+      linePatch: { client_id: clientId, site_id: siteId },
+    };
+    const signedWho = signedOnSite
+      ? `${sig.name.trim()}${String(sig.company).trim() ? ` (${String(sig.company).trim()})` : ''} — signed on site`
+      : null;
+
+    const saved = await persistTimesheet(payload);
+    if (!saved.ok) {
+      setSaving(false);
+      // No signal: a worker's own submission is parked on the phone and sent
+      // later through the same path. Office edits/approvals are never queued.
+      if (!allowAdmin && !overriding && (saved.network || isNetworkError(saved.error))) {
+        const queued = await queueForLater(payload, { signedOnSite, who: signedWho, supervisor: true });
+        if (queued) return;
       }
+      showToast(saved.error?.message || String(saved.error), 'error');
+      return;
+    }
+    saved.warnings.forEach(w => showToast(`Timesheet saved, but the ${w}`, 'error'));
+    const data = saved.data;
+    const savedHeaderId = saved.headerId;
+
+    // Reject keeps the direct status write (nothing locks on reject). The
+    // reason is stored on the header and pushed to the worker (bell + SMS).
+    if (overriding && !approving) {
+      if (savedHeaderId) {
+        await supabase.from('timesheet_headers').update({ status: 'rejected', rejection_reason: rejectReason || null }).eq('id', savedHeaderId);
+        await supabase.from('timesheets').update({ status: 'rejected' }).eq('header_id', savedHeaderId);
+      }
+      notifyWorkerRejected(rejectReason);
+    }
+
+    // Photos need the header id, so they upload after the save. A failed
+    // upload never fails the timesheet — the hours are already in.
+    let photosUploaded = 0;
+    if (savedHeaderId && photos.length) {
+      const up = await uploadTimesheetPhotos({ workerId: targetWorker, headerId: savedHeaderId, photos });
+      photosUploaded = up.uploaded.length;
+      if (up.errors.length) showToast(`${up.errors.length} photo${up.errors.length === 1 ? '' : 's'} failed to upload — open the timesheet and add ${up.errors.length === 1 ? 'it' : 'them'} again.`, 'error');
+      photos.forEach(p => { try { URL.revokeObjectURL(p.preview); } catch { /* already gone */ } });
+      setPhotos([]);
+      if (up.uploaded.length) setSavedPhotos(s => [...s, ...up.uploaded.map(r => ({ ...r, url: null }))]);
     }
 
     let approveFailed = null;
@@ -538,7 +693,10 @@ export function DailyTimesheetForm({
     logActivity({
       verb: overriding ? (approving ? (approveFailed ? 'edited' : 'approved') : 'rejected') : (form.id ? 'edited' : 'submitted'),
       object_type: 'timesheet_header', object_id: savedHeaderId,
-      after: { client: form.client, project: form.project, total_hours: totals.totalHours },
+      after: {
+        client: form.client, project: form.project, total_hours: totals.totalHours,
+        fatigue_flags: fatigue.breaches.length || 0, photos_added: photosUploaded,
+      },
     });
 
     // Autonomous sign-off: a submission goes to the site supervisor UNLESS a
@@ -546,7 +704,7 @@ export function DailyTimesheetForm({
     // not on reject / office-approve (the office path already emailed the PDF).
     if (statusOverride !== 'rejected' && !approving) {
       if (savedHeaderId && signedOnSite) {
-        const who = `${sig.name.trim()}${String(sig.company).trim() ? ` (${String(sig.company).trim()})` : ''} — signed on site`;
+        const who = signedWho;
         markClientApprovedManually(savedHeaderId, who).then(r => {
           if (r.ok) showToast('Client signed on site — timesheet approved and the PDF copy is on its way.', 'success');
           else showToast(`Signed on site, but approval could not be recorded: ${r.error}`, 'error');
@@ -776,6 +934,24 @@ export function DailyTimesheetForm({
         <div><div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1 }}>Meal Allowance</div><div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>${totals.totalMeal.toFixed(2)}</div></div>
       </div>
 
+      {/* Fatigue check — amber, never a hard block. Lists every breach; the
+          tick is required before Submit and resets when the breaches change. */}
+      {fatigue.breaches.length > 0 && (
+        <div data-area="fatigue check" style={{ background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.45)', borderRadius: 8, padding: '10px 14px', marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#fbbf24' }}>⚠ Fatigue check</div>
+          <ul style={{ margin: '6px 0 6px', paddingLeft: 18, fontSize: 12, color: C.text, lineHeight: 1.5 }}>
+            {fatigue.breaches.map(b => <li key={`${b.type}|${b.date}`}>{b.text}</li>)}
+          </ul>
+          <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>
+            Week so far: {fatigue.weekHours.toFixed(2)}h. You can still submit — the office will review it.
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text, cursor: 'pointer', minHeight: 36 }}>
+            <input type="checkbox" checked={fatigueConfirmed} onChange={e => setFatigueConfirmed(e.target.checked)} style={{ width: 18, height: 18 }} />
+            I confirm these hours are correct
+          </label>
+        </div>
+      )}
+
       {/* Adjustment audit trail — original submitted times always stay on record */}
       {form.hours_lines.some(l => l.adjusted_at) && (
         <div style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 12 }}>
@@ -807,6 +983,46 @@ export function DailyTimesheetForm({
           onChange={e => { setField('comments', e.target.value); if (taskError) setTaskError(''); }}
         />
       </Field>
+
+      {/* Photos — dockets / plant hour meters. Resized on the phone to ≤1600px,
+          uploaded after the save (needs the header id). Never on the client PDF. */}
+      <div data-area="timesheet photos" style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 14px', margin: '4px 0 12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>📷 Photos (optional)</div>
+          <div style={{ fontSize: 12, color: C.textMuted, flex: 1, minWidth: 160 }}>Dockets, plant hour meters — up to {MAX_PHOTOS}. Not sent to the client.</div>
+          <label style={{ ...btnSmall, minHeight: 36, display: 'inline-flex', alignItems: 'center', cursor: photoBusy || photoCount >= MAX_PHOTOS ? 'default' : 'pointer', opacity: photoBusy || photoCount >= MAX_PHOTOS ? 0.5 : 1 }}>
+            {photoBusy ? 'Adding…' : '📷 Add photo'}
+            <input type="file" accept="image/*" capture="environment" multiple style={{ display: 'none' }}
+              disabled={photoBusy || photoCount >= MAX_PHOTOS}
+              onChange={e => { addPhotos(e.target.files); e.target.value = ''; }} />
+          </label>
+        </div>
+        {photoCount > 0 && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+            {savedPhotos.map(p => (
+              <div key={p.id} style={{ position: 'relative', width: 76, height: 76, borderRadius: 8, overflow: 'hidden', border: `1px solid ${C.border}`, background: C.card }}>
+                {p.url
+                  ? <a href={p.url} target="_blank" rel="noopener noreferrer"><img src={p.url} alt={p.caption || 'Docket'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /></a>
+                  : <span style={{ fontSize: 10, color: C.textMuted, padding: 6, display: 'block' }}>Saved ✓</span>}
+                <button type="button" onClick={() => removeSavedPhoto(p)} title="Remove photo"
+                  style={{ position: 'absolute', top: 2, right: 2, width: 22, height: 22, borderRadius: 11, border: 'none', background: 'rgba(0,0,0,0.65)', color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: '22px', padding: 0 }}>×</button>
+              </div>
+            ))}
+            {photos.map(p => (
+              <div key={p.key} style={{ position: 'relative', width: 76, height: 76, borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(96,165,250,0.5)', background: C.card }}>
+                <img src={p.preview} alt="Docket (new)" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <button type="button" onClick={() => removePhoto(p.key)} title="Remove photo"
+                  style={{ position: 'absolute', top: 2, right: 2, width: 22, height: 22, borderRadius: 11, border: 'none', background: 'rgba(0,0,0,0.65)', color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: '22px', padding: 0 }}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
+        {photos.length > 0 && (
+          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6 }}>
+            {photos.length} new photo{photos.length === 1 ? '' : 's'} will upload when you press {form.id ? 'Save changes' : 'Submit'}.
+          </div>
+        )}
+      </div>
 
       {allowAdmin && (
         <Field label="Status">

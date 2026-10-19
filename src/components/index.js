@@ -5,7 +5,7 @@
 
 export { ToastContainer } from './ui/Toast';
 export { Spinner }        from './ui/Spinner';
-export { Badge, allocationBadge, timesheetBadge, certBadge } from './ui/Badge';
+export { Badge, allocationBadge, timesheetBadge, certBadge, fatigueBadge } from './ui/Badge';
 export { Modal }          from './ui/Modal';
 export { Field }          from './ui/Field';
 export { EmptyState }     from './ui/EmptyState';
@@ -16,4 +16,6 @@ export { DateRangeFilter, presetBounds, RANGE_PRESETS } from './ui/DateRangeFilt
 export { ClockField } from './ui/ClockField';
 export { DailyTimesheetForm, blankDaily, dailyFromHeader } from './timesheet/DailyTimesheetForm';
 export { TimesheetDetailView, printTimesheet, printTimesheetBatch } from './timesheet/TimesheetDetailView';
+export { OfflineQueueBanner } from './timesheet/OfflineQueueBanner';
+export { TimesheetPhotos } from './timesheet/TimesheetPhotos';
 export { ClientSitesManager } from './clients/ClientSitesManager';

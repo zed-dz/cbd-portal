@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary } from '../theme';
 import { todayISO, localISO, fmtDate, fmtDateTime } from '../utils/dates';
-import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, timesheetBadge, DailyTimesheetForm, TimesheetDetailView } from '../components';
+import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, timesheetBadge, DailyTimesheetForm, TimesheetDetailView, OfflineQueueBanner } from '../components';
+import { QUEUE_SENT_EVENT } from '../utils/offlineQueue';
 import { WorkerCertificateUploads } from '../components/certificates/WorkerCertificateUploads';
 import { Take5Form } from '../components/take5/Take5Form';
 import { addAdminNotification } from '../utils/notify';
@@ -43,6 +44,10 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
           <button onClick={onSignOut} style={{ ...btnSecondary, padding: '6px 14px', fontSize: 13 }}>Sign Out</button>
         </div>
       </div>
+
+      {/* Offline timesheets waiting to send (feat/timesheets) — replays on
+          reconnect; "Send now" for a manual push. */}
+      <OfflineQueueBanner showToast={showToast} />
 
       <div style={{ background: C.card, borderBottom: `1px solid ${C.border}`, overflowX: 'auto', display: 'flex' }}>
         {tabs.map(tab => (
@@ -318,6 +323,12 @@ function WorkerTimesheets({ currentWorker, showToast, onGoToTake5 }) {
   }, [currentWorker.id, currentWorker.worker_type, showToast]);
 
   useEffect(() => { load(); }, [load]);
+
+  // A queued (offline) timesheet that just sent should appear without a refresh.
+  useEffect(() => {
+    window.addEventListener(QUEUE_SENT_EVENT, load);
+    return () => window.removeEventListener(QUEUE_SENT_EVENT, load);
+  }, [load]);
 
   const onSaved = () => { setModal(false); load(); };
 

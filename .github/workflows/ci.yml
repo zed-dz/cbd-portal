@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # package-lock.json is git-ignored in this repo, so `npm ci` has nothing
+      # to pin against. Use it when a lockfile is committed, else a plain
+      # install (same package.json ranges Vercel builds from).
+      - name: Install
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+
+      - name: Unit tests
+        run: CI=true npm test -- --watchAll=false
+
+      # CI=true makes CRA treat lint warnings as errors — same gate as Vercel.
+      - name: Build
+        run: CI=true npm run build
+        env:
+          GENERATE_SOURCEMAP: 'false'
