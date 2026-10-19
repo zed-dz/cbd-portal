@@ -19,6 +19,7 @@
 //   • inserts ONE `notifications` row (type 'ops_health') for the admin bell,
 //   • inserts ONE `activity_events` row (verb 'ran', object_type 'health_check'),
 //   • inserts the full summary into `ops_health_checks` (office-readable via RLS),
+//   • pushes the headline to every office device that opted in (via `send-push`),
 //   • returns the summary JSON.
 // Idempotent in the sense that a second run simply records another row.
 //
@@ -49,6 +50,26 @@ const json = (b: unknown, s = 200) =>
 
 const ITEM_CAP = 40;           // list cap per check; counts are always complete
 const DATE_RE  = /^\d{4}-\d{2}-\d{2}$/;
+
+// ── Web push (delegated to the internal `send-push` function) ─────────────
+// Office users who turned on "Browser push" get the headline on their phone /
+// desktop the moment the check runs. Never throws; no device just means sent: 0.
+async function sendPush(msg: { worker_ids?: string[]; office?: boolean; title: string; body?: string; url?: string; tag?: string })
+  : Promise<{ sent: number; failed: number; removed: number }> {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(msg),
+    });
+    const r = await res.json().catch(() => ({}));
+    if (!res.ok) { console.error('send-push:', res.status, r?.error || ''); return { sent: 0, failed: 1, removed: 0 }; }
+    return { sent: r.sent || 0, failed: r.failed || 0, removed: r.removed || 0 };
+  } catch (e) {
+    console.error('send-push unreachable:', (e as Error).message);
+    return { sent: 0, failed: 1, removed: 0 };
+  }
+}
 
 // ── Sydney date helpers (same approach as cert-reminders) ─────────────────
 function sydneyToday(): string {
@@ -330,6 +351,7 @@ Deno.serve(async (req) => {
 
     let notificationId: string | null = null;
     let healthCheckId: number | null = null;
+    let push = { sent: 0, failed: 0, removed: 0 };
     if (!dryRun) {
       try {
         const { data, error } = await sb.from('notifications').insert([{
@@ -352,9 +374,14 @@ Deno.serve(async (req) => {
         if (error) throw error;
         healthCheckId = data?.id ?? null;
       } catch (e) { console.error('ops_health_checks insert failed:', (e as Error).message); }
+
+      // Push the headline to every office device that opted in (counts only, no names).
+      try {
+        push = await sendPush({ office: true, title, body: bullets.length ? `${bullets.length} item${bullets.length === 1 ? '' : 's'} to look at — open the portal bell for details.` : 'No issues found today.', url: '/', tag: `ops-${today}` });
+      } catch (e) { console.error('push threw:', (e as Error).message); }
     }
 
-    return json({ ok: true, dry_run: dryRun, ...summary, title, notification_id: notificationId, health_check_id: healthCheckId });
+    return json({ ok: true, dry_run: dryRun, ...summary, title, notification_id: notificationId, health_check_id: healthCheckId, push });
   } catch (e) {
     console.error('ops-health-check failed:', (e as Error)?.message);
     return json({ error: 'server_error' }, 500);

@@ -6,6 +6,7 @@ import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, allocationBadge, 
 import { QUEUE_SENT_EVENT } from '../utils/offlineQueue';
 import { WorkerCertificateUploads } from '../components/certificates/WorkerCertificateUploads';
 import { Take5Form } from '../components/take5/Take5Form';
+import { PushPrompt } from '../components/notifications/PushPrompt';
 import { addAdminNotification } from '../utils/notify';
 import { roleChipStyle } from '../constants/roles';
 
@@ -568,6 +569,7 @@ function WorkerMyProfile({ currentWorker, showToast }) {
       <div style={{ color: C.textMuted, fontSize: 13 }}>
         Keep these up to date — new tickets, a house move, or a new phone number.
       </div>
+      <PushPrompt workerId={currentWorker.id} showToast={showToast} />
       <Field label="Mobile"><input style={inputStyle} value={f.mobile} onChange={set('mobile')} /></Field>
       <Field label="Alternate phone"><input style={inputStyle} value={f.alternate_phone} onChange={set('alternate_phone')} /></Field>
       <Field label="Residential address"><input style={inputStyle} value={f.address} onChange={set('address')} /></Field>

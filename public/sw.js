@@ -17,6 +17,40 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// ── Web push ──────────────────────────────────────────────────────────────
+// Payload (JSON, encrypted end-to-end by the send-push function):
+//   { title, body, url?, tag? }  — url is opened (or focused) on tap.
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch { data = { body: e.data ? e.data.text() : '' }; }
+  const title = data.title || 'Portal';
+  const opts = {
+    body: data.body || '',
+    icon: '/logo192.png',
+    badge: '/logo192.png',
+    tag: data.tag || undefined,
+    renotify: !!data.tag,
+    data: { url: data.url || '/' },
+  };
+  e.waitUntil(self.registration.showNotification(title, opts));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const target = new URL((e.notification.data && e.notification.data.url) || '/', self.location.origin).href;
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if (c.url.startsWith(self.location.origin) && 'focus' in c) {
+          if ('navigate' in c && c.url !== target) c.navigate(target).catch(() => {});
+          return c.focus();
+        }
+      }
+      return self.clients.openWindow(target);
+    })
+  );
+});
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;

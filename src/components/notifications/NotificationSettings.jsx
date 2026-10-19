@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, R, btnPrimary, btnSecondary } from '../../theme';
 import { Modal } from '../ui/Modal';
+import { PushPrompt } from './PushPrompt';
 
 // Per-admin notification preferences. Persisted on the admin's own `workers`
 // row (notify_mode / notify_sms / notify_email) and honored by
@@ -117,6 +118,7 @@ export function NotificationSettings({ currentWorker, showToast, onClose }) {
       <div style={{ display: 'grid', gap: 8 }}>
         <Toggle on={sms} setOn={setSms} label="SMS" hint="Text message to your mobile" />
         <Toggle on={email} setOn={setEmail} label="Email" hint="Email to your address on file" />
+        <PushPrompt variant="row" label="Browser push" workerId={currentWorker.id} showToast={showToast} />
       </div>
 
       <div style={{ fontSize: 11, color: C.textDim, marginTop: 12, lineHeight: 1.5, background: C.cardHover, border: `1px solid ${C.border}`, borderRadius: R.sm, padding: '8px 10px' }}>
