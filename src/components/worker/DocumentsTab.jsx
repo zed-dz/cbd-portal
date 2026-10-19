@@ -117,7 +117,7 @@ export function DocumentReader({ item, currentWorker, showToast, onClose, onSign
     }]).select('id').single();
     setBusy(false);
     if (error) { showToast(error.message, 'error'); return; }
-    // Server stamps the signature with the caller's IP + device (evidence); fire-and-forget.
+    // IP + device were stamped by the insert trigger already; this call is fire-and-forget.
     if (data?.id) supabase.functions.invoke('notify-admins-ops', { body: { kind: 'document_signed', id: data.id } }).catch(() => {});
     showToast(`"${doc.title}" signed.`, 'success');
     onSigned?.();

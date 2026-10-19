@@ -52,7 +52,7 @@ const RESEND_ON            = !!(RESEND_API_KEY && MAIL_FROM);
 const RATE_LIMIT_PER_HOUR  = 20;
 const DEDUPE_WINDOW_MIN    = 10;
 // fatigue_flagged → allocators (a sheet was submitted with >12h / <10h rest / >60h breaches)
-// document_signed → no broadcast: only stamps ip + user agent on the signature row
+// document_signed → no broadcast, no change (ip + user agent are stamped by the insert trigger)
 const KINDS = ['incident_reported', 'leave_requested', 'induction_signed', 'fatigue_flagged', 'document_signed'] as const;
 type Kind = typeof KINDS[number];
 
@@ -314,7 +314,9 @@ Deno.serve(async (req) => {
       if (!r) return json({ error: 'not_found' }, 404);
       if (r.worker_id !== worker.id) return json({ error: 'not_yours' }, 403);
       if (dryRun) return json({ ok: true, dry_run: true, kind, would_record: true });
-      // Fill only when the insert trigger could not; never overwrite evidence.
+      // No-op in practice: stamp_signature_evidence() stamps ip + user agent on
+      // every insert. Kept harmless — it only touches a row whose ip is null and
+      // the write-once trigger never lets it overwrite evidence.
       await sb.from('document_signatures').update({ ip: callerIp, user_agent: callerUa }).eq('id', id).is('ip', null);
       return json({ ok: true, sms: 0, email: 0, bell: false, recorded: true });
     }

@@ -18,6 +18,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { getXeroAccessToken } from './xeroToken.ts';
 
 const XERO_CLIENT_ID       = Deno.env.get('XERO_CLIENT_ID')!;
 const XERO_CLIENT_SECRET   = Deno.env.get('XERO_CLIENT_SECRET')!;
@@ -348,23 +349,7 @@ serve(async (req) => {
 
 // ── Token + HTTP helpers ─────────────────────────────────────────────────────
 async function getAccessToken(sb: ReturnType<typeof createClient>): Promise<string | null> {
-  const { data } = await sb.from('xero_tokens').select('*').eq('id', 1).maybeSingle();
-  if (!data) return null;
-  if (new Date(data.expires_at).getTime() - Date.now() < 5 * 60 * 1000) {
-    const res = await fetch('https://identity.xero.com/connect/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': `Basic ${btoa(`${XERO_CLIENT_ID}:${XERO_CLIENT_SECRET}`)}` },
-      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: data.refresh_token }),
-    });
-    if (!res.ok) return null;
-    const tokens = await res.json();
-    await sb.from('xero_tokens').update({
-      access_token: tokens.access_token, refresh_token: tokens.refresh_token,
-      expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(), updated_at: new Date().toISOString(),
-    }).eq('id', 1);
-    return tokens.access_token;
-  }
-  return data.access_token;
+  return getXeroAccessToken(sb, XERO_CLIENT_ID, XERO_CLIENT_SECRET);   // shared, lock-safe refresh (xeroToken.ts)
 }
 function xeroHeaders(token: string, tenantId: string) {
   return { 'Authorization': `Bearer ${token}`, 'Xero-Tenant-Id': tenantId, 'Content-Type': 'application/json', 'Accept': 'application/json' };
