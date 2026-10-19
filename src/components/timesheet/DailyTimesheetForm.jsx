@@ -16,6 +16,7 @@ import { addAdminNotification, normaliseAUMobile, sendWorkerSms } from '../../ut
 import { approveTimesheet } from '../../utils/approve';
 import { sendTimesheetForClientApproval, markClientApprovedManually } from '../../utils/clientApproval';
 import { ROLE_GROUPS, ALL_ROLE_NAMES, roleChipStyle } from '../../constants/roles';
+import { PlantUsedBlock, savePlantHours } from './PlantUsedBlock';
 
 const BREAK_OPTIONS = [0, 0.5, 0.75, 1];
 
@@ -118,6 +119,7 @@ export function DailyTimesheetForm({
   workers = [], onWorkerChange,
 }) {
   const [form, setForm] = useState(initial || blankDaily());
+  const [plantUsed, setPlantUsed] = useState([]);   // [{ plant_id, hours, notes }] — saved to plant_hours after the header
   const [clients, setClients] = useState([]);
   const [roles, setRoles] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -520,6 +522,12 @@ export function DailyTimesheetForm({
       }
     }
 
+    // Plant used → plant_hours, BEFORE any approve path locks the header.
+    if (savedHeaderId && (plantUsed.length || form.id)) {
+      const pr = await savePlantHours(savedHeaderId, plantUsed);
+      if (!pr.ok) showToast(`Timesheet saved, but the plant lines failed: ${pr.error}`, 'error');
+    }
+
     let approveFailed = null;
     if (approving && savedHeaderId) {
       // One approve path for every admin surface (review #5): the server
@@ -799,6 +807,7 @@ export function DailyTimesheetForm({
           </label>
         </div>
       </Field>
+      <PlantUsedBlock headerId={form.id} value={plantUsed} onChange={setPlantUsed} />
       <Field label="Tasks Completed *" hint="Briefly describe the tasks you completed today." error={taskError}>
         <textarea
           style={{ ...inputStyle, minHeight: 70, resize: 'vertical', ...(taskError ? { borderColor: 'rgba(239,68,68,0.5)' } : {}) }}

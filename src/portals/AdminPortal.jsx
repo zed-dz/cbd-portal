@@ -22,6 +22,7 @@ import { XeroSyncPage } from '../pages/XeroSync/XeroSyncPage';
 import { PaymentsPage } from '../pages/Payments/PaymentsPage';
 import { LicenceAgentPage } from '../pages/LicenceAgent/LicenceAgentPage';
 import { ReportsPage } from '../pages/Reports/ReportsPage';
+import { PlantPage } from '../pages/Plant/PlantPage';
 import { BulkMessagesPage } from '../pages/BulkMessages/BulkMessagesPage';
 import { InboxPage } from '../pages/Inbox/InboxPage';
 import { TemplatesPage } from '../pages/Templates/TemplatesPage';
@@ -123,6 +124,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         ...(process.env.REACT_APP_PAYMENTS_ENABLED === '1' ? [{ id: 'payments', label: '💳 Payments' }] : []),
         { id: 'payroll_config', label: '⚙ Payroll Config' },
         { id: 'xero_sync', label: '🔄 Xero Data' },
+        { id: 'plant', label: '🚜 Plant' },
       ],
     }] : [{
       label: 'FINANCE',
@@ -273,7 +275,8 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'payroll_config'   && <PayrollConfigPage showToast={showToast} />}
           {activePage === 'xero_sync'        && <XeroSyncPage showToast={showToast} />}
           {activePage === 'licence_agent'    && <LicenceAgentPage showToast={showToast} />}
-          {activePage === 'reports'          && <ReportsPage showToast={showToast} />}
+          {activePage === 'reports'          && <ReportsPage showToast={showToast} currentWorker={currentWorker} />}
+          {activePage === 'plant'            && currentWorker?.access_level === 'admin' && <PlantPage showToast={showToast} />}
           {activePage === 'bulk_messages'    && <BulkMessagesPage showToast={showToast} />}
           {activePage === 'inbox'            && <InboxPage         showToast={showToast} onNavigate={navigate} />}
           {activePage === 'templates'        && <TemplatesPage     showToast={showToast} />}
