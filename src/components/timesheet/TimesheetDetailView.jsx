@@ -1,3 +1,5 @@
+import { useState, useEffect } from 'react';
+import { supabase } from '../../supabaseClient';
 import { C, btnPrimary, btnSecondary } from '../../theme';
 import { fmtDate, fmtDateTime, sydneyTime } from '../../utils/dates';
 import { dayFromDate } from '../../utils/payroll';
@@ -20,6 +22,36 @@ const isAdjusted = (l) => !!l.adjusted_at;
 
 function sumBy(lines, fn) {
   return lines.reduce((s, l) => s + (fn(l) || 0), 0);
+}
+
+// Clock in / out events linked to this sheet (2026-10-19). Only sheets made
+// by the worker's Clock Out have them. Distance from the site is not known
+// (sites carry an address, not coordinates), so the fix is a map link.
+// RLS: the worker sees their own, the office sees all — nothing to gate here.
+function ClockEventsLine({ headerId }) {
+  const [events, setEvents] = useState([]);
+  useEffect(() => {
+    if (!headerId) return undefined;
+    let on = true;
+    supabase.from('clock_events').select('kind, at, lat, lng, accuracy_m').eq('header_id', headerId).order('at')
+      .then(({ data }) => { if (on) setEvents(data || []); });
+    return () => { on = false; };
+  }, [headerId]);
+  if (!events.length) return null;
+  const piece = (e) => (
+    <span key={`${e.kind}-${e.at}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <span style={{ color: e.kind === 'in' ? '#4ade80' : '#fca5a5', fontWeight: 700 }}>Clocked {e.kind}</span>
+      <span style={{ color: C.text }}>{sydneyTime(e.at)}</span>
+      {e.lat != null && e.lng != null
+        ? <a href={`https://maps.google.com/?q=${e.lat},${e.lng}`} target="_blank" rel="noreferrer" style={{ color: '#93c5fd', textDecoration: 'none' }}>📍 map{e.accuracy_m ? ` ±${Math.round(e.accuracy_m)} m` : ''}</a>
+        : <span style={{ color: C.textDim }}>no GPS</span>}
+    </span>
+  );
+  return (
+    <div data-area="clock events" style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12.5, background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', marginBottom: 14 }}>
+      {events.map(piece)}
+    </div>
+  );
 }
 
 // Status timeline (Dashpivot 1.5): rendered purely from header fields when
@@ -123,6 +155,7 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
       </div>
 
       <StatusTimeline header={header} />
+      <ClockEventsLine headerId={header.id} />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 16 }}>
         {meta.map(([k, v]) => (
