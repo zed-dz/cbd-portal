@@ -264,7 +264,8 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       )}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{ background: C.sidebar, borderBottom: `1px solid ${C.border}`, padding: isMobile ? '0 10px' : '0 20px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* minWidth 0 lets the title ellipsize instead of pushing the buttons off a 360 px screen. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: '1 1 auto' }}>
             {isMobile && (
               <button onClick={() => setSidebarOpen(o => !o)} style={{ background: 'none', border: 'none', color: C.text, cursor: 'pointer', fontSize: 22, lineHeight: 1, padding: 4 }} aria-label="Toggle menu">☰</button>
             )}
