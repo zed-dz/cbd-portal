@@ -106,11 +106,13 @@ export function DocumentReader({ item, currentWorker, showToast, onClose, onSign
     const typed = name.trim();
     if (typed.length < 3) { showToast('Type your full name to sign.', 'error'); return; }
     setBusy(true);
-    const { error } = await supabase.from('document_signatures').insert([{
+    const { data, error } = await supabase.from('document_signatures').insert([{
       document_id: doc.id, worker_id: currentWorker.id, version: doc.version, signed_name: typed,
-    }]);
+    }]).select('id').single();
     setBusy(false);
     if (error) { showToast(error.message, 'error'); return; }
+    // Server stamps the signature with the caller's IP + device (evidence); fire-and-forget.
+    if (data?.id) supabase.functions.invoke('notify-admins-ops', { body: { kind: 'document_signed', id: data.id } }).catch(() => {});
     showToast(`"${doc.title}" signed.`, 'success');
     onSigned?.();
   };

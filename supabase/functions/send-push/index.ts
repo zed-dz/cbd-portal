@@ -34,7 +34,7 @@ const VAPID: VapidKeys = {
   privateKey: Deno.env.get('VAPID_PRIVATE_KEY') || '',
   subject:    Deno.env.get('VAPID_SUBJECT')     || 'mailto:theteamcbd@gmail.com',
 };
-const PORTAL_URL = Deno.env.get('PORTAL_URL') || 'https://cbd-portal-gray.vercel.app';
+const PORTAL_URL = Deno.env.get('PORTAL_URL') || 'https://portal.cbdpnl.com.au';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',

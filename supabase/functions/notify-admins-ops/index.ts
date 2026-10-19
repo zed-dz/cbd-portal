@@ -30,7 +30,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 const SUPABASE_URL         = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_ANON_KEY    = Deno.env.get('SUPABASE_ANON_KEY')!;
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const PORTAL_URL           = Deno.env.get('PORTAL_URL') || 'https://cbd-portal-gray.vercel.app';
+const PORTAL_URL           = Deno.env.get('PORTAL_URL') || 'https://portal.cbdpnl.com.au';
 const ADMIN_EMAIL          = (Deno.env.get('ADMIN_EMAIL') || 'theteamcbd@gmail.com').trim().toLowerCase();
 const SENDER_DISPLAY_NAME  = Deno.env.get('GMAIL_SENDER_NAME') || 'CBD Plant & Labour';
 const GMAIL_CLIENT_ID      = Deno.env.get('GMAIL_CLIENT_ID') || '';
@@ -41,7 +41,9 @@ const RESEND_ON            = !!(RESEND_API_KEY && MAIL_FROM);
 
 const RATE_LIMIT_PER_HOUR  = 20;
 const DEDUPE_WINDOW_MIN    = 10;
-const KINDS = ['incident_reported', 'leave_requested', 'induction_signed'] as const;
+// fatigue_flagged → allocators (a sheet was submitted with >12h / <10h rest / >60h breaches)
+// document_signed → no broadcast: only stamps ip + user agent on the signature row
+const KINDS = ['incident_reported', 'leave_requested', 'induction_signed', 'fatigue_flagged', 'document_signed'] as const;
 type Kind = typeof KINDS[number];
 
 const CORS = {
@@ -251,6 +253,18 @@ Deno.serve(async (req) => {
     if (!KINDS.includes(kind)) return json({ error: 'invalid_kind' }, 400);
     if (!UUID_RE.test(id)) return json({ error: 'invalid_id' }, 400);
 
+    // Evidence for e-signatures: the caller's IP + user agent, as seen by the server.
+    const callerIp = (req.headers.get('x-forwarded-for') || req.headers.get('cf-connecting-ip') || '').split(',')[0].trim().slice(0, 64) || null;
+    const callerUa = (req.headers.get('user-agent') || '').slice(0, 300) || null;
+
+    if (kind === 'document_signed') {
+      const { data: r } = await sb.from('document_signatures').select('id, worker_id').eq('id', id).maybeSingle();
+      if (!r) return json({ error: 'not_found' }, 404);
+      if (r.worker_id !== worker.id) return json({ error: 'not_yours' }, 403);
+      await sb.from('document_signatures').update({ ip: callerIp, user_agent: callerUa }).eq('id', id);
+      return json({ ok: true, sms: 0, email: 0, bell: false, recorded: true });
+    }
+
     // Rate limit — bell rows for this worker in the last hour.
     const hourAgo = new Date(Date.now() - 3600_000).toISOString();
     const { count: recent } = await sb.from('notifications').select('id', { count: 'exact', head: true }).eq('worker_id', worker.id).gte('created_at', hourAgo);
@@ -301,11 +315,32 @@ Deno.serve(async (req) => {
         `From: ${r.from_date}`, `To: ${r.to_date}`, `Reason: ${r.reason || '—'}`, '',
         `Open "Time off requests" in the portal to approve or decline: ${PORTAL_URL}`,
       ];
+    } else if (kind === 'fatigue_flagged') {
+      objectType = 'timesheet_header';
+      const { data: r } = await sb.from('timesheet_headers').select('id, worker_id, client, project, fatigue_flags, total_hours, created_at').eq('id', id).maybeSingle();
+      if (!r) return json({ error: 'not_found' }, 404);
+      if (r.worker_id !== worker.id) return json({ error: 'not_yours' }, 403);
+      const flags: any[] = Array.isArray(r.fatigue_flags) ? r.fatigue_flags : [];
+      if (!flags.length) return json({ ok: true, sms: 0, email: 0, bell: false, no_flags: true });
+      siteId = null;
+      const where = [r.client, r.project].filter(Boolean).join(' — ') || 'a job';
+      const list = flags.map((f: any) => String(f?.text || f?.type || '')).filter(Boolean);
+      smsText = `FATIGUE: ${worker.name} submitted a timesheet (${where}) with ${list.length} breach${list.length === 1 ? '' : 'es'}: ${list.join('; ').slice(0, 220)}. Check it before approving.`;
+      subject = `Fatigue check — ${worker.name} — ${where}`;
+      title = `😴 Fatigue: ${worker.name} — ${list.length} breach${list.length === 1 ? '' : 'es'}`;
+      bellBody = list.join(' · ').slice(0, 200);
+      lines = [
+        `${worker.name} confirmed these hours are correct, but they break the fatigue limits:`, '',
+        ...list.map((t) => `• ${t}`), '',
+        `Job: ${where}`, `Total on the sheet: ${r.total_hours ?? '—'} h`, '',
+        `Open Timesheets in the portal (red "Fatigue" badge) before you approve it: ${PORTAL_URL}`,
+      ];
     } else {
       objectType = 'site_induction_signature';
       const { data: r } = await sb.from('site_induction_signatures').select('*, site_inductions(title, site_id, client_sites(name))').eq('id', id).maybeSingle();
       if (!r) return json({ error: 'not_found' }, 404);
       if (r.worker_id !== worker.id) return json({ error: 'not_yours' }, 403);
+      try { await sb.from('site_induction_signatures').update({ ip: callerIp, user_agent: callerUa }).eq('id', id); } catch { /* evidence only */ }
       const ind: any = r.site_inductions || {};
       siteId = ind.site_id || null;
       const siteName = ind.client_sites?.name || 'site';

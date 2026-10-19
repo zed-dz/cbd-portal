@@ -340,7 +340,12 @@ function AppShell() {
         <MfaChallengePage
           email={session.user?.email}
           showToast={showToast}
-          onDone={() => { setMfaGate('clear'); setMfaFirst(false); }}
+          onDone={() => {
+            setMfaGate('clear'); setMfaFirst(false);
+            // The profile lookup ran before the code, while the database still
+            // refused this session (aal1); read it again now that the token is aal2.
+            if (lastFetchedEmail.current) { setAuthLoading(true); fetchWorker(lastFetchedEmail.current); }
+          }}
           onSignOut={async () => { setMfaFirst(false); await handleSignOut(); }}
         />
       ) : !currentWorker ? (

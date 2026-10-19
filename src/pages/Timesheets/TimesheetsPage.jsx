@@ -6,6 +6,7 @@ import { downloadCSV } from '../../utils/csv';
 import { computeTimesheetHours, buildXeroCSV } from '../../utils/payroll';
 import { SCENARIOS } from '../../constants/scenarios';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, timesheetBadge, fatigueBadge, DailyTimesheetForm, dailyFromHeader, blankDaily, TimesheetDetailView, DateRangeFilter, printTimesheetBatch } from '../../components';
+import { openPrintWindow } from '../../components/timesheet/TimesheetDetailView';
 import { sendTimesheetForClientApproval, markClientApprovedManually } from '../../utils/clientApproval';
 import { approveTimesheet } from '../../utils/approve';
 
@@ -748,12 +749,8 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
         <tbody>${body}</tbody>
         <tfoot><tr><td colspan="7">Totals</td><td>${t.total.toFixed(2)}</td><td colspan="2"></td></tr></tfoot>
       </table>
-      <script>window.onload = function () { window.print(); };</script>
     </body></html>`;
-    const w = window.open('', '_blank', 'width=1000,height=700');
-    if (!w) return;
-    w.document.write(html);
-    w.document.close();
+    openPrintWindow(html, 'width=1000,height=700');
   };
 
   return (

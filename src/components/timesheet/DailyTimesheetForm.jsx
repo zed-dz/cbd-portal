@@ -653,7 +653,12 @@ export function DailyTimesheetForm({
     }
     saved.warnings.forEach(w => showToast(`Timesheet saved, but the ${w}`, 'error'));
     const data = saved.data;
+    // A fatigue breach the worker confirmed must reach the office NOW, not sit as
+    // a badge until someone opens the list. Server builds the text; fire-and-forget.
     const savedHeaderId = saved.headerId;
+    if (fatigue.breaches.length && !allowAdmin && savedHeaderId) {
+      supabase.functions.invoke('notify-admins-ops', { body: { kind: 'fatigue_flagged', id: savedHeaderId } }).catch(() => {});
+    }
 
     // Reject keeps the direct status write (nothing locks on reject). The
     // reason is stored on the header and pushed to the worker (bell + SMS).

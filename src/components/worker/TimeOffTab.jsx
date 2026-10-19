@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../supabaseClient';
-import { C, inputStyle, btnPrimary } from '../../theme';
+import { C, inputStyle, btnPrimary, btnSecondary } from '../../theme';
 import { todayISO, fmtDate, fmtDateTime } from '../../utils/dates';
 import { Field, Spinner, EmptyState, Badge } from '../index';
 
@@ -54,6 +54,15 @@ export function TimeOffTab({ currentWorker, showToast }) {
     load();
   };
 
+  // A pending request can be withdrawn by the worker (RLS: own row, pending → cancelled only).
+  const withdraw = async (r) => {
+    if (!window.confirm(`Withdraw your time off request for ${niceRange(r)}?`)) return;
+    const { error } = await supabase.from('leave_requests').update({ status: 'cancelled' }).eq('id', r.id).eq('status', 'pending');
+    if (error) { showToast(error.message, 'error'); return; }
+    showToast('Request withdrawn.', 'success');
+    load();
+  };
+
   const niceRange = (r) => r.from_date === r.to_date ? fmtDate(r.from_date) : `${fmtDate(r.from_date)} → ${fmtDate(r.to_date)}`;
 
   return (
@@ -91,6 +100,9 @@ export function TimeOffTab({ currentWorker, showToast }) {
                 {r.decided_at && ` · ${r.status} by ${r.decided_by || 'the office'} ${fmtDateTime(r.decided_at)}`}
               </div>
               {r.note && <div style={{ marginTop: 6, fontSize: 12.5, color: r.status === 'declined' ? '#fca5a5' : C.text, background: C.bg, borderRadius: 6, padding: '6px 10px' }}>Office: {r.note}</div>}
+              {r.status === 'pending' && (
+                <button onClick={() => withdraw(r)} style={{ ...btnSecondary, marginTop: 8, minHeight: 36, fontSize: 12.5 }}>Withdraw</button>
+              )}
             </div>
           ))}
       </div>

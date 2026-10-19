@@ -367,17 +367,22 @@ export function printTimesheet({ header, lines = [], workerName, brand = BRAND_D
     ${header.comments ? `<div class="label" style="margin-top:12px">Tasks completed</div><div class="tasks">${esc(header.comments)}</div>` : ''}
     ${signatureBlock}
     <div class="footer">Generated from the ${esc(brand)} portal on ${esc(new Date().toLocaleString('en-AU'))}</div>
-    <script>window.onload = function () { window.print(); };</script>
   </body></html>`;
 
   openPrintWindow(html);
 }
 
-function openPrintWindow(html) {
-  const w = window.open('', '_blank', 'width=900,height=700');
+// The popup inherits this page's Content-Security-Policy, which no longer allows
+// inline <script>; print is triggered from here instead of from inside the HTML.
+export function openPrintWindow(html, size = 'width=900,height=700') {
+  const w = window.open('', '_blank', size);
   if (!w) return;
   w.document.write(html);
   w.document.close();
+  let printed = false;
+  const go = () => { if (printed) return; printed = true; try { w.focus(); w.print(); } catch { /* popup closed */ } };
+  try { w.addEventListener('load', go); } catch { /* ignore */ }
+  setTimeout(go, 600);
 }
 
 // Print MANY timesheets as one document, one per page. This is what "download
@@ -461,7 +466,6 @@ export function printTimesheetBatch({ sheets = [], brand = BRAND_DEFAULT }) {
       <div class="sub" style="margin:6px 0 0">${sheets.length} timesheet${sheets.length === 1 ? '' : 's'} · ${grand.toFixed(2)} total hours · generated ${esc(new Date().toLocaleString('en-AU'))}</div>
     </div>
     ${sheets.map(page).join('')}
-    <script>window.onload = function () { window.print(); };</script>
   </body></html>`;
 
   openPrintWindow(html);

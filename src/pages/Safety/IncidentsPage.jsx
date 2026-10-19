@@ -5,6 +5,7 @@ import { fmtDateTime } from '../../utils/dates';
 import { logActivity } from '../../utils/activity';
 import { Spinner, EmptyState, Modal, Field, TableWrap, Th, Td } from '../../components';
 import { BUCKET, TYPE_LABEL, incidentTypeBadge, incidentStatusBadge } from '../../components/worker/IncidentReportTab';
+import { openPrintWindow } from '../../components/timesheet/TimesheetDetailView';
 
 // Safety — incident / near-miss / hazard reports from the crew (2026-10-19).
 // List → open one (photos via short signed URLs) → mark reviewed / closed with
@@ -14,10 +15,11 @@ import { BUCKET, TYPE_LABEL, incidentTypeBadge, incidentStatusBadge } from '../.
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function printIncident(r, workerName, photoUrls) {
-  const w = window.open('', '_blank', 'noopener,width=900,height=1000');
-  if (!w) return;
+  // No inline onclick/script in the popup (page CSP forbids it); the opener
+  // triggers print via openPrintWindow. 'noopener' would make window.open
+  // return null, so it is not used here.
   const row = (k, v) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`;
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(TYPE_LABEL[r.type] || 'Incident')} report — ${esc(workerName)}</title>
+  openPrintWindow(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(TYPE_LABEL[r.type] || 'Incident')} report — ${esc(workerName)}</title>
   <style>body{font-family:-apple-system,Segoe UI,sans-serif;color:#111;padding:28px;max-width:800px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}.sub{color:#666;font-size:12px;margin-bottom:18px}
   table{border-collapse:collapse;width:100%;margin-bottom:16px}th{text-align:left;width:160px;color:#555;font-size:12px;text-transform:uppercase;letter-spacing:.5px;padding:7px 8px;border-bottom:1px solid #ddd;vertical-align:top}td{padding:7px 8px;border-bottom:1px solid #ddd;font-size:14px;white-space:pre-wrap}
   .photos img{max-width:100%;max-height:420px;display:block;margin:8px 0;border:1px solid #ddd}.review{background:#f6f6f6;padding:12px;border-radius:6px}@media print{button{display:none}}</style></head><body>
@@ -26,8 +28,7 @@ function printIncident(r, workerName, photoUrls) {
   ${row('Injured', r.injured ? 'YES' : 'No')}${row('First aid given', r.first_aid ? 'YES' : 'No')}${row('What happened', r.description)}</table>
   ${photoUrls.length ? `<div class="photos"><strong>Photos</strong>${photoUrls.map(u => `<img src="${u}" alt="">`).join('')}</div>` : ''}
   <div class="review"><strong>Office review</strong><br>${r.reviewed_by ? `${esc(r.status)} by ${esc(r.reviewed_by)} on ${esc(fmtDateTime(r.reviewed_at))}` : 'Not yet reviewed'}${r.review_notes ? `<br><br>${esc(r.review_notes)}` : ''}</div>
-  <p><button onclick="window.print()">Print</button></p></body></html>`);
-  w.document.close();
+  </body></html>`, 'width=900,height=1000');
 }
 
 export function IncidentsPage({ showToast, currentWorker }) {
