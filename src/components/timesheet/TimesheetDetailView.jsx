@@ -1,7 +1,8 @@
 import { C, btnPrimary, btnSecondary } from '../../theme';
 import { fmtDate, fmtDateTime, sydneyTime } from '../../utils/dates';
 import { dayFromDate } from '../../utils/payroll';
-import { timesheetBadge } from '../ui/Badge';
+import { timesheetBadge, fatigueBadge } from '../ui/Badge';
+import { TimesheetPhotos } from './TimesheetPhotos';
 
 const BRAND_DEFAULT = 'CBD Plant & Labour';
 
@@ -112,7 +113,9 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
         <div>
           <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>{brand} — Daily Timesheet</div>
-          <div style={{ fontSize: 12, color: C.textMuted }}>{lines.length} shift{lines.length !== 1 ? 's' : ''} · {timesheetBadge(header.status)}</div>
+          <div style={{ fontSize: 12, color: C.textMuted, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span>{lines.length} shift{lines.length !== 1 ? 's' : ''} ·</span>{timesheetBadge(header.status)}{fatigueBadge(header.fatigue_flags)}
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           {onEdit && <button onClick={onEdit} style={btnSecondary}>✎ Edit / Adjust</button>}
@@ -188,6 +191,19 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
           ))}
         </div>
       )}
+
+      {/* Fatigue breaches the worker confirmed at submit time (>12h shift,
+          <10h rest, >60h week). Office information — never on the PDF. */}
+      {Array.isArray(header.fatigue_flags) && header.fatigue_flags.length > 0 && (
+        <div data-area="fatigue flags" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 8, padding: '10px 14px', marginTop: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#fca5a5', marginBottom: 4 }}>⚠ Fatigue — the worker confirmed these hours are correct</div>
+          {header.fatigue_flags.map((f, i) => (
+            <div key={`${f.type}|${f.date}|${i}`} style={{ fontSize: 12, color: C.textMuted, marginBottom: 2 }}>{f.text}</div>
+          ))}
+        </div>
+      )}
+
+      <TimesheetPhotos headerId={header.id} />
 
       {header.comments && (
         <div style={{ marginTop: 14 }}>

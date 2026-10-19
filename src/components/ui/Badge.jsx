@@ -45,6 +45,18 @@ export function timesheetBadge(status) {
   return <Badge label={status} color={map[status] || 'gray'} />;
 }
 
+// Red "Fatigue" chip when a header carries fatigue_flags (>12h shift, <10h
+// rest, >60h week). The breach texts ride on the title so the office can
+// read them without opening the sheet.
+export function fatigueBadge(flags) {
+  if (!Array.isArray(flags) || flags.length === 0) return null;
+  return (
+    <span title={flags.map(f => f.text).join('\n')} style={{ display: 'inline-flex' }}>
+      <Badge label={`⚠ Fatigue${flags.length > 1 ? ` ×${flags.length}` : ''}`} color="red" size="sm" />
+    </span>
+  );
+}
+
 export function certBadge(expiry) {
   if (!expiry) return <Badge label="No expiry" color="gray" />;
   // A date-only string parses as UTC midnight, which read as "Expired" from

@@ -5,7 +5,7 @@ import { todayISO, fmtDate, sydneyTime, sydneyDateTimeInput, sydneyInstant } fro
 import { downloadCSV } from '../../utils/csv';
 import { computeTimesheetHours, buildXeroCSV } from '../../utils/payroll';
 import { SCENARIOS } from '../../constants/scenarios';
-import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, timesheetBadge, DailyTimesheetForm, dailyFromHeader, blankDaily, TimesheetDetailView, DateRangeFilter, printTimesheetBatch } from '../../components';
+import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, timesheetBadge, fatigueBadge, DailyTimesheetForm, dailyFromHeader, blankDaily, TimesheetDetailView, DateRangeFilter, printTimesheetBatch } from '../../components';
 import { sendTimesheetForClientApproval, markClientApprovedManually } from '../../utils/clientApproval';
 import { approveTimesheet } from '../../utils/approve';
 
@@ -872,7 +872,9 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
                         background: C.bg, border: `1px solid ${C.border}`, borderLeft: `3px solid ${col.color}`,
                         borderRadius: 8, padding: '10px 12px', cursor: 'pointer', minWidth: 0,
                       }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{h.workers?.name || '—'}</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <span>{h.workers?.name || '—'}</span>{fatigueBadge(h.fatigue_flags)}
+                        </div>
                         <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {h.client || '—'}{h.project ? ` · ${h.project}` : ''}
                         </div>
@@ -920,6 +922,9 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
                 <Td>{info.ot > 0 ? <span style={{ color: C.warning, fontWeight: 700 }}>{info.ot.toFixed(2)}</span> : '—'}</Td>
                 <Td>
                   {timesheetBadge(h.status)}
+                  {Array.isArray(h.fatigue_flags) && h.fatigue_flags.length > 0 && (
+                    <div style={{ marginTop: 3 }}>{fatigueBadge(h.fatigue_flags)}</div>
+                  )}
                   {h.status === 'approved' && (
                     <div style={{ fontSize: 10, marginTop: 3, color: h.client_approved ? C.success : C.warning }}
                       title={h.client_approved ? `Accepted by the client${h.client_approved_by ? ` (${h.client_approved_by})` : ''}` : (h.client_approval_sent_at ? `Awaiting supervisor — sent to ${h.client_approval_sent_to || 'site contact'}` : 'Not yet sent to the site supervisor')}>
