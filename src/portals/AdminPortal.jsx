@@ -5,6 +5,7 @@ import { SendBlastModal } from '../components/blast/SendBlastModal';
 import { ScanModal } from '../components/scan/ScanModal';
 import { NotificationBell } from '../components/notifications/NotificationBell';
 import { NotificationSettings } from '../components/notifications/NotificationSettings';
+import { MfaSettings, useMfaFactors } from '../components/security/MfaSettings';
 import { DashboardPage } from '../pages/Dashboard/DashboardPage';
 import { WorkersPage } from '../pages/Workers/WorkersPage';
 import { RateSetsPage } from '../pages/RateSets/RateSetsPage';
@@ -44,6 +45,11 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
   const [blastOpen, setBlastOpen] = useState(false);
   const [scanOpen, setScanOpen]   = useState(false);
   const [notifSettingsOpen, setNotifSettingsOpen] = useState(false);
+  const [mfaOpen, setMfaOpen] = useState(false);
+  // Own two-step login status: admins without a factor get a one-line nudge
+  // (no forced enrolment — the owner decides later).
+  const mfa = useMfaFactors();
+  const showMfaNudge = currentWorker?.access_level === 'admin' && mfa.verified === false;
   // Allocation Board → "Allocate" hands the Allocations page a pre-ticked crew.
   const [allocPrefill, setAllocPrefill] = useState(null);
   const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, licence_agent: 0, pending_workers: 0, payroll: 0, applications: 0 });
@@ -248,6 +254,11 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <NotificationBell />
             <button onClick={() => setNotifSettingsOpen(true)} title="Notification settings" style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.text, borderRadius: R.md, padding: '6px 10px', cursor: 'pointer', fontSize: 15, lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}>⚙</button>
+            <button onClick={() => setMfaOpen(true)} title={showMfaNudge ? 'Add two-step login' : 'Two-step login'} aria-label="Two-step login" data-area="two-step login button"
+              style={{ background: 'transparent', border: `1px solid ${showMfaNudge ? 'rgba(245,158,11,0.55)' : C.border}`, color: C.text, borderRadius: R.md, padding: '6px 10px', cursor: 'pointer', fontSize: 13, lineHeight: 1, display: 'inline-flex', alignItems: 'center', gap: 6, position: 'relative' }}>
+              🔐{showMfaNudge && !isMobile && <span style={{ fontSize: 11, color: '#fcd34d', fontWeight: 600, whiteSpace: 'nowrap' }}>Add two-step login</span>}
+              {showMfaNudge && isMobile && <span style={{ position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: 999, background: '#f59e0b' }} />}
+            </button>
             {/* Phones (360 px): icon-only buttons so the bar never scrolls sideways. */}
             <button onClick={() => setPreviewMode(true)} title="Worker View" aria-label="Worker View" style={{ ...btnSecondary, padding: isMobile ? '6px 9px' : '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>👁{!isMobile && ' Worker View'}</button>
             <button onClick={() => setScanOpen(true)} title="Scan" aria-label="Scan" style={{ ...btnSecondary, padding: isMobile ? '6px 9px' : '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📷{!isMobile && ' Scan'}</button>
@@ -284,6 +295,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       {blastOpen && <SendBlastModal onClose={() => setBlastOpen(false)} showToast={showToast} />}
       {scanOpen  && <ScanModal      onClose={() => setScanOpen(false)}  showToast={showToast} />}
       {notifSettingsOpen && <NotificationSettings currentWorker={currentWorker} showToast={showToast} onClose={() => setNotifSettingsOpen(false)} />}
+      {mfaOpen && <MfaSettings showToast={showToast} onChanged={mfa.refresh} onClose={() => { setMfaOpen(false); mfa.refresh(); }} />}
 
       {/* ── Preview Worker View overlay ──────────────────────────────────── */}
       {previewMode && (

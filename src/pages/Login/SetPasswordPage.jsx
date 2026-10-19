@@ -9,7 +9,9 @@ import { Spinner, Field } from '../../components';
 // portal, so "forgot password" always ends with a password the person knows.
 //
 // kind: 'recovery' | 'invite' | 'magiclink'
-export function SetPasswordPage({ email, kind = 'recovery', onDone, onSignOut, showToast }) {
+// onNeedsMfa: Supabase refuses a password change on an aal1 session when the
+// person has two-step login; App.jsx shows the code screen and comes back here.
+export function SetPasswordPage({ email, kind = 'recovery', onDone, onSignOut, showToast, onNeedsMfa }) {
   const [pw1, setPw1] = useState('');
   const [pw2, setPw2] = useState('');
   const [busy, setBusy] = useState(false);
@@ -32,6 +34,11 @@ export function SetPasswordPage({ email, kind = 'recovery', onDone, onSignOut, s
     const { error: err } = await supabase.auth.updateUser({ password: pw1 });
     setBusy(false);
     if (err) {
+      if (/aal2/i.test(err.message) && onNeedsMfa) {
+        showToast?.('Enter your two-step code first, then set the password.', 'info');
+        onNeedsMfa();
+        return;
+      }
       const msg = /different from the old/i.test(err.message)
         ? 'That is already your password. Pick a different one, or just continue.'
         : /session|expired|not logged in|jwt/i.test(err.message)
