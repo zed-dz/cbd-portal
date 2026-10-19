@@ -5,12 +5,16 @@ import { fmtDateTime } from '../../utils/dates';
 import { logActivity } from '../../utils/activity';
 import { Spinner, EmptyState, Modal, Field, TableWrap, Th, Td, Badge } from '../../components';
 import { DOCS_BUCKET, docsForWorker } from '../../components/worker/DocumentsTab';
+import { openPrintWindow } from '../../components/timesheet/TimesheetDetailView';
+import { SignatureThumb } from '../../components/ui/SignatureThumb';
+import { shortDevice, buildSignedCopyHtml } from '../../utils/signatures';
 
 // Documents — office side of company-document e-sign (2026-10-19). Create /
 // edit a document (title, body text, optional PDF into the private
 // company-documents bucket, which worker types must sign), archive it, and see
 // who has signed the current version. Re-publishing as a new version asks
-// everyone to sign again; a plain edit (typo) does not.
+// everyone to sign again; a plain edit (typo) does not. The "who" view shows
+// each drawn signature, IP and device, and prints a signed copy (2026-10-20).
 
 const WORKER_TYPES = ['full-time', 'part-time', 'casual', 'subcontractor'];
 const blank = () => ({ id: null, title: '', body: '', file_path: '', required_for: [], version: 1, bump: false });
@@ -30,7 +34,9 @@ export function DocumentsPage({ showToast, currentWorker }) {
     setLoading(true);
     const [{ data: d, error }, { data: s }, { data: w }] = await Promise.all([
       supabase.from('company_documents').select('*').order('created_at', { ascending: false }),
-      supabase.from('document_signatures').select('*'),
+      // No signature_png here (up to 200 KB each): the "who" view fetches the
+      // drawn signatures for one document when it opens.
+      supabase.from('document_signatures').select('id, document_id, worker_id, version, signed_name, signed_at, ip, user_agent'),
       supabase.from('workers').select('id, name, worker_type, role, app_status').is('archived_at', null).order('name'),
     ]);
     if (error) showToast(error.message, 'error');
@@ -191,32 +197,65 @@ export function DocumentsPage({ showToast, currentWorker }) {
         </Modal>
       )}
 
-      {sigView && (() => {
-        const st = statusFor(sigView);
-        const sigOf = (wid) => sigs.find(s => s.document_id === sigView.id && s.version === sigView.version && s.worker_id === wid);
-        return (
-          <Modal title={`Signatures — ${sigView.title} (v${sigView.version})`} onClose={() => setSigView(null)} width={620}>
-            <div style={{ color: C.textMuted, fontSize: 12.5, marginBottom: 10 }}>{st.signed.length} of {st.applies.length} signed the current version.</div>
-            {st.applies.length === 0 ? <EmptyState message="No active workers match this document's worker types." /> : (
-              <TableWrap>
-                <thead><tr><Th>Worker</Th><Th>Type</Th><Th>Status</Th><Th>Signed as</Th></tr></thead>
-                <tbody>
-                  {[...st.unsigned, ...st.signed].map(w => {
-                    const s = sigOf(w.id);
-                    return (
-                      <tr key={w.id}>
-                        <Td>{w.name}</Td><Td>{w.worker_type || '—'}</Td>
-                        <Td>{s ? <Badge label={`Signed ${fmtDateTime(s.signed_at)}`} color="green" /> : <Badge label="Not signed" color="yellow" />}</Td>
-                        <Td>{s?.signed_name || '—'}</Td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </TableWrap>
-            )}
-          </Modal>
-        );
-      })()}
+      {sigView && (
+        <DocSignaturesModal doc={sigView} st={statusFor(sigView)} sigs={sigs} showToast={showToast} onClose={() => setSigView(null)} />
+      )}
     </div>
+  );
+}
+
+// Who signed one document (current version): status per worker, the drawn
+// signature, IP + device, and "Print signed copy" for any one signature.
+function DocSignaturesModal({ doc, st, sigs, showToast, onClose }) {
+  const [pngs, setPngs] = useState({});   // signature id -> data URL
+  const [loadingPngs, setLoadingPngs] = useState(true);
+
+  useEffect(() => {
+    let on = true;
+    supabase.from('document_signatures').select('id, signature_png').eq('document_id', doc.id).eq('version', doc.version)
+      .then(({ data, error }) => {
+        if (!on) return;
+        if (error) showToast(error.message, 'error');
+        setPngs(Object.fromEntries((data || []).map(r => [r.id, r.signature_png])));
+        setLoadingPngs(false);
+      });
+    return () => { on = false; };
+  }, [doc.id, doc.version, showToast]);
+
+  const sigOf = (wid) => sigs.find(s => s.document_id === doc.id && s.version === doc.version && s.worker_id === wid);
+
+  const printSigned = (w, s) => {
+    openPrintWindow(buildSignedCopyHtml({
+      kind: 'Document', title: doc.title, context: doc.file_path ? 'has a PDF attachment' : '',
+      text: doc.body || '', currentVersion: doc.version, signedVersion: s.version,
+      workerName: w.name, signedName: s.signed_name, signedAt: fmtDateTime(s.signed_at),
+      ip: s.ip, userAgent: s.user_agent, signaturePng: pngs[s.id], printedAt: new Date().toLocaleString('en-AU'),
+    }), 'width=900,height=1000');
+  };
+
+  return (
+    <Modal title={`Signatures — ${doc.title} (v${doc.version})`} onClose={onClose} width={860}>
+      <div style={{ color: C.textMuted, fontSize: 12.5, marginBottom: 10 }}>{st.signed.length} of {st.applies.length} signed the current version.</div>
+      {st.applies.length === 0 ? <EmptyState message="No active workers match this document's worker types." /> : (
+        <TableWrap>
+          <thead><tr><Th>Worker</Th><Th>Type</Th><Th>Status</Th><Th>Signature</Th><Th>Signed as</Th><Th>IP · device</Th><Th /></tr></thead>
+          <tbody>
+            {[...st.unsigned, ...st.signed].map(w => {
+              const s = sigOf(w.id);
+              return (
+                <tr key={w.id}>
+                  <Td>{w.name}</Td><Td>{w.worker_type || '—'}</Td>
+                  <Td>{s ? <Badge label={`Signed ${fmtDateTime(s.signed_at)}`} color="green" /> : <Badge label="Not signed" color="yellow" />}</Td>
+                  <Td>{s ? (loadingPngs ? <span style={{ color: C.textDim, fontSize: 12 }}>…</span> : <SignatureThumb png={pngs[s.id]} who={s.signed_name} />) : '—'}</Td>
+                  <Td>{s?.signed_name || '—'}</Td>
+                  <Td>{s ? <div style={{ fontSize: 12, color: C.textMuted, whiteSpace: 'nowrap' }}>{s.ip || '—'}<br />{shortDevice(s.user_agent)}</div> : '—'}</Td>
+                  <Td>{s && <button onClick={() => printSigned(w, s)} disabled={loadingPngs} style={{ ...btnSmall, minHeight: 36, whiteSpace: 'nowrap' }}>🖨 Print signed copy</button>}</Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </TableWrap>
+      )}
+    </Modal>
   );
 }

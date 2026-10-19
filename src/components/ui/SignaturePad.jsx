@@ -3,8 +3,10 @@ import { C, R, btnSmall } from '../../theme';
 
 // Lightweight canvas signature pad. Captures pointer strokes and exports a
 // PNG data-URL via onChange. Pass `value` (data-URL) to seed an existing
-// signature when editing a submitted timesheet.
-export function SignaturePad({ value, onChange, height = 160 }) {
+// signature when editing a submitted timesheet. `exportMaxWidth` (optional)
+// scales the exported PNG down to that many pixels wide, so a 3x phone screen
+// does not store a 1000+ px image (inductions / documents use 600).
+export function SignaturePad({ value, onChange, height = 160, exportMaxWidth = 0, ariaLabel }) {
   const canvasRef = useRef(null);
   const drawing = useRef(false);
   const last = useRef({ x: 0, y: 0 });
@@ -16,7 +18,9 @@ export function SignaturePad({ value, onChange, height = 160 }) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ratio = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
+    // Layout size, not getBoundingClientRect: inside a Modal the opening
+    // animation scales the box to 0.98 at mount, which skewed every stroke.
+    const rect = { width: canvas.offsetWidth, height: canvas.offsetHeight };
     canvas.width = rect.width * ratio;
     canvas.height = rect.height * ratio;
     const ctx = canvas.getContext('2d');
@@ -40,7 +44,9 @@ export function SignaturePad({ value, onChange, height = 160 }) {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
     const touch = e.touches ? e.touches[0] : e;
-    return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+    const sx = rect.width ? canvas.offsetWidth / rect.width : 1;
+    const sy = rect.height ? canvas.offsetHeight / rect.height : 1;
+    return { x: (touch.clientX - rect.left) * sx, y: (touch.clientY - rect.top) * sy };
   };
 
   const start = (e) => {
@@ -60,18 +66,29 @@ export function SignaturePad({ value, onChange, height = 160 }) {
     last.current = p;
     setHasInk(true);
   };
+  const exportPng = () => {
+    const canvas = canvasRef.current;
+    if (!exportMaxWidth || canvas.width <= exportMaxWidth) return canvas.toDataURL('image/png');
+    const out = document.createElement('canvas');
+    out.width = exportMaxWidth;
+    out.height = Math.max(1, Math.round(canvas.height * (exportMaxWidth / canvas.width)));
+    const octx = out.getContext('2d');
+    octx.fillStyle = '#ffffff';
+    octx.fillRect(0, 0, out.width, out.height);
+    octx.drawImage(canvas, 0, 0, out.width, out.height);
+    return out.toDataURL('image/png');
+  };
   const end = () => {
     if (!drawing.current) return;
     drawing.current = false;
-    onChange?.(canvasRef.current.toDataURL('image/png'));
+    onChange?.(exportPng());
   };
 
   const clear = () => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
-    const rect = canvas.getBoundingClientRect();
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, rect.width, rect.height);
+    ctx.fillRect(0, 0, canvas.offsetWidth, canvas.offsetHeight);
     setHasInk(false);
     onChange?.('');
   };
@@ -80,6 +97,8 @@ export function SignaturePad({ value, onChange, height = 160 }) {
     <div>
       <canvas
         ref={canvasRef}
+        role="img"
+        aria-label={ariaLabel || 'Signature box — draw with your finger'}
         style={{
           width: '100%', height, borderRadius: R.md,
           border: `1px solid ${C.border}`, background: '#fff',
