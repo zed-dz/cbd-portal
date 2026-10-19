@@ -109,6 +109,38 @@ export async function sendWorkerAllocationEmail(worker, { client, site, role, st
   }
 }
 
+// Office → worker: the answer to a shift-swap request (2026-10-19). Office-
+// gated by construction: only office users can read the worker's mobile/email
+// under the workers RLS, and send-sms / send-bulk-email need a signed-in
+// caller. SMS + email, fire-and-forget, never throws.
+export async function notifyWorkerSwapDecision(worker, { approved, job, mateName, note }) {
+  const out = { sms: null, email: null };
+  try {
+    const name = worker?.name || 'there';
+    const text = approved
+      ? `Hi ${name}, your swap request for ${job} was approved${mateName ? ` — ${mateName} has been offered the shift` : ' — the office is finding a replacement'}. You are no longer rostered on it.`
+      : `Hi ${name}, your swap request for ${job} was declined${note ? `: ${note}` : ''}. You are still rostered on — call the office if you can't make it.`;
+    const to = normaliseAUMobile(worker?.mobile);
+    if (to) out.sms = await sendWorkerSms(to, `${text} ${PORTAL_URL}`);
+    const email = (worker?.email || '').trim();
+    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      const { data, error } = await supabase.functions.invoke('send-bulk-email', {
+        body: {
+          recipients: [{ name, email }],
+          subject: `Swap request ${approved ? 'approved' : 'declined'} — ${job}`,
+          body: `${text}\n\nOpen the portal: ${PORTAL_URL}`,
+          audience: 'mixed',
+          gmail_only: true,
+        },
+      });
+      out.email = error ? { ok: false, error: error.message } : { ok: !!data?.ok };
+    }
+  } catch (e) {
+    out.error = e?.message || String(e);
+  }
+  return out;
+}
+
 // Build the worker SMS body for a new allocation.
 export function allocationSmsBody({ name, client, site, start_date, role }) {
   const who = name ? `Hi ${name},` : 'Hi,';

@@ -17,6 +17,7 @@ const ICONS = {
   allocation_sent: '📤',
   allocation_accepted: '✅',
   allocation_declined: '❌',
+  swap_requested: '🔁',
   allocation: '📋',
 };
 

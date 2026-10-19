@@ -4,6 +4,7 @@ import { C, R, MONO, inputStyle, btnPrimary, btnSmall } from '../../theme';
 import { WORKER_SAFE_COLS } from '../../utils/workerCols';
 import { todayISO, localISO, sydneyHHMM } from '../../utils/dates';
 import { Spinner, EmptyState, Badge } from '../../components';
+import { requiredTicketsFor, ticketGaps, gapLabel } from '../../utils/ticketCheck';
 
 // Allocation Board — the office's weekly "who is where" sheet, modelled on
 // Zeff's spreadsheet: every active worker grouped by type, Monday to Sunday,
@@ -51,6 +52,7 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
   const [workers, setWorkers] = useState([]);
   const [allocs, setAllocs] = useState([]);
   const [tickets, setTickets] = useState({});       // worker_id → [{ name, expiry }]
+  const [reqTickets, setReqTickets] = useState([]); // role_required_tickets — "ticket gap" chip
   const [away, setAway] = useState([]);             // worker_unavailability rows touching the week
   const [awayForm, setAwayForm] = useState(null);   // { worker_id, name, from_date, to_date, reason }
   const [notes, setNotes] = useState('');
@@ -74,7 +76,7 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [w, a, c1, c2, n, u] = await Promise.all([
+    const [w, a, c1, c2, n, u, rt] = await Promise.all([
       supabase.from('workers').select(WORKER_SAFE_COLS).is('archived_at', null).order('name'),
       supabase.from('allocations')
         .select('id, worker_id, client, site, project, role, status, start_date, end_date, start_time, group_id, allocation_groups(positions)')
@@ -85,8 +87,10 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
       supabase.from('allocation_board_notes').select('notes').eq('week_start', weekStart).maybeSingle(),
       supabase.from('worker_unavailability').select('id, worker_id, from_date, to_date, reason')
         .lte('from_date', weekEnd).gte('to_date', weekStart).order('from_date'),
+      supabase.from('role_required_tickets').select('*').is('archived_at', null),
     ]);
     setAway(u.data || []);
+    setReqTickets(rt.data || []);
     if (w.error) showToast(w.error.message, 'error');
     if (a.error) showToast(a.error.message, 'error');
     setWorkers(w.data || []);
@@ -185,16 +189,36 @@ export function AllocationBoardPage({ showToast, onAllocate, isMobile, currentWo
     else { setSavedNotes(notes); showToast('Week notes saved.', 'success'); }
   };
 
+  // "ticket gap" — the worker holds a live allocation this week whose role
+  // needs a ticket they don't have (or that has expired). Same rule as the
+  // Create Allocation check (src/utils/ticketCheck.js).
+  const ticketGapFor = (wid) => {
+    const roles = [...new Set((byWorker[wid] || []).map(a => a.role).filter(Boolean))];
+    const out = [];
+    roles.forEach(role => {
+      ticketGaps(tickets[wid] || [], requiredTicketsFor(reqTickets, role), today)
+        .forEach(g => out.push(`${role}: ${gapLabel(g)}`));
+    });
+    return out;
+  };
+
   const ticketSummary = (wid) => {
     const list = tickets[wid] || [];
-    if (!list.length) return <span style={{ fontSize: 11, color: C.textDim }}>no tickets on file</span>;
+    const gaps = ticketGapFor(wid);
+    const gapChip = gaps.length > 0 && (
+      <span title={gaps.join('\n')} style={{ display: 'inline-block', padding: '1px 7px', borderRadius: 5, fontSize: 11, fontWeight: 700, background: 'rgba(239,68,68,0.14)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.45)', whiteSpace: 'nowrap' }}>
+        ⚠ ticket gap
+      </span>
+    );
+    if (!list.length) return <span style={{ display: 'inline-flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}><span style={{ fontSize: 11, color: C.textDim }}>no tickets on file</span>{gapChip}</span>;
     const expired = list.filter(t => { const d = daysUntil(t.expiry); return d !== null && d < 0; }).length;
     const soon = list.filter(t => { const d = daysUntil(t.expiry); return d !== null && d >= 0 && d <= 30; }).length;
     return (
-      <span style={{ display: 'inline-flex', gap: 5, flexWrap: 'wrap' }}>
+      <span style={{ display: 'inline-flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
         <Badge label={`${list.length} ticket${list.length === 1 ? '' : 's'}`} color="gray" size="sm" />
         {expired > 0 && <Badge label={`${expired} expired`} color="red" size="sm" />}
         {soon > 0 && <Badge label={`${soon} expiring`} color="yellow" size="sm" />}
+        {gapChip}
       </span>
     );
   };

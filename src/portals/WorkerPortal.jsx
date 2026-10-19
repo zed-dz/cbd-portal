@@ -74,15 +74,73 @@ function WorkerAllocations({ currentWorker, showToast }) {
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(null);   // allocation id currently being accepted/declined
   const [showPast, setShowPast] = useState(false);
+  // Shift swap (2026-10-19): "can't make it" on a confirmed future job → the
+  // office approves / declines. Own requests only (RLS). Mates = names only.
+  const [mySwaps, setMySwaps] = useState([]);
+  const [swapFor, setSwapFor] = useState(null);           // allocation the modal is about
+  const [swapForm, setSwapForm] = useState({ reason: '', to_worker_id: '' });
+  const [mates, setMates] = useState([]);
+  const [swapBusy, setSwapBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const { data, error } = await supabase.from('allocations').select('*, allocation_groups(positions, filled_at)').eq('worker_id', currentWorker.id).order('created_at', { ascending: false });
+    const [{ data, error }, sw] = await Promise.all([
+      supabase.from('allocations').select('*, allocation_groups(positions, filled_at)').eq('worker_id', currentWorker.id).order('created_at', { ascending: false }),
+      supabase.from('shift_swap_requests').select('*').eq('from_worker_id', currentWorker.id).order('created_at', { ascending: false }),
+    ]);
     if (error) showToast(error.message, 'error');
     else setAllocations(data || []);
+    setMySwaps(sw.data || []);
     setLoading(false);
   }, [currentWorker.id, showToast]);
 
   useEffect(() => { load(); }, [load]);
+
+  const openSwap = async (a) => {
+    setSwapFor(a);
+    setSwapForm({ reason: '', to_worker_id: '' });
+    if (!mates.length) {
+      const { data } = await supabase.rpc('list_swap_candidates');
+      setMates(data || []);
+    }
+  };
+
+  const submitSwap = async () => {
+    const reason = swapForm.reason.trim();
+    if (!reason) { showToast('Tell the office why you can\'t make it.', 'error'); return; }
+    setSwapBusy(true);
+    const { data: row, error } = await supabase.from('shift_swap_requests').insert([{
+      allocation_id: swapFor.id,
+      from_worker_id: currentWorker.id,
+      to_worker_id: swapForm.to_worker_id || null,
+      reason,
+    }]).select().single();
+    if (error) { showToast(error.message, 'error'); setSwapBusy(false); return; }
+    const where = swapFor.client || swapFor.site || 'a job';
+    const mate = mates.find(m => m.id === swapForm.to_worker_id);
+    // Bell for the office (own worker_id, so RLS allows it) + server-side
+    // SMS/email to the allocators — the phone never sees admin contacts.
+    addAdminNotification({
+      type: 'swap_requested',
+      title: `${currentWorker?.name || 'Worker'} can't make ${where} — swap requested`,
+      body: `${[swapFor.client, swapFor.site, swapFor.role].filter(Boolean).join(' · ')}${swapFor.start_date ? ` — ${swapFor.start_date}` : ''}${mate ? ` · suggests ${mate.name}` : ''}`,
+      allocation_id: swapFor.id,
+      worker_id: currentWorker.id,
+    });
+    supabase.functions.invoke('notify-admins', { body: { kind: 'swap_requested', allocation_id: swapFor.id } })
+      .catch(e => console.error('notify-admins failed:', e));
+    setMySwaps(prev => [row, ...prev]);
+    setSwapFor(null);
+    setSwapBusy(false);
+    showToast('Swap request sent — the office will get back to you.', 'success');
+  };
+
+  const withdrawSwap = async (r) => {
+    if (!window.confirm('Withdraw this swap request? You stay rostered on the job.')) return;
+    const { error } = await supabase.from('shift_swap_requests').update({ status: 'cancelled' }).eq('id', r.id);
+    if (error) { showToast(error.message, 'error'); return; }
+    setMySwaps(prev => prev.map(x => (x.id === r.id ? { ...x, status: 'cancelled' } : x)));
+    showToast('Swap request withdrawn.', 'info');
+  };
 
   // Worker responds to a pending allocation. accept → confirmed, decline → declined.
   // Updates the row, then drops an admin notification so the bell lights up.
@@ -219,6 +277,36 @@ function WorkerAllocations({ currentWorker, showToast }) {
           {a.status === 'confirmed' && (
             <div style={{ marginTop: 12, fontSize: 12, color: C.success, fontWeight: 600 }}>✓ You accepted this allocation</div>
           )}
+          {(() => {
+            // Swap state for this job: pending → waiting + withdraw; declined → the
+            // office's note; confirmed + not in the past → the request button.
+            const latest = mySwaps.find(s => s.allocation_id === a.id);
+            const future = (a.end_date || a.start_date || '') >= todayStr;
+            if (latest?.status === 'pending') {
+              return (
+                <div data-area="swap request" style={{ marginTop: 10, padding: '8px 10px', borderRadius: 8, background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.35)', fontSize: 12, color: '#fde68a', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ flex: 1, minWidth: 140 }}>🔁 Swap requested — waiting for the office</span>
+                  <button onClick={() => withdrawSwap(latest)} style={{ ...btnSecondary, padding: '6px 12px', fontSize: 12, minHeight: 36 }}>Withdraw</button>
+                </div>
+              );
+            }
+            if (a.status !== 'confirmed' || !future) {
+              return latest?.status === 'declined' ? (
+                <div style={{ marginTop: 10, fontSize: 12, color: '#fca5a5' }}>Swap declined{latest.decision_note ? ` — ${latest.decision_note}` : ''}. You are still rostered on.</div>
+              ) : null;
+            }
+            return (
+              <div data-area="swap request" style={{ marginTop: 12 }}>
+                {latest?.status === 'declined' && (
+                  <div style={{ fontSize: 12, color: '#fca5a5', marginBottom: 6 }}>Swap declined{latest.decision_note ? ` — ${latest.decision_note}` : ''}. You are still rostered on.</div>
+                )}
+                <button onClick={() => openSwap(a)}
+                  style={{ ...btnSecondary, width: '100%', minHeight: 38, fontSize: 13, color: '#fde68a', borderColor: 'rgba(234,179,8,0.4)' }}>
+                  Can't make it → request swap
+                </button>
+              </div>
+            );
+          })()}
           {a.status === 'declined' && (
             <div style={{ marginTop: 12, fontSize: 12, color: '#fca5a5', fontWeight: 600 }}>✕ You declined this allocation</div>
           )}
@@ -265,6 +353,31 @@ function WorkerAllocations({ currentWorker, showToast }) {
           </button>
           {showPast && cardGrid(groups.past)}
         </div>
+      )}
+
+      {swapFor && (
+        <Modal title="Can't make it?" onClose={() => setSwapFor(null)} width={440}>
+          <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 12, lineHeight: 1.5 }}>
+            <strong style={{ color: C.text }}>{swapFor.client || swapFor.site || 'This job'}</strong>
+            {swapFor.site && swapFor.client ? ` — ${swapFor.site}` : ''}{swapFor.start_date ? ` · ${swapFor.start_date}` : ''}
+            <br />The office gets your request straight away and will approve or decline it. You stay rostered on until they do.
+          </div>
+          <Field label="Why can't you make it? *">
+            <textarea style={{ ...inputStyle, minHeight: 80, resize: 'vertical' }} value={swapForm.reason} autoFocus
+              maxLength={300} placeholder="e.g. sick, car trouble, family emergency…"
+              onChange={e => setSwapForm(f => ({ ...f, reason: e.target.value }))} />
+          </Field>
+          <Field label="Suggest a mate (optional)" hint="Someone who could take the shift. The office still decides.">
+            <select style={inputStyle} value={swapForm.to_worker_id} onChange={e => setSwapForm(f => ({ ...f, to_worker_id: e.target.value }))}>
+              <option value="">No suggestion — let the office pick</option>
+              {mates.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          </Field>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 6 }}>
+            <button onClick={() => setSwapFor(null)} style={{ ...btnSecondary, minHeight: 38 }}>Cancel</button>
+            <button onClick={submitSwap} disabled={swapBusy} style={{ ...btnPrimary, minHeight: 38 }}>{swapBusy ? 'Sending…' : 'Send request'}</button>
+          </div>
+        </Modal>
       )}
     </div>
   );
