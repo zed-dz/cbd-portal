@@ -337,6 +337,9 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
       // gets ONE summary for a crew offer or a whole series.
       const quietAdmin = isSeries || ids.length > 1;
       allRows.forEach(r => notifyOnCreate(r, r.worker_id, { adminQuiet: quietAdmin }));
+      // Free, instant phone alert on top of SMS/email (workers who turned on
+      // "Phone alerts"). Fire-and-forget: a push failure never blocks the offer.
+      supabase.functions.invoke('push-on-allocation', { body: { allocation_ids: allRows.map(r => r.id) } }).catch(() => {});
       if (quietAdmin) {
         const datesTxt = isSeries ? `${occurrences.length} dates (${occurrences[0]} → ${occurrences[occurrences.length - 1]})` : (payload.start_date ? `starts ${payload.start_date}` : '');
         const title = isSeries
