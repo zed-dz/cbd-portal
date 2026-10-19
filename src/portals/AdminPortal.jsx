@@ -236,6 +236,13 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           <strong style={{ fontSize: 12.5, color: C.text }}>{currentWorker?.name}</strong>
         </div>
         <div style={{ fontSize: 9, color: C.textDim, marginTop: 3, fontFamily: MONO, letterSpacing: 1.2 }}>ROAD · RAIL · WATER</div>
+        {isMobile && (
+          /* Phones: the top bar has no room for a 6th button, so two-step login lives here. */
+          <button onClick={() => { setSidebarOpen(false); setMfaOpen(true); }} data-area="two-step login button"
+            style={{ marginTop: 10, background: 'transparent', border: `1px solid ${showMfaNudge ? 'rgba(245,158,11,0.55)' : C.border}`, color: showMfaNudge ? '#fcd34d' : C.text, borderRadius: R.sm, padding: '8px 10px', fontSize: 12, cursor: 'pointer', width: '100%', minHeight: 36, fontWeight: 600 }}>
+            🔐 {showMfaNudge ? 'Add two-step login' : 'Two-step login'}
+          </button>
+        )}
         <button onClick={onSignOut} style={{ marginTop: 10, background: 'transparent', border: `1px solid ${C.border}`, color: C.textMuted, borderRadius: R.sm, padding: '5px 10px', fontSize: 10.5, cursor: 'pointer', fontFamily: MONO, width: '100%', letterSpacing: 0.5, transition: 'all 120ms' }}
           onMouseEnter={e => { e.currentTarget.style.color = C.text; e.currentTarget.style.borderColor = C.borderStrong; }}
           onMouseLeave={e => { e.currentTarget.style.color = C.textMuted; e.currentTarget.style.borderColor = C.border; }}
@@ -256,21 +263,22 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         </>
       )}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ background: C.sidebar, borderBottom: `1px solid ${C.border}`, padding: '0 20px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div style={{ background: C.sidebar, borderBottom: `1px solid ${C.border}`, padding: isMobile ? '0 10px' : '0 20px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             {isMobile && (
               <button onClick={() => setSidebarOpen(o => !o)} style={{ background: 'none', border: 'none', color: C.text, cursor: 'pointer', fontSize: 22, lineHeight: 1, padding: 4 }} aria-label="Toggle menu">☰</button>
             )}
             <span style={{ fontSize: 10, color: C.textDim, fontFamily: MONO, letterSpacing: 1, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{isMobile ? 'CBD PLANT & LABOUR' : 'CBD PLANT & LABOUR · ABN 75 663 693 070'}</span>
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: isMobile ? 5 : 8, alignItems: 'center', flexShrink: 0 }}>
             <NotificationBell />
             <button onClick={() => setNotifSettingsOpen(true)} title="Notification settings" style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.text, borderRadius: R.md, padding: '6px 10px', cursor: 'pointer', fontSize: 15, lineHeight: 1, display: 'inline-flex', alignItems: 'center' }}>⚙</button>
-            <button onClick={() => setMfaOpen(true)} title={showMfaNudge ? 'Add two-step login' : 'Two-step login'} aria-label="Two-step login" data-area="two-step login button"
-              style={{ background: 'transparent', border: `1px solid ${showMfaNudge ? 'rgba(245,158,11,0.55)' : C.border}`, color: C.text, borderRadius: R.md, padding: '6px 10px', cursor: 'pointer', fontSize: 13, lineHeight: 1, display: 'inline-flex', alignItems: 'center', gap: 6, position: 'relative' }}>
-              🔐{showMfaNudge && !isMobile && <span style={{ fontSize: 11, color: '#fcd34d', fontWeight: 600, whiteSpace: 'nowrap' }}>Add two-step login</span>}
-              {showMfaNudge && isMobile && <span style={{ position: 'absolute', top: -3, right: -3, width: 8, height: 8, borderRadius: 999, background: '#f59e0b' }} />}
-            </button>
+            {!isMobile && (
+              <button onClick={() => setMfaOpen(true)} title={showMfaNudge ? 'Add two-step login' : 'Two-step login'} aria-label="Two-step login" data-area="two-step login button"
+                style={{ background: 'transparent', border: `1px solid ${showMfaNudge ? 'rgba(245,158,11,0.55)' : C.border}`, color: C.text, borderRadius: R.md, padding: '6px 10px', cursor: 'pointer', fontSize: 13, lineHeight: 1, display: 'inline-flex', alignItems: 'center', gap: 6, position: 'relative' }}>
+                🔐{showMfaNudge && <span style={{ fontSize: 11, color: '#fcd34d', fontWeight: 600, whiteSpace: 'nowrap' }}>Add two-step login</span>}
+              </button>
+            )}
             {/* Phones (360 px): icon-only buttons so the bar never scrolls sideways. */}
             <button onClick={() => setPreviewMode(true)} title="Worker View" aria-label="Worker View" style={{ ...btnSecondary, padding: isMobile ? '6px 9px' : '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>👁{!isMobile && ' Worker View'}</button>
             <button onClick={() => setScanOpen(true)} title="Scan" aria-label="Scan" style={{ ...btnSecondary, padding: isMobile ? '6px 9px' : '6px 13px', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>📷{!isMobile && ' Scan'}</button>

@@ -160,9 +160,11 @@ export function ClockInOut({ currentWorker, showToast }) {
   return (
     <div data-area="clock in / out" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 12 }}>
       <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, padding: '28px 20px', textAlign: 'center', maxWidth: 380, width: '100%', boxSizing: 'border-box' }}>
-        <div style={{ color: C.textMuted, fontSize: 14, marginBottom: 8 }}>{now.toLocaleDateString('en-AU', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
+        {/* Sydney-pinned like every other time in the portal: a phone set to another
+            zone (or a worker travelling) must see the same clock the office sees. */}
+        <div style={{ color: C.textMuted, fontSize: 14, marginBottom: 8 }}>{now.toLocaleDateString('en-AU', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Australia/Sydney' })}</div>
         <div style={{ fontSize: 44, fontWeight: 800, color: C.text, fontVariantNumeric: 'tabular-nums', letterSpacing: 2 }}>
-          {now.toLocaleTimeString('en-AU', { timeStyle: 'medium' })}
+          {now.toLocaleTimeString('en-AU', { timeStyle: 'medium', timeZone: 'Australia/Sydney' })}
         </div>
 
         {openIn && (

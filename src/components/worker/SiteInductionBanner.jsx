@@ -97,9 +97,11 @@ export function InductionReader({ item, currentWorker, showToast, onClose, onSig
             <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)} style={{ accentColor: C.accent, width: 20, height: 20 }} />
             I have read and understood this induction
           </label>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <input style={{ ...inputStyle, flex: 1, minWidth: 180 }} value={name} onChange={e => setName(e.target.value)} placeholder="Type your full name" autoComplete="name" />
-            <button onClick={sign} disabled={busy} style={{ ...btnPrimary, minHeight: 40, minWidth: 110 }}>{busy ? 'Signing…' : '✍ Sign'}</button>
+          {/* Full-width Sign button + bottom room: the floating help bubble sits
+              bottom-right and covered a right-aligned button on 360 px phones. */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 84 }}>
+            <input style={{ ...inputStyle, width: '100%' }} value={name} onChange={e => setName(e.target.value)} placeholder="Type your full name" autoComplete="name" />
+            <button onClick={sign} disabled={busy} style={{ ...btnPrimary, minHeight: 44, width: '100%' }}>{busy ? 'Signing…' : '✍ Sign'}</button>
           </div>
         </div>
       </div>
