@@ -1,0 +1,44 @@
+name: Live smoke
+
+# Once a day (21:00 UTC = 7-8 am Sydney) and on demand: open the LIVE portal
+# like a phone would and check the public things only — the page loads with no
+# console errors, the login form shows, and the security headers are enforced.
+# No secrets, no login, no data.
+on:
+  schedule:
+    - cron: '0 21 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Live smoke (https://portal.cbdpnl.com.au)
+        run: npx playwright test -c playwright.live.config.js
+
+      - name: Upload report and traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-smoke-report
+          path: |
+            playwright-report-live/
+            test-results-live/
+          retention-days: 14
