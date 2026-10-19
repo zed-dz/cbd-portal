@@ -12,7 +12,8 @@
 //      row created today (Sydney)
 //   3. minus anyone already reminded today — an `activity_events` row with
 //      verb 'reminded', object_type 'timesheet' and after->>'date' = today
-//   4. each remaining worker gets ONE SMS + ONE email:
+//   4. each remaining worker gets ONE push (every device that opted in, via the
+//      internal `send-push` function) + ONE SMS + ONE email:
 //        "Hi Sam, please submit today's timesheet for Bonnyrigg in the CBD portal: <PORTAL_URL>"
 //      honouring workers.notify_sms / notify_email. SMS via Twilio with the same
 //      config lookup as `send-sms` (TWILIO_* env, else `integration_secrets`) and
@@ -52,6 +53,26 @@ const json = (b: unknown, s = 200) =>
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const DATE_RE  = /^\d{4}-\d{2}-\d{2}$/;
+
+// ── Web push (delegated to the internal `send-push` function) ─────────────
+// Free + instant; shows on the phone even with the app closed. Never throws
+// on a transport problem — a missing device just means { sent: 0 }.
+async function sendPush(msg: { worker_ids?: string[]; office?: boolean; title: string; body?: string; url?: string; tag?: string })
+  : Promise<{ sent: number; failed: number; removed: number }> {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(msg),
+    });
+    const r = await res.json().catch(() => ({}));
+    if (!res.ok) { console.error('send-push:', res.status, r?.error || ''); return { sent: 0, failed: 1, removed: 0 }; }
+    return { sent: r.sent || 0, failed: r.failed || 0, removed: r.removed || 0 };
+  } catch (e) {
+    console.error('send-push unreachable:', (e as Error).message);
+    return { sent: 0, failed: 1, removed: 0 };
+  }
+}
 
 // ── Sydney date helpers ───────────────────────────────────────────────────
 function sydneyToday(): string {
@@ -364,9 +385,18 @@ Deno.serve(async (req) => {
 
       const wantSms   = w.notify_sms !== false && !!normaliseAUMobile(w.mobile);
       const wantEmail = w.notify_email !== false && EMAIL_RE.test(String(w.email || '').trim());
-      if (!wantSms && !wantEmail) { breakdown.no_channel++; continue; }
 
-      let smsOk = false, emailOk = false;
+      let smsOk = false, emailOk = false, pushOk = false;
+      if (!dryRun) {
+        // Push first: free and instant; the phone shows it even with the app closed.
+        try {
+          const p = await sendPush({ worker_ids: [wid], title: 'Timesheet reminder', body: `Please submit today's timesheet for ${where}.`, url: '/', tag: `ts-${today}` });
+          pushOk = p.sent > 0;
+        } catch (e) { console.error('push threw:', (e as Error).message); }
+      }
+      // Push counts as a channel; a worker with no SMS/email AND no device is skipped.
+      if (!wantSms && !wantEmail && !pushOk) { breakdown.no_channel++; continue; }
+
       if (!dryRun) {
         if (wantSms) {
           try {
@@ -391,14 +421,14 @@ Deno.serve(async (req) => {
         }
       }
 
-      if (dryRun || smsOk || emailOk) {
+      if (dryRun || smsOk || emailOk || pushOk) {
         remindedCount++;
         names.push(w.name);
         if (!dryRun) {
           try {
             await sb.from('activity_events').insert([{
               actor_name: 'portal', verb: 'reminded', object_type: 'timesheet', object_id: wid,
-              after: { date: today, worker_id: wid, worker: w.name, site: where, clients: Array.from(info.clients), sms: smsOk, email: emailOk },
+              after: { date: today, worker_id: wid, worker: w.name, site: where, clients: Array.from(info.clients), sms: smsOk, email: emailOk, push: pushOk },
             }]);
           } catch (e) { console.error('activity insert failed:', (e as Error).message); }
         }
