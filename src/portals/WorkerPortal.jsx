@@ -7,6 +7,11 @@ import { QUEUE_SENT_EVENT } from '../utils/offlineQueue';
 import { WorkerCertificateUploads } from '../components/certificates/WorkerCertificateUploads';
 import { Take5Form } from '../components/take5/Take5Form';
 import { PushPrompt } from '../components/notifications/PushPrompt';
+import { ClockInOut } from '../components/worker/ClockInOut';
+import { TimeOffTab } from '../components/worker/TimeOffTab';
+import { IncidentReportTab } from '../components/worker/IncidentReportTab';
+import { SiteInductionBanner } from '../components/worker/SiteInductionBanner';
+import { DocumentsTab, DocumentsBanner } from '../components/worker/DocumentsTab';
 import { addAdminNotification } from '../utils/notify';
 import { roleChipStyle } from '../constants/roles';
 
@@ -34,6 +39,9 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
     { id: 'certificates', label: '🪪 Certificates / Tickets' },
     { id: 'history', label: '🗂 History' },
     { id: 'clockin', label: '⏱ Clock In/Out' },
+    { id: 'timeoff', label: '🏖 Time off' },
+    { id: 'incident', label: '⚠️ Report incident' },
+    { id: 'documents', label: '📄 Documents' },
   ];
 
   return (
@@ -62,6 +70,9 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
         ))}
       </div>
 
+      <SiteInductionBanner currentWorker={currentWorker} showToast={showToast} />
+      {activeTab !== 'documents' && <DocumentsBanner currentWorker={currentWorker} onOpen={() => setActiveTab('documents')} />}
+
       <div style={{ padding: isMobile ? 12 : 24, maxWidth: 900, margin: '0 auto' }}>
         {activeTab === 'allocations'    && <WorkerAllocations currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'timesheets'     && <WorkerTimesheets currentWorker={currentWorker} showToast={showToast} onGoToTake5={() => setActiveTab('take5')} />}
@@ -69,7 +80,10 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
         {activeTab === 'profile'        && <WorkerMyProfile currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'certificates'   && <WorkerCertificateUploads workerId={currentWorker.id} showToast={showToast} canEdit />}
         {activeTab === 'history'        && <WorkerHistory currentWorker={currentWorker} showToast={showToast} />}
-        {activeTab === 'clockin'        && <WorkerClockIn currentWorker={currentWorker} showToast={showToast} />}
+        {activeTab === 'clockin'        && <ClockInOut currentWorker={currentWorker} showToast={showToast} />}
+        {activeTab === 'timeoff'        && <TimeOffTab currentWorker={currentWorker} showToast={showToast} />}
+        {activeTab === 'incident'       && <IncidentReportTab currentWorker={currentWorker} showToast={showToast} />}
+        {activeTab === 'documents'      && <DocumentsTab currentWorker={currentWorker} showToast={showToast} />}
       </div>
     </div>
   );
@@ -629,142 +643,7 @@ function ChangePassword({ showToast }) {
 // The "My Certifications" tab was removed 2026-09-27 (team request): tickets
 // already live under Certificates / Tickets, and two lists confused the crew.
 
-function WorkerClockIn({ currentWorker, showToast }) {
-  const [now, setNow] = useState(new Date());
-  const storageKey = `clockIn_${currentWorker.id}`;
-  // localStorage throws in private browsing / blocked storage — never let that
-  // white-screen the tab (audit P2).
-  const [clockInTime, setClockInTime] = useState(() => {
-    try {
-      const stored = localStorage.getItem(storageKey);
-      return stored ? new Date(stored) : null;
-    } catch { return null; }
-  });
-  const [saving, setSaving] = useState(false);
-  const [todayEntries, setTodayEntries] = useState([]);
-
-  useEffect(() => {
-    const interval = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const loadToday = useCallback(async () => {
-    const { data } = await supabase.from('timesheets').select('*')
-      .eq('worker_id', currentWorker.id)
-      .eq('date', todayISO())
-      .order('created_at', { ascending: false });
-    setTodayEntries(data || []);
-  }, [currentWorker.id]);
-
-  useEffect(() => { loadToday(); }, [loadToday]);
-
-  const handleClockIn = () => {
-    const t = new Date();
-    setClockInTime(t);
-    try { localStorage.setItem(storageKey, t.toISOString()); } catch { /* storage blocked */ }
-    showToast(`Clocked in at ${t.toLocaleTimeString('en-AU', { timeStyle: 'short' })}`, 'success');
-  };
-
-  const handleClockOut = async () => {
-    if (!clockInTime) return;
-    const out = new Date();
-    // Hours round to 0.25 h like every other timesheet line (audit P2).
-    const hours = Math.round(((out - clockInTime) / (1000 * 60 * 60)) * 4) / 4;
-    setSaving(true);
-    // Clock-out becomes a proper daily sheet (client / project / role from
-    // today's allocation) instead of a header-less line that showed up in the
-    // office's Line Timesheets and pending badge (audit P2).
-    const today = todayISO();
-    const { data: allocs } = await supabase.from('allocations')
-      .select('client, project, site, role')
-      .eq('worker_id', currentWorker.id)
-      .in('status', ['confirmed', 'completed'])
-      .lte('start_date', today)
-      .or(`end_date.is.null,end_date.gte.${today}`)
-      .order('start_date', { ascending: false })
-      .limit(1);
-    const a = allocs?.[0];
-    if (!a || !a.client) {
-      showToast('No accepted allocation for today — open My Timesheets and fill in the sheet instead.', 'error');
-      setSaving(false);
-      return;
-    }
-    const { error } = await supabase.rpc('save_daily_timesheet', {
-      p_header_id: null,
-      p_worker_id: currentWorker.id,
-      p_client: a.client,
-      p_project: a.project || a.site || a.client,
-      p_role: a.role || currentWorker.job_title || 'General Labourer',
-      p_wet_hire: false,
-      p_comments: 'Clock in / out',
-      p_client_signature: null,
-      p_allowance_lines: [],
-      p_status: 'pending',
-      p_lines: [{
-        date: today, shift_type: 'Day', scenario: 'standard',
-        start_time: clockInTime.toISOString(), end_time: out.toISOString(),
-        total_break_hours: 0, total_hours: hours, regular_hours: hours,
-        meal_allowance: 0, meal_allowance_override: false,
-      }],
-    });
-    if (error) { showToast(error.message, 'error'); }
-    else {
-      showToast(`Clocked out — ${hours} hours logged`, 'success');
-      try { localStorage.removeItem(storageKey); } catch { /* storage blocked */ }
-      setClockInTime(null);
-      loadToday();
-    }
-    setSaving(false);
-  };
-
-  const elapsed = clockInTime ? Math.floor((now - clockInTime) / 1000) : 0;
-  const elapsedStr = clockInTime ? `${String(Math.floor(elapsed / 3600)).padStart(2, '0')}:${String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}` : null;
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 24 }}>
-      <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, padding: '32px 40px', textAlign: 'center', maxWidth: 380, width: '100%' }}>
-        <div style={{ color: C.textMuted, fontSize: 14, marginBottom: 8 }}>{now.toLocaleDateString('en-AU', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
-        <div style={{ fontSize: 44, fontWeight: 800, color: C.text, fontVariantNumeric: 'tabular-nums', letterSpacing: 2 }}>
-          {now.toLocaleTimeString('en-AU', { timeStyle: 'medium' })}
-        </div>
-
-        {clockInTime && (
-          <div style={{ marginTop: 16, padding: '8px 16px', background: '#16653a', borderRadius: 8 }}>
-            <div style={{ color: '#4ade80', fontSize: 13 }}>Clocked in at {clockInTime.toLocaleTimeString('en-AU', { timeStyle: 'short' })}</div>
-            <div style={{ color: '#4ade80', fontSize: 20, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{elapsedStr}</div>
-          </div>
-        )}
-
-        <div style={{ marginTop: 28, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {!clockInTime ? (
-            <button onClick={handleClockIn} style={{ ...btnPrimary, background: C.success, fontSize: 16, padding: '14px 0', borderRadius: 8 }}>
-              ▶ Clock In
-            </button>
-          ) : (
-            <button onClick={handleClockOut} disabled={saving} style={{ ...btnPrimary, background: C.error, fontSize: 16, padding: '14px 0', borderRadius: 8 }}>
-              {saving ? 'Saving…' : '■ Clock Out'}
-            </button>
-          )}
-        </div>
-      </div>
-
-      {todayEntries.length > 0 && (
-        <div style={{ marginTop: 28, width: '100%', maxWidth: 380 }}>
-          <h4 style={{ color: C.textMuted, fontSize: 13, marginBottom: 12, textTransform: 'uppercase' }}>Today's entries</h4>
-          {todayEntries.map(e => (
-            <div key={e.id} style={{ background: C.card, borderRadius: 8, border: `1px solid ${C.border}`, padding: '12px 16px', marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <span style={{ color: C.text, fontWeight: 600 }}>{e.hours} hrs</span>
-                {e.start_time && <span style={{ color: C.textMuted, fontSize: 12, marginLeft: 8 }}>{fmtDateTime(e.start_time)} → {fmtDateTime(e.end_time)}</span>}
-              </div>
-              {timesheetBadge(e.status)}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+// Clock in / out moved to src/components/worker/ClockInOut.jsx (server-side, GPS) on 2026-10-19.
 
 // Pre-start Take 5 safety check. Required on Tue/Thu before a timesheet can be
 // submitted (the gate lives in DailyTimesheetForm; the shared Take5Form writes

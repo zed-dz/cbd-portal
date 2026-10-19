@@ -3,6 +3,7 @@ import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnSmall, btnDanger } from '../../theme';
 import { Modal, Field, Spinner, EmptyState } from '../index';
 import { isLikelyMapLink } from '../../utils/mapLink';
+import { SiteInductionModal } from './SiteInductionModal';
 
 // Sites and their contacts for ONE client.
 //
@@ -18,8 +19,9 @@ import { isLikelyMapLink } from '../../utils/mapLink';
 const blankSite    = { name: '', address: '', notes: '', map_link: '', is_active: true };
 const blankContact = { name: '', role: '', email: '', phone: '', is_primary: false, approves_timesheets: false };
 
-export function ClientSitesManager({ client, onClose, showToast }) {
+export function ClientSitesManager({ client, onClose, showToast, currentWorker }) {
   const [sites, setSites]       = useState([]);
+  const [inductionSite, setInductionSite] = useState(null); // site whose induction modal is open
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [siteForm, setSiteForm] = useState(null);      // {…site, id?}
@@ -129,8 +131,9 @@ export function ClientSitesManager({ client, onClose, showToast }) {
                 {site.map_link && <a href={site.map_link} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#93c5fd', textDecoration: 'none' }}>📍 Map pin</a>}
                 {site.notes && <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{site.notes}</div>}
               </div>
-              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 <button style={btnSmall} onClick={() => setSiteForm({ ...site })}>Edit</button>
+                <button style={btnSmall} onClick={() => setInductionSite(site)} title="Site induction / SWMS the crew must read and sign">🦺 Induction</button>
                 <button style={btnSmall} onClick={() => toggleSiteActive(site)}>{site.is_active === false ? 'Reactivate' : 'Deactivate'}</button>
               </div>
             </div>
@@ -202,6 +205,10 @@ export function ClientSitesManager({ client, onClose, showToast }) {
             <button style={btnPrimary} onClick={saveSite} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
           </div>
         </Modal>
+      )}
+
+      {inductionSite && (
+        <SiteInductionModal site={inductionSite} client={client} currentWorker={currentWorker} showToast={showToast} onClose={() => setInductionSite(null)} />
       )}
 
       {contactForm && (

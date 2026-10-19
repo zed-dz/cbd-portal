@@ -94,7 +94,7 @@ export function ClientsPage({ showToast, currentWorker }) {
           </button>
         ))}
       </div>
-      {tab === 'clients'    && <ClientsList showToast={showToast} canSeeRates={canSeeRates} />}
+      {tab === 'clients'    && <ClientsList showToast={showToast} canSeeRates={canSeeRates} currentWorker={currentWorker} />}
       {tab === 'job_roles'  && <JobRolesList showToast={showToast} />}
     </div>
   );
@@ -128,7 +128,7 @@ function useIsNarrow(px = 700) {
   return narrow;
 }
 
-function ClientsList({ showToast, canSeeRates = true }) {
+function ClientsList({ showToast, canSeeRates = true, currentWorker = null }) {
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -475,6 +475,7 @@ function ClientsList({ showToast, canSeeRates = true }) {
         <ClientSitesManager
           client={sitesFor}
           showToast={showToast}
+          currentWorker={currentWorker}
           onClose={() => { setSitesFor(null); setRefreshKey(k => k + 1); load(); }}
         />
       )}

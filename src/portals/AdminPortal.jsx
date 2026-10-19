@@ -29,6 +29,9 @@ import { TemplatesPage } from '../pages/Templates/TemplatesPage';
 import { AppViewsPage } from '../pages/AppViews/AppViewsPage';
 import { PendingWorkersPage } from '../pages/PendingWorkers/PendingWorkersPage';
 import { ApplicationsPage } from '../pages/Applications/ApplicationsPage';
+import { LeaveRequestsPage } from '../pages/Leave/LeaveRequestsPage';
+import { IncidentsPage } from '../pages/Safety/IncidentsPage';
+import { DocumentsPage } from '../pages/Documents/DocumentsPage';
 import { WorkerPortal } from './WorkerPortal';
 
 export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpen, setSidebarOpen }) {
@@ -52,10 +55,10 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
   const showMfaNudge = currentWorker?.access_level === 'admin' && mfa.verified === false;
   // Allocation Board → "Allocate" hands the Allocations page a pre-ticked crew.
   const [allocPrefill, setAllocPrefill] = useState(null);
-  const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, licence_agent: 0, pending_workers: 0, payroll: 0, applications: 0 });
+  const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, licence_agent: 0, pending_workers: 0, payroll: 0, applications: 0, leave: 0, safety: 0 });
 
   const refreshBadge = useCallback(async () => {
-    const [w, a, ts, lic, pw, pr, ap] = await Promise.all([
+    const [w, a, ts, lic, pw, pr, ap, lv, sf] = await Promise.all([
       supabase.from('workers').select('id', { count: 'exact', head: true }).is('archived_at', null),
       supabase.from('allocations').select('*', { count: 'exact', head: true }).in('status', ['pending', 'confirmed']),
       supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
@@ -63,6 +66,8 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       supabase.from('workers').select('id', { count: 'exact', head: true }).neq('app_status', 'Active').is('archived_at', null),
       supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'approved').eq('xero_exported', false),
       supabase.from('worker_applications').select('*', { count: 'exact', head: true }).eq('status', 'new'),
+      supabase.from('leave_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+      supabase.from('incident_reports').select('id', { count: 'exact', head: true }).eq('status', 'open'),
     ]);
     setBadges({
       workers: w.count || 0,
@@ -72,6 +77,8 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       pending_workers: pw.count || 0,
       payroll: pr.count || 0,
       applications: ap.count || 0,
+      leave: lv.count || 0,
+      safety: sf.count || 0,
     });
   }, []);
 
@@ -111,6 +118,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         { id: 'calendar', label: '📅 Calendar' },
         { id: 'timesheets', label: '🕐 Timesheets', badge: badges.timesheets || null, badgeColor: 'red' },
         { id: 'sent_timesheets', label: '📤 Sent Timesheets' },
+        { id: 'leave', label: '🏖 Time off requests', badge: badges.leave || null, badgeColor: 'yellow' },
       ],
     },
     // Money pages are Admin-only (owner, 2026-09-27). Managers/allocators keep
@@ -146,6 +154,8 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         { id: 'applications', label: '📥 Applications', badge: badges.applications || null, badgeColor: 'orange' },
         { id: 'pending_workers', label: '📱 Pending Workers', badge: badges.pending_workers || null, badgeColor: 'yellow' },
         { id: 'app_views', label: '📲 App Views' },
+        { id: 'safety', label: '🦺 Safety', badge: badges.safety || null, badgeColor: 'red' },
+        { id: 'documents', label: '📄 Documents' },
         { id: 'reports', label: '📁 Reports' },
       ],
     },
@@ -289,6 +299,9 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'inbox'            && <InboxPage         showToast={showToast} onNavigate={navigate} />}
           {activePage === 'templates'        && <TemplatesPage     showToast={showToast} />}
           {activePage === 'app_views'        && <AppViewsPage showToast={showToast} />}
+          {activePage === 'leave'            && <LeaveRequestsPage showToast={showToast} currentWorker={currentWorker} refreshBadge={refreshBadge} />}
+          {activePage === 'safety'           && <IncidentsPage showToast={showToast} currentWorker={currentWorker} />}
+          {activePage === 'documents'        && <DocumentsPage showToast={showToast} currentWorker={currentWorker} />}
         </div>
       </div>
 
