@@ -127,6 +127,16 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
   const totalMeal  = sumBy(lines, l => parseFloat(l.meal_allowance) || 0);
   const adjusted   = lines.filter(isAdjusted);
 
+  // Plant used on this sheet (hours only; the plant charge is never read here).
+  const [plant, setPlant] = useState([]);
+  useEffect(() => {
+    let mounted = true;
+    if (!header?.id) { setPlant([]); return undefined; }
+    supabase.from('plant_hours').select('id, hours, notes, plant_items(name, type)').eq('header_id', header.id)
+      .then(({ data }) => { if (mounted) setPlant(data || []); });
+    return () => { mounted = false; };
+  }, [header?.id]);
+
   const meta = [
     ['Worker', workerName || '—'],
     ['Client', header.client || '—'],
@@ -237,6 +247,20 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
       )}
 
       <TimesheetPhotos headerId={header.id} />
+
+      {plant.length > 0 && (
+        <div data-area="plant used" style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 11, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Plant used</div>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 14px' }}>
+            {plant.map(p => (
+              <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 13, color: C.text, padding: '3px 0' }}>
+                <span>{p.plant_items?.name || 'Plant'}{p.plant_items?.type ? <span style={{ color: C.textMuted }}> · {p.plant_items.type}</span> : null}{p.notes ? <span style={{ color: C.textMuted }}> — {p.notes}</span> : null}</span>
+                <strong style={{ whiteSpace: 'nowrap' }}>{Number(p.hours || 0).toFixed(2)} h</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {header.comments && (
         <div style={{ marginTop: 14 }}>

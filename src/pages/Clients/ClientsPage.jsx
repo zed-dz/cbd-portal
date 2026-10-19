@@ -544,7 +544,7 @@ function ClientDetail({ client, detailTab, setDetailTab, refreshKey, onEdit, onO
       <div style={{ padding: '14px 18px 18px' }}>
         {detailTab === 'sites'      && <SitesTabView client={client} refreshKey={refreshKey} onManage={onOpenSites} />}
         {detailTab === 'rates'      && <RatesTabView client={client} refreshKey={refreshKey} onManage={onOpenRates} />}
-        {detailTab === 'timesheets' && <TimesheetsTabView client={client} showToast={showToast} />}
+        {detailTab === 'timesheets' && <TimesheetsTabView client={client} showToast={showToast} canSeeRates={canSeeRates} />}
         {detailTab === 'activity'   && <ActivityFeed clientId={client.id} limit={30} />}
       </div>
     </div>
@@ -697,8 +697,10 @@ function RatesTabView({ client, refreshKey, onManage }) {
 // every header matched by client-name snapshot, filterable by date range and
 // status, exportable as CSV, and bundle-able into ONE weekly PDF via the
 // build-timesheet-bundle edge function (approved sheets only, hours only).
-function TimesheetsTabView({ client, showToast }) {
+function TimesheetsTabView({ client, showToast, canSeeRates = false }) {
   const [rows, setRows] = useState(null);
+  const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [registerKey, setRegisterKey] = useState(0);
   // Default range = the last 7 days: the bundle is a WEEKLY pack.
   const weekAgo = () => {
     const d = new Date(); d.setDate(d.getDate() - 6);
@@ -714,14 +716,14 @@ function TimesheetsTabView({ client, showToast }) {
     let mounted = true;
     (async () => {
       const { data } = await supabase.from('timesheet_headers')
-        .select('id, project, role, total_hours, status, created_at, pdf_emailed_at, workers(name), timesheets(date)')
+        .select('id, project, role, total_hours, status, created_at, pdf_emailed_at, invoiced_at, client_approved, workers(name), timesheets(date)')
         .ilike('client', escapeLike(client.name))
         .order('created_at', { ascending: false })
         .limit(1000);
       if (mounted) setRows(data || []);
     })();
     return () => { mounted = false; };
-  }, [client.id, client.name]);
+  }, [client.id, client.name, registerKey]);
 
   const lineDates = (h) => (h.timesheets || []).map(t => t.date).filter(Boolean).sort();
   const dateLabel = (h) => {
@@ -811,11 +813,23 @@ function TimesheetsTabView({ client, showToast }) {
           style={{ ...btnPrimary, padding: '7px 12px', fontSize: 12, opacity: (bundling || !approvedCount) ? 0.6 : 1 }}>
           {bundling ? 'Building…' : `📦 Weekly PDF bundle (${approvedCount})`}
         </button>
+        {canSeeRates && (
+          <button type="button" onClick={() => setInvoiceOpen(true)}
+            title="Approved + client-accepted hours in the range → one DRAFT sales invoice in Xero (preview first)."
+            style={{ ...btnSecondary, padding: '7px 12px', fontSize: 12, color: '#13B5EA', borderColor: 'rgba(19,181,234,0.4)' }}>
+            🧾 Xero invoice (draft)
+          </button>
+        )}
       </div>
+      {invoiceOpen && (
+        <XeroInvoiceModal client={client} from={from} to={to} showToast={showToast}
+          onClose={() => setInvoiceOpen(false)}
+          onCreated={() => setRegisterKey(k => k + 1)} />
+      )}
       {filtered.length ? (
         <>
           <TableWrap>
-            <thead><tr><Th>Date</Th><Th>Worker</Th><Th>Project</Th><Th>Role</Th><Th>Hours</Th><Th>Status</Th><Th>PDF emailed</Th></tr></thead>
+            <thead><tr><Th>Date</Th><Th>Worker</Th><Th>Project</Th><Th>Role</Th><Th>Hours</Th><Th>Status</Th><Th>PDF emailed</Th>{canSeeRates && <Th>Invoiced</Th>}</tr></thead>
             <tbody>
               {filtered.map(h => (
                 <tr key={h.id}>
@@ -826,6 +840,15 @@ function TimesheetsTabView({ client, showToast }) {
                   <Td style={{ fontFamily: MONO }}>{h.total_hours != null ? Number(h.total_hours).toFixed(2) : '—'}</Td>
                   <Td>{timesheetBadge(h.status)}</Td>
                   <Td style={{ fontFamily: MONO, fontSize: 12 }}>{h.pdf_emailed_at ? fmtDate(h.pdf_emailed_at) : '—'}</Td>
+                  {canSeeRates && (
+                    <Td style={{ fontFamily: MONO, fontSize: 12 }}>
+                      {h.invoiced_at
+                        ? <span style={{ color: C.success }}>✓ {fmtDate(h.invoiced_at)}</span>
+                        : (h.status === 'approved' && !h.client_approved
+                            ? <span title="Approved by the office but not yet accepted by the client — not invoiced until it is" style={{ color: C.textMuted, cursor: 'help' }}>awaiting client</span>
+                            : '—')}
+                    </Td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -838,6 +861,124 @@ function TimesheetsTabView({ client, showToast }) {
         <EmptyState message="No timesheets match this range and status." icon="🕐" />
       )}
     </div>
+  );
+}
+
+// Draft Xero invoice from the register range: preview (lines + total) first,
+// then one click creates the DRAFT in Xero via the xero-invoice function.
+// Admin only (canSeeRates) — the preview shows charge rates.
+function XeroInvoiceModal({ client, from, to, showToast, onClose, onCreated }) {
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const call = useCallback(async (body) => {
+    const { data, error } = await supabase.functions.invoke('xero-invoice', { body });
+    if (error) {
+      let msg = error.message;
+      try { const j = await error.context.json(); msg = j?.error || msg; } catch { /* keep msg */ }
+      throw new Error(msg);
+    }
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoading(true);
+      try { const d = await call({ client_id: client.id, from, to, preview: true }); if (mounted) setPreview(d); }
+      catch (e) { if (mounted) setPreview({ lines: [], total: 0, message: e.message, failed: true }); }
+      if (mounted) setLoading(false);
+    })();
+    return () => { mounted = false; };
+  }, [call, client.id, from, to]);
+
+  const create = async () => {
+    if (!preview?.lines?.length) return;
+    if (!window.confirm(`Create a DRAFT invoice in Xero for ${client.name}: ${preview.lines.length} line(s), $${Number(preview.total).toFixed(2)} ex GST?\n\nIt stays a draft until someone approves it in Xero. The ${preview.headers} timesheet(s) will be marked invoiced.`)) return;
+    setCreating(true);
+    try {
+      const d = await call({ client_id: client.id, from, to });
+      setResult(d);
+      showToast?.(`Draft invoice ${d.invoice?.number || ''} created in Xero`, 'success');
+      onCreated?.();
+    } catch (e) {
+      showToast?.(`Invoice not created: ${e.message}`, 'error');
+    }
+    setCreating(false);
+  };
+
+  const money = (n) => `$${Number(n || 0).toFixed(2)}`;
+  const canCreate = preview && !preview.failed && preview.lines?.length > 0 && preview.xero_connected && preview.scope_ok && !result;
+
+  return (
+    <Modal title={`Xero invoice — ${client.name}`} onClose={onClose} width={720}>
+      <div data-area="xero invoice preview">
+        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 10 }}>
+          Period <span style={{ fontFamily: MONO }}>{fmtDate(from)} – {fmtDate(to)}</span> · approved <em>and</em> client-accepted sheets only · not yet invoiced · plant hours billed at the plant's hourly charge.
+        </div>
+        {loading ? <div style={{ display: 'flex', justifyContent: 'center', padding: 20 }}><Spinner /></div> : (
+          <>
+            {preview?.message && (
+              <div style={{ background: preview.failed || !preview.scope_ok ? 'rgba(234,179,8,0.10)' : C.cardHover, border: `1px solid ${preview.failed || !preview.scope_ok ? 'rgba(234,179,8,0.35)' : C.border}`, borderRadius: 8, padding: '10px 12px', fontSize: 13, color: C.text, marginBottom: 10 }}>
+                {preview.message}
+              </div>
+            )}
+            {!!preview?.warnings?.length && (
+              <ul style={{ margin: '0 0 10px', paddingLeft: 18, fontSize: 12, color: C.warning }}>
+                {preview.warnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            )}
+            {preview?.lines?.length ? (
+              <TableWrap>
+                <thead><tr><Th>Description</Th><Th>Hours</Th><Th>Rate</Th><Th>Amount</Th></tr></thead>
+                <tbody>
+                  {preview.lines.map((l, i) => (
+                    <tr key={i}>
+                      <Td>
+                        {l.description}
+                        {l.source === 'client-fallback' && <span title="No Schedule of Rates line matched this role — billing the client's fallback A/B/C" style={{ marginLeft: 6, fontSize: 10, color: C.textMuted, borderBottom: `1px dotted ${C.warning}`, cursor: 'help' }}>fallback</span>}
+                      </Td>
+                      <Td style={{ fontFamily: MONO }}>{Number(l.quantity).toFixed(2)}</Td>
+                      <Td style={{ fontFamily: MONO }}>{money(l.unit_amount)}</Td>
+                      <Td style={{ fontFamily: MONO, fontWeight: 700 }}>{money(l.amount)}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={3} style={{ padding: '10px 16px', color: C.textMuted, fontSize: 12, borderTop: `2px solid ${C.border}` }}>
+                      {preview.headers} timesheet(s) · {Number(preview.total_hours || 0).toFixed(2)}h labour · ex GST
+                    </td>
+                    <td style={{ padding: '10px 16px', fontWeight: 800, color: C.success, borderTop: `2px solid ${C.border}`, fontFamily: MONO }}>{money(preview.total)}</td>
+                  </tr>
+                </tfoot>
+              </TableWrap>
+            ) : (!preview?.message && <EmptyState message="Nothing to invoice in this range." icon="🧾" />)}
+          </>
+        )}
+        {result?.invoice && (
+          <div style={{ marginTop: 12, background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.35)', borderRadius: 8, padding: '10px 14px' }}>
+            <div style={{ fontWeight: 700, color: C.success }}>✓ Draft created in Xero{result.invoice.number ? ` — ${result.invoice.number}` : ''}</div>
+            <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>
+              Contact {result.invoice.contact_matched_by === 'created' ? 'created in Xero from the client name' : result.invoice.contact_matched_by === 'name' ? 'matched by name' : 'from the saved link'}.{' '}
+              <a href={result.invoice.url} target="_blank" rel="noopener noreferrer" style={{ color: '#13B5EA', fontWeight: 600 }}>View in Xero ↗</a>
+            </div>
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14, flexWrap: 'wrap' }}>
+          <button type="button" onClick={onClose} style={btnSecondary}>{result ? 'Close' : 'Cancel'}</button>
+          {!result && (
+            <button type="button" onClick={create} disabled={!canCreate || creating}
+              style={{ ...btnPrimary, background: '#13B5EA', opacity: canCreate && !creating ? 1 : 0.5 }}>
+              {creating ? 'Creating…' : 'Create draft in Xero'}
+            </button>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }
 

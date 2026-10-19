@@ -54,6 +54,45 @@ export function XeroSyncPage({ showToast }) {
   const [loadingSlips, setLoadingSlips] = useState(null);
   const [expandedEmp, setExpandedEmp] = useState(null);
   const [syncingRates, setSyncingRates] = useState(false);
+  // Portal workers (admin view: carries xero_employee_id) for the "Link to
+  // portal worker" picker. The link is what xero-push matches on first; the
+  // name match is only the fallback for unlinked workers.
+  const [portalWorkers, setPortalWorkers] = useState([]);
+  const [linking, setLinking] = useState(null);
+
+  const loadPortalWorkers = useCallback(async () => {
+    const { data } = await supabase.from('v_workers_admin')
+      .select('id, name, worker_type, xero_employee_id').is('archived_at', null).order('name');
+    setPortalWorkers(data || []);
+  }, []);
+  useEffect(() => { loadPortalWorkers(); }, [loadPortalWorkers]);
+
+  const linkedWorkerFor = (employeeId) => portalWorkers.find(w => w.xero_employee_id === employeeId) || null;
+  const suggestedWorkerFor = (e) => {
+    const full = `${e.FirstName || ''} ${e.LastName || ''}`.trim().toLowerCase().replace(/\s+/g, ' ');
+    return portalWorkers.find(w => !w.xero_employee_id && (w.name || '').trim().toLowerCase().replace(/\s+/g, ' ') === full) || null;
+  };
+
+  const linkWorker = async (employeeId, workerId) => {
+    setLinking(employeeId);
+    try {
+      // One Xero employee ↔ one worker (unique index): clear any other holder first.
+      const prev = linkedWorkerFor(employeeId);
+      if (prev && prev.id !== workerId) {
+        const { error } = await supabase.from('workers').update({ xero_employee_id: null }).eq('id', prev.id);
+        if (error) throw error;
+      }
+      if (workerId) {
+        const { error } = await supabase.from('workers').update({ xero_employee_id: employeeId }).eq('id', workerId);
+        if (error) throw error;
+      }
+      await loadPortalWorkers();
+      showToast(workerId ? 'Linked to the portal worker' : 'Link removed', 'success');
+    } catch (e) {
+      showToast(`Link failed: ${e.message}`, 'error');
+    }
+    setLinking(null);
+  };
 
   const callEdge = useCallback(async (params = '') => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -216,7 +255,8 @@ export function XeroSyncPage({ showToast }) {
             <>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
                 <div style={{ fontSize: 12, color: C.textMuted }}>
-                  Click any row to expand full employee details.
+                  Click any row to expand full employee details. <strong>Portal worker</strong> links each Xero employee to a worker by ID — the push uses the link first and only falls back to a name match for unlinked workers.
+                  {' '}{portalWorkers.filter(w => w.xero_employee_id).length} of {portalWorkers.length} workers linked.
                 </div>
                 <button
                   onClick={syncPayRates}
@@ -230,7 +270,7 @@ export function XeroSyncPage({ showToast }) {
             <TableWrap>
               <thead>
                 <tr>
-                  <Th>Name</Th><Th>Email</Th><Th>Pay Rate</Th><Th>DOB</Th><Th>Start Date</Th>
+                  <Th>Name</Th><Th>Portal worker</Th><Th>Email</Th><Th>Pay Rate</Th><Th>DOB</Th><Th>Start Date</Th>
                   <Th>Employment</Th><Th>Status</Th><Th>Details</Th>
                 </tr>
               </thead>
@@ -238,10 +278,39 @@ export function XeroSyncPage({ showToast }) {
                 {data.employees.map(e => {
                   const payLine = (e.PayTemplate?.EarningsLines || []).find(l => l.RatePerUnit != null);
                   const rate = payLine?.RatePerUnit;
+                  const linked = linkedWorkerFor(e.EmployeeID);
+                  const suggested = linked ? null : suggestedWorkerFor(e);
                   return (
                   <Fragment key={e.EmployeeID}>
                     <tr style={{ cursor: 'pointer' }} onClick={() => setExpandedEmp(expandedEmp === e.EmployeeID ? null : e.EmployeeID)}>
                       <Td><strong>{e.FirstName} {e.LastName}</strong></Td>
+                      <Td>
+                        {/* Link to portal worker — stops the row click so the select is usable. */}
+                        <div data-area="link to portal worker" onClick={ev => ev.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 180 }}>
+                          <select
+                            value={linked?.id || ''}
+                            disabled={linking === e.EmployeeID}
+                            onChange={ev => linkWorker(e.EmployeeID, ev.target.value || null)}
+                            aria-label={`Link ${e.FirstName} ${e.LastName} to a portal worker`}
+                            style={{ background: C.bg, color: C.text, border: `1px solid ${linked ? 'rgba(34,197,94,0.5)' : C.border}`, borderRadius: 6, padding: '6px 8px', fontSize: 12, minHeight: 36, maxWidth: 220 }}>
+                            <option value="">— not linked —</option>
+                            {portalWorkers.map(w => (
+                              <option key={w.id} value={w.id} disabled={!!w.xero_employee_id && w.xero_employee_id !== e.EmployeeID}>
+                                {w.name}{w.xero_employee_id && w.xero_employee_id !== e.EmployeeID ? ' (linked elsewhere)' : ''}
+                              </option>
+                            ))}
+                          </select>
+                          {linked
+                            ? <span style={{ fontSize: 11, color: C.success }}>linked ✓</span>
+                            : suggested
+                              ? <span style={{ fontSize: 11, color: C.warning }}>
+                                  not linked · looks like <strong>{suggested.name}</strong>{' '}
+                                  <button type="button" onClick={() => linkWorker(e.EmployeeID, suggested.id)} disabled={linking === e.EmployeeID}
+                                    style={{ ...btnSmall, fontSize: 10, padding: '2px 8px', marginLeft: 4 }}>Link</button>
+                                </span>
+                              : <span style={{ fontSize: 11, color: C.textMuted }}>not linked</span>}
+                        </div>
+                      </Td>
                       <Td><span style={{ fontSize: 12, color: C.textMuted }}>{e.Email || '—'}</span></Td>
                       <Td>
                         {rate != null
@@ -258,7 +327,7 @@ export function XeroSyncPage({ showToast }) {
                     </tr>
                     {expandedEmp === e.EmployeeID && (
                       <tr>
-                        <td colSpan={9} style={{ padding: 0 }}>
+                        <td colSpan={10} style={{ padding: 0 }}>
                           <div style={{ background: C.bg, borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`, padding: '14px 20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
                             <Section label="Personal">
                               <Row label="Gender" val={e.Gender} />
