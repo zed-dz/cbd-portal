@@ -1,4 +1,4 @@
-name: Live smoke
+﻿name: Live smoke
 
 # Once a day (21:00 UTC = 7-8 am Sydney) and on demand: open the LIVE portal
 # like a phone would and check the public things only — the page loads with no
@@ -21,7 +21,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install
