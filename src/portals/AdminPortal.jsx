@@ -24,6 +24,7 @@ import { PaymentsPage } from '../pages/Payments/PaymentsPage';
 import { LicenceAgentPage } from '../pages/LicenceAgent/LicenceAgentPage';
 import { ReportsPage } from '../pages/Reports/ReportsPage';
 import { PlantPage } from '../pages/Plant/PlantPage';
+import { InvoicesPage } from '../pages/Invoices/InvoicesPage';
 import { BulkMessagesPage } from '../pages/BulkMessages/BulkMessagesPage';
 import { InboxPage } from '../pages/Inbox/InboxPage';
 import { TemplatesPage } from '../pages/Templates/TemplatesPage';
@@ -133,6 +134,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         { id: 'rate_sets', label: '📚 Rate Sets' },
         { id: 'default_rates', label: '💲 Default Rates' },
         { id: 'payroll', label: '💰 Payroll', badge: badges.payroll || null, badgeColor: 'green' },
+        { id: 'invoices', label: '🧾 Invoices' },
         // Payments (Stripe) is hidden until its maths matches payroll/billing and
         // the Stripe keys are set (audit P2). Set REACT_APP_PAYMENTS_ENABLED=1 to show it.
         ...(process.env.REACT_APP_PAYMENTS_ENABLED === '1' ? [{ id: 'payments', label: '💳 Payments' }] : []),
@@ -306,6 +308,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'licence_agent'    && <LicenceAgentPage showToast={showToast} />}
           {activePage === 'reports'          && <ReportsPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'plant'            && currentWorker?.access_level === 'admin' && <PlantPage showToast={showToast} />}
+          {activePage === 'invoices'         && currentWorker?.access_level === 'admin' && <InvoicesPage showToast={showToast} />}
           {activePage === 'bulk_messages'    && <BulkMessagesPage showToast={showToast} />}
           {activePage === 'inbox'            && <InboxPage         showToast={showToast} onNavigate={navigate} />}
           {activePage === 'templates'        && <TemplatesPage     showToast={showToast} />}
