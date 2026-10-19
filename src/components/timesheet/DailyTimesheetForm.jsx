@@ -29,6 +29,8 @@ export const blankDaily = () => ({
   id: null,
   client: '', project: '', role: '',
   wet_hire: false, comments: '', client_signature: '',
+  // 'Did you finish work early?' — null until the worker answers (required).
+  finished_early: null, finished_early_reason: '',
   status: 'pending',
   hours_lines: [emptyHoursLine()],
 });
@@ -39,6 +41,8 @@ export function dailyFromHeader(header, lineRows) {
     id: header.id,
     client: header.client || '', project: header.project || '', role: header.role || '',
     wet_hire: !!header.wet_hire, comments: header.comments || '',
+    finished_early: header.finished_early == null ? null : !!header.finished_early,
+    finished_early_reason: header.finished_early_reason || '',
     client_signature: header.client_signature || '',
     status: header.status || 'pending',
     hours_lines: (lineRows || []).map(r => ({
@@ -393,6 +397,10 @@ export function DailyTimesheetForm({
     if (!form.client) { showToast('Client is required.', 'error'); return; }
     if (!form.project) { showToast('Project is required.', 'error'); return; }
     if (!form.role) { showToast('Role is required.', 'error'); return; }
+    // Owner (2026-10-19): the early-finish question must be answered before a
+    // sheet can go in; a Yes needs a short reason ("Rained off", "Sick"…).
+    if (form.finished_early !== true && form.finished_early !== false) { showToast('Please answer "Did you finish work early?" (Yes or No).', 'error'); return; }
+    if (form.finished_early === true && !String(form.finished_early_reason || '').trim()) { showToast('Please give a short reason for finishing early (e.g. Rained off, Sick, Sent home).', 'error'); return; }
     const validLines = form.hours_lines.filter(l => l.date && l.start_time && l.end_time);
     if (!validLines.length) { showToast('Add at least one hours line with date, start and end.', 'error'); return; }
 
@@ -498,6 +506,8 @@ export function DailyTimesheetForm({
       const { clientId, siteId } = resolveMasterIds();
       const { error: e1 } = await supabase.from('timesheet_headers').update({
         client_id: clientId, site_id: siteId,
+        finished_early: form.finished_early === true,
+        finished_early_reason: form.finished_early === true ? String(form.finished_early_reason || '').trim().slice(0, 40) : null,
         client_name_snapshot: form.client || null,
         site_name_snapshot: form.project || null,
         role_name_snapshot: form.role || null,
@@ -623,6 +633,27 @@ export function DailyTimesheetForm({
             : <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Pick the role you actually performed — change it if it differed from your allocation.</div>}
         </Field>
       </div>
+
+      {/* Did you finish work early? — asked BEFORE the hours (owner, 2026-10-19). */}
+      <Field label="Did you finish work early? *" hint={form.finished_early === true ? 'A few words is enough.' : 'Answer before entering your hours.'}><div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }} data-area="finished early question">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: C.text, fontSize: 14, cursor: 'pointer', minHeight: 36 }}>
+            <input type="radio" name="finishedearly" checked={form.finished_early === false} onChange={() => setForm(f => ({ ...f, finished_early: false, finished_early_reason: '' }))} /> No
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: C.text, fontSize: 14, cursor: 'pointer', minHeight: 36 }}>
+            <input type="radio" name="finishedearly" checked={form.finished_early === true} onChange={() => setField('finished_early', true)} /> Yes
+          </label>
+        </div>
+        {form.finished_early === true && (
+          <input
+            style={{ ...inputStyle, marginTop: 8, maxWidth: 360 }}
+            value={form.finished_early_reason}
+            maxLength={40}
+            placeholder="Reason — e.g. Rained off, Sick, Sent home"
+            onChange={e => setField('finished_early_reason', e.target.value.slice(0, 40))}
+            autoFocus
+          />
+        )}
+      </Field>
 
       {/* Hours worked */}
       <div style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: '8px 0 8px' }}>Hours worked</div>

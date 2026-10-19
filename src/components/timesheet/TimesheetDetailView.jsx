@@ -100,6 +100,7 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
     ['Project', header.project || '—'],
     ['Role', header.role || '—'],
     ['Wet hire', header.wet_hire ? 'Yes' : 'No'],
+    ['Finished early', header.finished_early ? `Yes — ${header.finished_early_reason || 'no reason given'}` : 'No'],
     ['Submitted', fmtDateTime(header.created_at)],
   ];
 
@@ -282,6 +283,7 @@ export function printTimesheet({ header, lines = [], workerName, brand = BRAND_D
       <div><div class="label">Project</div><div class="val">${esc(header.project || '—')}</div></div>
       <div><div class="label">Role</div><div class="val">${esc(header.role || '—')}</div></div>
       <div><div class="label">Wet hire</div><div class="val">${header.wet_hire ? 'Yes' : 'No'}</div></div>
+      <div><div class="label">Finished early</div><div class="val">${header.finished_early ? 'Yes — ' + esc(header.finished_early_reason || '') : 'No'}</div></div>
     </div>
     <table>
       <thead><tr><th>Date</th><th>Day</th><th>Shift</th><th>Start</th><th>Finish</th><th>Break</th><th>Total</th></tr></thead>
@@ -345,6 +347,7 @@ export function printTimesheetBatch({ sheets = [], brand = BRAND_DEFAULT }) {
         <div><div class="label">Project</div><div class="val">${esc(header.project || '—')}</div></div>
         <div><div class="label">Role</div><div class="val">${esc(header.role || '—')}</div></div>
         <div><div class="label">Wet hire</div><div class="val">${header.wet_hire ? 'Yes' : 'No'}</div></div>
+        <div><div class="label">Finished early</div><div class="val">${header.finished_early ? 'Yes — ' + esc(header.finished_early_reason || '') : 'No'}</div></div>
       </div>
       <table>
         <thead><tr><th>Date</th><th>Day</th><th>Shift</th><th>Start</th><th>Finish</th><th>Break</th><th>Total</th></tr></thead>
