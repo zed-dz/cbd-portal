@@ -36,3 +36,12 @@ yarn-error.log*
 # Generated artifacts (re-built from DOCS.md on demand)
 *.docx
 *.pdf
+
+# Browser tests (npm run e2e:build / npm run e2e)
+/build-e2e
+/playwright-report
+/test-results
+/playwright-report-live
+/test-results-live
+/blob-report
+/playwright/.cache
