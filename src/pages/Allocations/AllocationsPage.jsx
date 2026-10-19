@@ -9,6 +9,10 @@ import { ROLE_GROUPS, ALL_ROLE_NAMES, roleChipStyle } from '../../constants/role
 import { isLikelyMapLink } from '../../utils/mapLink';
 import { requiredTicketsFor, ticketGaps, gapLabel, certsByWorker } from '../../utils/ticketCheck';
 import { seriesDates, weekdayIndex, addDays, dayDiff, newSeriesId, WEEKDAY_NAMES } from '../../utils/series';
+import {
+  nextWeekStart, cleanWeekdays, weekdaysLabel, splitCrew, droppedNotice, templateDates, positionsFor,
+  endDateFor, templateRowFromForm, formWeekdays, templateNames, templateJob,
+} from '../../utils/rosterTemplates';
 
 // Find allocations for a given worker that overlap a [start, end] date range
 // AND are still live (pending/confirmed). Used to warn the admin before
@@ -77,6 +81,14 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
   const [swaps, setSwaps] = useState([]);
   const [showDecided, setShowDecided] = useState(false);
   const [deciding, setDeciding] = useState(null);
+  // Saved roster templates ("save this crew as a template").
+  const [templates, setTemplates] = useState([]);
+  const [tplPick, setTplPick] = useState('');           // template used in Create
+  const [tplNotice, setTplNotice] = useState(null);     // { name, text } after "Use a template"
+  const [tplSaveName, setTplSaveName] = useState(null); // null = name box hidden
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [tplEdit, setTplEdit] = useState(null);         // { id, name, weekdays, worker_ids, arrival_time, positions, removed }
+  const [rostering, setRostering] = useState(null);     // template id being rostered
   const today = todayISO();
 
   const saveQuickSite = async () => {
@@ -103,9 +115,9 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [a, w, c, s, k, rt, c1, c2, sw, adm, me] = await Promise.all([
+    const [a, w, c, s, k, rt, c1, c2, sw, adm, me, tp] = await Promise.all([
       supabase.from('allocations').select('*, workers(name, job_title), allocation_groups(positions, filled_at)').order('created_at', { ascending: false }),
-      supabase.from('workers').select('id, name, mobile, email').is('archived_at', null).order('name'),
+      supabase.from('workers').select('id, name, mobile, email, app_status').is('archived_at', null).order('name'),
       supabase.from('clients').select('id, name').order('name'),
       // A client can run several jobs at once, so sites are their own list and the
       // Site picker below narrows to the chosen client rather than being free text.
@@ -117,7 +129,9 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
       supabase.from('shift_swap_requests').select('*').order('created_at', { ascending: false }).limit(60),
       supabase.rpc('is_portal_admin'),
       supabase.rpc('current_worker_id'),
+      supabase.from('roster_templates').select('*').is('archived_at', null).order('name'),
     ]);
+    setTemplates(tp.data || []);
     if (a.error) showToast(a.error.message, 'error');
     else setAllocations(a.data || []);
     if (w.data) setWorkers(w.data);
@@ -146,7 +160,8 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
     onPrefillUsed?.();
   }, [prefill, onPrefillUsed]);
 
-  const openAdd = () => { setForm(allocDefaults); setSelectedWorkerIds([]); setPositions(''); setWorkerSearch(''); setRepeat(repeatDefaults); setModal('add'); };
+  const resetTpl = () => { setTplPick(''); setTplNotice(null); setTplSaveName(null); };
+  const openAdd = () => { setForm(allocDefaults); setSelectedWorkerIds([]); setPositions(''); setWorkerSearch(''); setRepeat(repeatDefaults); resetTpl(); setModal('add'); };
 
   // ⧉ Duplicate: same job details, dates + arrival CLEARED — the whole point is
   // re-sending the same job on a new day, so stale dates must not survive the
@@ -184,7 +199,7 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
     });
     setModal(a);
   };
-  const closeModal = () => { setModal(null); setForm(allocDefaults); setSelectedWorkerIds([]); setPositions(''); setWorkerSearch(''); setRepeat(repeatDefaults); };
+  const closeModal = () => { setModal(null); setForm(allocDefaults); setSelectedWorkerIds([]); setPositions(''); setWorkerSearch(''); setRepeat(repeatDefaults); resetTpl(); };
 
   // One group per worker with clashes — add mode checks every ticked worker,
   // edit mode just the form's single worker (same shape either way).
@@ -229,7 +244,7 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
 
   // One occurrence → rows. Reuses the single / crew insert paths exactly as
   // before; `extra` carries series_id for repeating allocations.
-  const insertOccurrence = async (p, ids) => {
+  const insertOccurrence = async (p, ids, need = needCount) => {
     if (ids.length === 1) {
       const { data: inserted, error } = await supabase.from('allocations').insert([{ ...p, worker_id: ids[0] }]).select().single();
       if (error) { showToast(error.message, 'error'); return null; }
@@ -239,7 +254,7 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
     // says how many positions there are. Fewer positions than workers =
     // the first to accept get them, the rest see "Position filled".
     const { data: grp, error: gErr } = await supabase.from('allocation_groups').insert([{
-      positions: needCount,
+      positions: need,
       client: p.client || null, site: p.site || null,
       role: p.role || null, start_date: p.start_date,
     }]).select().single();
@@ -248,6 +263,77 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
       .insert(ids.map(wid => ({ ...p, worker_id: wid, group_id: grp.id }))).select();
     if (error) { showToast(error.message, 'error'); return null; }
     return insertedRows || [];
+  };
+
+  // One create run → rows + every notification. Shared by Save in Create
+  // Allocation and by "Roster next week" on a template, so both send the same
+  // worker SMS/email, push alert, groups/positions and ONE admin summary.
+  // `shift` re-dates each occurrence (series / template); `template` switches
+  // the admin summary wording. Returns the rows, or null when an insert failed.
+  const createRun = async ({ payload, ids, occurrences, need, shift, seriesId, hasEnd, span, arrivalTime, gapEntries = [], template = null }) => {
+    const allRows = [];
+    for (const occ of occurrences) {
+      const p = { ...payload };
+      if (shift && occ) {
+        p.start_date = occ;
+        p.end_date = hasEnd ? addDays(occ, span) : null;
+        p.start_time = arrivalTime ? sydneyInstant(occ, arrivalTime) : null;
+      }
+      if (seriesId) p.series_id = seriesId;
+      const rows = await insertOccurrence(p, ids, need);
+      if (!rows) { if (allRows.length) load(); return null; }
+      allRows.push(...rows);
+    }
+    const isSeries = occurrences.length > 1;
+    const names = ids.map(id => workers.find(w => w.id === id)?.name || 'Worker');
+    const where = payload.client || payload.site || 'a job';
+    const needTxt = `${need} position${need === 1 ? '' : 's'}`;
+    // Each worker gets their own SMS + email per occurrence; the admin team
+    // gets ONE summary for a crew offer, a whole series or a template run.
+    const quietAdmin = isSeries || ids.length > 1 || !!template;
+    allRows.forEach(r => notifyOnCreate(r, r.worker_id, { adminQuiet: quietAdmin }));
+    // Free, instant phone alert on top of SMS/email (workers who turned on
+    // "Phone alerts"). Fire-and-forget: a push failure never blocks the offer.
+    supabase.functions.invoke('push-on-allocation', { body: { allocation_ids: allRows.map(r => r.id) } }).catch(() => {});
+    if (quietAdmin) {
+      const first = occurrences[0];
+      const last = occurrences[occurrences.length - 1];
+      const datesTxt = isSeries ? `${occurrences.length} dates (${first} → ${last})` : (template ? `on ${first}` : (payload.start_date ? `starts ${payload.start_date}` : ''));
+      const crewTxt = names.length === 1 ? names[0] : `${names.length} workers`;
+      const perDate = ids.length > 1 ? ` · ${needTxt} per date` : '';
+      let title; let body; let sms; let subject; let email;
+      if (template) {
+        title = `Rostered from template "${template.name}" — ${crewTxt} × ${occurrences.length} date${occurrences.length === 1 ? '' : 's'} — ${where}`;
+        body = `${payload.role ? `${payload.role} · ` : ''}${datesTxt}${perDate}.`;
+        sms = `Roster template "${template.name}" sent — ${names.join(', ')} → ${where}, ${datesTxt}${ids.length > 1 ? ` (${needTxt} per date)` : ''}.`;
+        subject = `Admin update — "${template.name}" rostered for ${where}`;
+        email = `FYI for the admin team (no action needed): the roster template "${template.name}" was used. ${names.join(', ')} ${names.length === 1 ? 'has' : 'have'} been allocated to ${where}${payload.role ? ` as ${payload.role}` : ''} ${datesTxt}${ids.length > 1 ? ` — ${needTxt} per date, first to accept get it` : ''}. Each date has been sent for acceptance by SMS and email.`;
+      } else if (isSeries) {
+        title = `Repeating allocation — ${crewTxt} × ${occurrences.length} dates — ${where}`;
+        body = `${payload.role ? `${payload.role} · ` : ''}${datesTxt}${perDate}.`;
+        sms = `CBD: repeating allocation — ${names.join(', ')} → ${where}, ${datesTxt}${ids.length > 1 ? ` (${needTxt} per date)` : ''}.`;
+        subject = `Admin update — repeating allocation for ${where}`;
+        email = `FYI for the admin team (no action needed): ${names.join(', ')} ${names.length === 1 ? 'has' : 'have'} been allocated to ${where}${payload.role ? ` as ${payload.role}` : ''} on ${datesTxt}${ids.length > 1 ? ` — ${needTxt} per date, first to accept get it` : ''}. Each date has been sent for acceptance by SMS and email.`;
+      } else {
+        title = `Offer sent to ${names.length} workers — ${where}`;
+        body = `${needTxt}${payload.role ? ` · ${payload.role}` : ''}${payload.start_date ? ` — starts ${payload.start_date}` : ''}. First to accept get it.`;
+        sms = `CBD: offer sent to ${names.length} workers for ${where}${payload.start_date ? ` on ${payload.start_date}` : ''} (${needTxt}). First to accept get it.`;
+        subject = `Admin update — ${names.length} workers offered ${where}`;
+        email = `FYI for the admin team (no action needed): ${names.join(', ')} were offered ${where}${payload.role ? ` as ${payload.role}` : ''}${payload.start_date ? ` starting ${payload.start_date}` : ''}. ${needTxt} — the first to accept get it; everyone after that sees "Position filled". Each worker has been notified by SMS and email.`;
+      }
+      addAdminNotification({ type: 'allocation_sent', title, body, allocation_id: allRows[0]?.id || null, worker_id: null })
+        .then(() => window.dispatchEvent(new CustomEvent('cbd:notify')));
+      broadcastAdminSms(sms);
+      sendAdminEmail(subject, email);
+    }
+    if (gapEntries.length) {
+      logActivity({
+        verb: 'allocated despite missing ticket', object_type: 'allocation', object_id: allRows[0]?.id || null,
+        client_id: payload.client_id, site_id: payload.site_id,
+        after: { role: payload.role, client: payload.client, site: payload.site, start_date: payload.start_date || occurrences[0] || null, workers: gapEntries, allocation_ids: allRows.map(r => r.id), ...(template ? { template: template.name } : {}) },
+      });
+    }
+    return allRows;
   };
 
   const handleSave = async () => {
@@ -315,58 +401,13 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
       // shifts start/end/arrival by the same delta so a 2-day job stays 2 days.
       const occurrences = occurrencePreview.length ? occurrencePreview : [form.start_date || null];
       const isSeries = occurrences.length > 1;
-      const seriesId = isSeries ? newSeriesId() : null;
       const span = form.start_date && form.end_date ? Math.max(0, dayDiff(form.start_date, form.end_date)) : 0;
-      const allRows = [];
-      for (const occ of occurrences) {
-        const p = { ...payload };
-        if (isSeries) {
-          p.start_date = occ;
-          p.end_date = form.end_date ? addDays(occ, span) : null;
-          p.start_time = form.arrival_time ? sydneyInstant(occ, form.arrival_time) : null;
-          p.series_id = seriesId;
-        }
-        const rows = await insertOccurrence(p, ids);
-        if (!rows) { setSaving(false); if (allRows.length) load(); return; }
-        allRows.push(...rows);
-      }
-      const names = ids.map(id => workers.find(w => w.id === id)?.name || 'Worker');
-      const where = payload.client || payload.site || 'a job';
-      const need = `${needCount} position${needCount === 1 ? '' : 's'}`;
-      // Each worker gets their own SMS + email per occurrence; the admin team
-      // gets ONE summary for a crew offer or a whole series.
-      const quietAdmin = isSeries || ids.length > 1;
-      allRows.forEach(r => notifyOnCreate(r, r.worker_id, { adminQuiet: quietAdmin }));
-      // Free, instant phone alert on top of SMS/email (workers who turned on
-      // "Phone alerts"). Fire-and-forget: a push failure never blocks the offer.
-      supabase.functions.invoke('push-on-allocation', { body: { allocation_ids: allRows.map(r => r.id) } }).catch(() => {});
-      if (quietAdmin) {
-        const datesTxt = isSeries ? `${occurrences.length} dates (${occurrences[0]} → ${occurrences[occurrences.length - 1]})` : (payload.start_date ? `starts ${payload.start_date}` : '');
-        const title = isSeries
-          ? `Repeating allocation — ${names.length === 1 ? names[0] : `${names.length} workers`} × ${occurrences.length} dates — ${where}`
-          : `Offer sent to ${names.length} workers — ${where}`;
-        const body = isSeries
-          ? `${payload.role ? `${payload.role} · ` : ''}${datesTxt}${ids.length > 1 ? ` · ${need} per date` : ''}.`
-          : `${need}${payload.role ? ` · ${payload.role}` : ''}${payload.start_date ? ` — starts ${payload.start_date}` : ''}. First to accept get it.`;
-        addAdminNotification({ type: 'allocation_sent', title, body, allocation_id: allRows[0]?.id || null, worker_id: null })
-          .then(() => window.dispatchEvent(new CustomEvent('cbd:notify')));
-        broadcastAdminSms(isSeries
-          ? `CBD: repeating allocation — ${names.join(', ')} → ${where}, ${datesTxt}${ids.length > 1 ? ` (${need} per date)` : ''}.`
-          : `CBD: offer sent to ${names.length} workers for ${where}${payload.start_date ? ` on ${payload.start_date}` : ''} (${need}). First to accept get it.`);
-        sendAdminEmail(
-          isSeries ? `Admin update — repeating allocation for ${where}` : `Admin update — ${names.length} workers offered ${where}`,
-          isSeries
-            ? `FYI for the admin team (no action needed): ${names.join(', ')} ${names.length === 1 ? 'has' : 'have'} been allocated to ${where}${payload.role ? ` as ${payload.role}` : ''} on ${datesTxt}${ids.length > 1 ? ` — ${need} per date, first to accept get it` : ''}. Each date has been sent for acceptance by SMS and email.`
-            : `FYI for the admin team (no action needed): ${names.join(', ')} were offered ${where}${payload.role ? ` as ${payload.role}` : ''}${payload.start_date ? ` starting ${payload.start_date}` : ''}. ${need} — the first to accept get it; everyone after that sees "Position filled". Each worker has been notified by SMS and email.`
-        );
-      }
-      if (gapEntries.length) {
-        logActivity({
-          verb: 'allocated despite missing ticket', object_type: 'allocation', object_id: allRows[0]?.id || null,
-          client_id: payload.client_id, site_id: payload.site_id,
-          after: { role: payload.role, client: payload.client, site: payload.site, start_date: payload.start_date, workers: gapEntries, allocation_ids: allRows.map(r => r.id) },
-        });
-      }
+      const allRows = await createRun({
+        payload, ids, occurrences, need: needCount, shift: isSeries,
+        seriesId: isSeries ? newSeriesId() : null, hasEnd: !!form.end_date, span,
+        arrivalTime: form.arrival_time, gapEntries,
+      });
+      if (!allRows) { setSaving(false); return; }
       showToast(isSeries
         ? `${allRows.length} allocations created — ${occurrences.length} dates${ids.length > 1 ? ` × ${ids.length} workers` : ''}.`
         : needCount < ids.length
@@ -575,6 +616,165 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
     load();
   };
 
+  // ── Roster templates ──────────────────────────────────────────────────────
+  // "📋 Use a template" in Create Allocation: fills the job, crew, days and
+  // supervisor. The start date stays for the office to pick; archived or
+  // no-longer-Active workers are left out with a small notice. The ticket and
+  // clash checks then run on the prefilled crew exactly as for a typed form.
+  const applyTemplate = (id) => {
+    setTplPick(id);
+    const t = templates.find(x => x.id === id);
+    if (!t) { setTplNotice(null); return; }
+    const { client, site, siteRow } = templateNames(t, clients, sites);
+    const { keep, dropped } = splitCrew(t.worker_ids, workers);
+    const days = cleanWeekdays(t.weekdays);
+    const dur = Math.max(1, t.duration_days || 1);
+    setForm(f => ({
+      ...allocDefaults,
+      start_date: f.start_date,
+      end_date: f.start_date && dur > 1 ? addDays(f.start_date, dur - 1) : '',
+      role: t.role || '', client, site, project: t.project || '',
+      address: siteRow?.address || '',
+      site_supervisor: t.site_manager || '', manager_phone: t.manager_phone || '',
+      arrival_time: t.arrival_time || '', notes: t.notes || '',
+      map_link: t.map_url || siteRow?.map_link || '',
+    }));
+    setSelectedWorkerIds(keep);
+    setPositions(t.positions && t.positions < keep.length ? String(t.positions) : '');
+    setWorkerSearch('');
+    // Several days → a one-week repeat on those days; one day → a single allocation.
+    setRepeat(days.length > 1 ? { mode: 'weekly', weeks: 1, weekdays: days } : repeatDefaults);
+    setTplNotice({ name: t.name, text: droppedNotice(dropped) });
+  };
+
+  // "💾 Save as template" in Create Allocation.
+  const saveAsTemplate = async () => {
+    const name = (tplSaveName || '').trim();
+    if (!name) { showToast('Give the template a name.', 'error'); return; }
+    if (!selectedWorkerIds.length) { showToast('Tick at least one worker first.', 'error'); return; }
+    const days = formWeekdays({ ...repeat, weekdays: effectiveWeekdays }, form.start_date);
+    if (!days.length) { showToast('Pick a start date (or Repeat days) so the template knows which days to roster.', 'error'); return; }
+    if (templates.some(t => (t.name || '').trim().toLowerCase() === name.toLowerCase())
+      && !window.confirm(`A template called "${name}" already exists. Save another one with the same name?`)) return;
+    const row = templateRowFromForm({
+      name, form, workerIds: selectedWorkerIds, positions: positions === '' ? '' : needCount,
+      weekdays: days, clients, sites, actorName: meName,
+    });
+    const { data, error } = await supabase.from('roster_templates').insert([row]).select().single();
+    if (error) { showToast(error.code === '42501' ? 'Only office users can save roster templates.' : error.message, 'error'); return; }
+    logActivity({
+      verb: 'saved roster template', object_type: 'roster_template', object_id: data.id,
+      client_id: row.client_id, site_id: row.site_id,
+      after: { name, client: row.client_name_snapshot, site: row.site_name_snapshot, role: row.role, workers: row.worker_ids.map(workerName), weekdays: weekdaysLabel(row.weekdays), arrival_time: row.arrival_time },
+    });
+    setTemplates(prev => [...prev, data].sort((a, b) => (a.name || '').localeCompare(b.name || '')));
+    setTplSaveName(null);
+    showToast(`Template "${name}" saved — find it under 📋 Roster templates.`, 'success');
+  };
+
+  // "Roster next week" — one tap: the template's weekdays in next Monday's
+  // week, through the same createRun path as Create Allocation.
+  const rosterNextWeek = async (t) => {
+    const weekStart = nextWeekStart(today);
+    const dates = templateDates(t, weekStart);
+    if (!dates.length) { showToast('This template has no days set — tap Edit and pick the days first.', 'error'); return; }
+    const { keep, dropped } = splitCrew(t.worker_ids, workers);
+    if (!keep.length) { showToast(`Nobody left to roster on "${t.name}". ${droppedNotice(dropped)}`, 'error'); return; }
+    const dur = Math.max(1, t.duration_days || 1);
+    const job = templateJob(t, clients, sites);
+    const need = positionsFor(t, keep.length);
+    const names = keep.map(workerName);
+    const clashes = [];
+    keep.forEach(wid => dates.forEach(d => findConflicts(allocations, wid, d, endDateFor(d, dur), null).forEach(c => clashes.push(
+      `• ${workerName(wid)}: ${c.client || c.site || 'Allocated'} (${c.start_date}${c.end_date && c.end_date !== c.start_date ? ` → ${c.end_date}` : ''}, ${c.status})`))));
+    const lines = [
+      `Roster "${t.name}" for the week of ${fmtDate(weekStart)}?`,
+      '',
+      `${job.client || 'No client'}${job.site ? ` — ${job.site}` : ''}${job.role ? ` · ${job.role}` : ''}`,
+      `Days: ${dates.map(d => `${WEEKDAY_NAMES[weekdayIndex(d)]} ${fmtDate(d)}`).join(', ')}${t.arrival_time ? ` · arrive ${t.arrival_time}` : ''}`,
+      `Crew: ${names.join(', ')}${need < keep.length ? ` — ${need} position${need === 1 ? '' : 's'} per day, first to accept` : ''}`,
+      '',
+      `${dates.length * keep.length} allocation${dates.length * keep.length === 1 ? '' : 's'}. Each worker gets an SMS + email per day.`,
+    ];
+    if (dropped.length) lines.push('', droppedNotice(dropped));
+    if (clashes.length) {
+      lines.push('', '⚠ Already allocated:', ...clashes.slice(0, 6));
+      if (clashes.length > 6) lines.push(`…and ${clashes.length - 6} more.`);
+    }
+    if (!window.confirm(lines.join('\n'))) return;
+    // Ticket check — same rule and same explicit "Allocate anyway" as Create.
+    const required = requiredTicketsFor(reqTickets, t.role);
+    const gapEntries = required.length
+      ? keep.map(wid => ({ wid, g: ticketGaps(certs[wid] || [], required, today) }))
+          .filter(x => x.g.length).map(x => ({ worker: workerName(x.wid), gaps: x.g.map(gapLabel) }))
+      : [];
+    if (gapEntries.length && !window.confirm(
+      `⚠ Ticket check for "${t.role}":\n\n${gapEntries.map(e => `• ${e.worker}: ${e.gaps.join(', ')}`).join('\n')}\n\nAllocate anyway? (this is logged)`)) return;
+    setRostering(t.id);
+    const seriesId = newSeriesId();
+    const rows = await createRun({
+      payload: job, ids: keep, occurrences: dates, need, shift: true, seriesId,
+      hasEnd: dur > 1, span: dur - 1, arrivalTime: t.arrival_time || '', gapEntries, template: t,
+    });
+    setRostering(null);
+    if (!rows) return;
+    logActivity({
+      verb: 'rostered from template', object_type: 'roster_template', object_id: t.id,
+      client_id: job.client_id, site_id: job.site_id,
+      after: { template: t.name, count: rows.length, week_start: weekStart, dates, workers: names, left_out: dropped.map(d => d.name || d.id), series_id: seriesId, client: job.client, site: job.site, role: job.role },
+    });
+    showToast(`${rows.length} allocation${rows.length === 1 ? '' : 's'} created from "${t.name}" — week of ${fmtDate(weekStart)}.${dropped.length ? ` ${droppedNotice(dropped)}` : ''}`, 'success');
+    load();
+  };
+
+  const openTplEdit = (t) => {
+    const known = (t.worker_ids || []).filter(id => workers.some(w => w.id === id));
+    setTplEdit({
+      id: t.id, name: t.name || '', weekdays: cleanWeekdays(t.weekdays), worker_ids: known,
+      arrival_time: t.arrival_time || '', positions: t.positions ? String(t.positions) : '',
+      removed: (t.worker_ids || []).length - known.length, search: '',
+    });
+  };
+
+  const saveTplEdit = async () => {
+    const e = tplEdit;
+    const t = templates.find(x => x.id === e.id);
+    if (!e.name.trim()) { showToast('The template needs a name.', 'error'); return; }
+    if (!e.worker_ids.length) { showToast('Tick at least one worker.', 'error'); return; }
+    if (!e.weekdays.length) { showToast('Pick at least one day.', 'error'); return; }
+    const p = parseInt(e.positions, 10);
+    const patch = {
+      name: e.name.trim(),
+      weekdays: cleanWeekdays(e.weekdays),
+      worker_ids: [...new Set(e.worker_ids)],
+      arrival_time: /^\d{2}:\d{2}$/.test(e.arrival_time || '') ? e.arrival_time : null,
+      positions: Number.isFinite(p) && p >= 1 && p < e.worker_ids.length ? p : null,
+    };
+    const { data, error } = await supabase.from('roster_templates').update(patch).eq('id', e.id).select().single();
+    if (error) { showToast(error.message, 'error'); return; }
+    logActivity({
+      verb: 'updated roster template', object_type: 'roster_template', object_id: e.id,
+      client_id: t?.client_id || null, site_id: t?.site_id || null,
+      before: t ? { name: t.name, weekdays: weekdaysLabel(t.weekdays), workers: (t.worker_ids || []).map(workerName), arrival_time: t.arrival_time, positions: t.positions } : null,
+      after: { name: patch.name, weekdays: weekdaysLabel(patch.weekdays), workers: patch.worker_ids.map(workerName), arrival_time: patch.arrival_time, positions: patch.positions },
+    });
+    setTemplates(prev => prev.map(x => (x.id === e.id ? data : x)).sort((a, b) => (a.name || '').localeCompare(b.name || '')));
+    setTplEdit(null);
+    showToast(`Template "${patch.name}" updated.`, 'success');
+  };
+
+  const archiveTemplate = async (t) => {
+    if (!window.confirm(`Archive the template "${t.name}"?\n\nIt disappears from this list. Allocations already made from it are not touched.`)) return;
+    const { error } = await supabase.from('roster_templates').update({ archived_at: new Date().toISOString() }).eq('id', t.id);
+    if (error) { showToast(error.message, 'error'); return; }
+    logActivity({
+      verb: 'archived roster template', object_type: 'roster_template', object_id: t.id,
+      client_id: t.client_id || null, site_id: t.site_id || null, before: { name: t.name },
+    });
+    setTemplates(prev => prev.filter(x => x.id !== t.id));
+    showToast(`Template "${t.name}" archived.`, 'info');
+  };
+
   // ── Required tickets editor (admin write, office read) ────────────────────
   const editorRoles = useMemo(() => {
     const extra = [...new Set(reqTickets.map(r => r.role_name).filter(n => n && n !== '*' && !ALL_ROLE_NAMES.includes(n)))].sort();
@@ -599,6 +799,8 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
   };
 
   const filtered = allocations.filter(a => !filterStatus || a.status === filterStatus);
+  // Phone screens: full-width buttons with room above the floating help bubble.
+  const narrow = typeof window !== 'undefined' && window.innerWidth < 640;
 
   // "2 / 3 filled · 8 offered" per multi-worker group.
   const groupStats = useMemo(() => {
@@ -681,6 +883,9 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
         </select>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button onClick={() => setTicketEditor({ role: '*', newTicket: '' })} style={btnSecondary} title="Which tickets each role needs">🪪 Required tickets</button>
+          <button onClick={() => setShowTemplates(true)} style={btnSecondary} title="Saved crews you can roster again in one tap">
+            📋 Roster templates{templates.length ? ` (${templates.length})` : ''}
+          </button>
           <button onClick={openAdd} style={btnPrimary}>+ Create Allocation</button>
         </div>
       </div>
@@ -719,7 +924,7 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
                       {groupStats[a.group_id].confirmed} / {groupStats[a.group_id].positions} filled · {groupStats[a.group_id].total} offered
                     </div>
                   )}
-                  {a.series_id && seriesStats[a.id] && (
+                  {a.series_id && seriesStats[a.id] && seriesStats[a.id].n > 1 && (
                     <div style={{ fontSize: 11, color: C.textMuted, marginTop: 3, whiteSpace: 'nowrap' }} title="Part of a repeating allocation">
                       🔁 repeats · {seriesStats[a.id].i} of {seriesStats[a.id].n}
                     </div>
@@ -745,6 +950,25 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
 
       {modal && (
         <Modal title={modal === 'add' ? 'Create Allocation' : 'Edit Allocation'} onClose={closeModal} width={560}>
+          {modal === 'add' && templates.length > 0 && (
+            <div data-area="use a template" style={{ marginBottom: 14 }}>
+              <Field label="📋 Use a template" hint="Fills the job, crew, days and supervisor. You still pick the start date.">
+                <select style={inputStyle} value={tplPick} onChange={e => applyTemplate(e.target.value)}>
+                  <option value="">Choose a saved roster…</option>
+                  {templates.map(t => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}{(() => { const n = templateNames(t, clients, sites); return n.client ? ` — ${n.client}${n.site ? ` · ${n.site}` : ''}` : ''; })()}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {tplNotice && (
+                <div style={{ fontSize: 12, color: tplNotice.text ? '#fde68a' : C.textMuted, marginTop: -6 }}>
+                  Using “{tplNotice.name}”.{tplNotice.text ? ` ⚠ ${tplNotice.text}` : ''}
+                </div>
+              )}
+            </div>
+          )}
           {conflictGroups.length > 0 && (() => {
             const flat = conflictGroups.flatMap(gr => gr.conflicts.map(c => ({ gr, c })));
             return (
@@ -973,9 +1197,9 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
                       {repeat.mode === 'weekly' && (
                         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: C.textMuted }}>
                           for
-                          <input type="number" min={2} max={12} step={1} style={{ ...inputStyle, width: 70 }} value={repeat.weeks}
-                            onChange={e => setRepeat(r => ({ ...r, weeks: Math.min(12, Math.max(2, parseInt(e.target.value, 10) || 2)) }))} />
-                          weeks
+                          <input type="number" min={1} max={12} step={1} style={{ ...inputStyle, width: 70 }} value={repeat.weeks}
+                            onChange={e => setRepeat(r => ({ ...r, weeks: Math.min(12, Math.max(1, parseInt(e.target.value, 10) || 1)) }))} />
+                          {repeat.weeks === 1 ? 'week' : 'weeks'}
                         </label>
                       )}
                     </div>
@@ -1020,7 +1244,26 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
               <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></Field>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+          {modal === 'add' && tplSaveName !== null && (
+            <div data-area="save as template" style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: R.md, padding: 10, marginTop: 4, marginBottom: 8 }}>
+              <Field label="Template name *" hint={`Saves the client, site, role, ${selectedWorkerIds.length} ticked worker${selectedWorkerIds.length === 1 ? '' : 's'}, days (${weekdaysLabel(formWeekdays({ ...repeat, weekdays: effectiveWeekdays }, form.start_date))}), arrival time, notes and supervisor. Dates are not saved.`}>
+                <input style={inputStyle} value={tplSaveName} autoFocus placeholder="e.g. Jordan Springs day crew"
+                  onChange={e => setTplSaveName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveAsTemplate(); }} />
+              </Field>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button type="button" onClick={saveAsTemplate} style={{ ...btnPrimary, flex: '1 1 160px', minHeight: 38 }}>💾 Save template</button>
+                <button type="button" onClick={() => setTplSaveName(null)} style={{ ...btnSecondary, flex: '0 1 auto', minHeight: 38 }}>Cancel</button>
+              </div>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8, flexWrap: 'wrap' }}>
+            {modal === 'add' && tplSaveName === null && (
+              <button type="button" onClick={() => setTplSaveName('')} style={{ ...btnSecondary, marginRight: 'auto' }}
+                title="Save this crew and job so you can roster it again in one tap">
+                💾 Save as template
+              </button>
+            )}
             <button onClick={closeModal} style={btnSecondary}>Cancel</button>
             <button onClick={handleSave} disabled={saving} style={btnPrimary}>
               {saving ? 'Saving…' : occurrencePreview.length > 1 ? `Save ${occurrencePreview.length} dates` : 'Save'}
@@ -1097,6 +1340,117 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
             )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
               <button onClick={() => setTicketEditor(null)} style={btnSecondary}>Close</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {showTemplates && !tplEdit && (
+        <Modal title="📋 Roster templates" onClose={() => setShowTemplates(false)} width={560} dismissible>
+          <div data-area="roster templates" style={{ paddingBottom: narrow ? 84 : 0 }}>
+            <div style={{ fontSize: 12.5, color: C.textMuted, marginBottom: 12, lineHeight: 1.5 }}>
+              Saved crews. <strong style={{ color: C.text }}>Roster next week</strong> creates the allocations for
+              the week of {fmtDate(nextWeekStart(today))} on the template's days — every worker gets the usual SMS + email to accept.
+              Save a new one from Create Allocation with “💾 Save as template”.
+            </div>
+            {templates.length === 0 && (
+              <div style={{ fontSize: 13, color: C.textDim, padding: '12px 0' }}>
+                No templates yet. Open + Create Allocation, fill in the crew and job, then tap “💾 Save as template”.
+              </div>
+            )}
+            <div style={{ display: 'grid', gap: 10 }}>
+              {templates.map(t => {
+                const n = templateNames(t, clients, sites);
+                const { keep, dropped } = splitCrew(t.worker_ids, workers);
+                const need = positionsFor(t, keep.length);
+                return (
+                  <div key={t.id} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: R.md, padding: 12, display: 'grid', gap: 6 }}>
+                    <div style={{ fontWeight: 700, color: C.text, fontSize: 14.5 }}>{t.name}</div>
+                    <div style={{ fontSize: 12.5, color: C.textMuted }}>
+                      {n.client || 'No client'}{n.site ? ` — ${n.site}` : ''}{t.project ? ` · ${t.project}` : ''}
+                    </div>
+                    {t.role && <div><span style={roleChipStyle(t.role)}>{t.role}</span></div>}
+                    <div style={{ fontSize: 12.5, color: C.text }}>
+                      👷 {keep.length ? keep.map(workerName).join(', ') : <span style={{ color: C.textDim }}>nobody active</span>}
+                      {keep.length > 1 && need < keep.length && <span style={{ color: C.textMuted }}> · {need} needed, first to accept</span>}
+                    </div>
+                    {dropped.length > 0 && <div style={{ fontSize: 12, color: '#fde68a' }}>⚠ {droppedNotice(dropped)}</div>}
+                    <div style={{ fontSize: 12.5, color: C.textMuted }}>
+                      📅 {weekdaysLabel(t.weekdays)}{t.arrival_time ? ` · arrive ${t.arrival_time}` : ''}{(t.duration_days || 1) > 1 ? ` · ${t.duration_days}-day job` : ''}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                      <button onClick={() => rosterNextWeek(t)} disabled={rostering === t.id || !keep.length || !cleanWeekdays(t.weekdays).length}
+                        style={{ ...btnPrimary, flex: '1 1 100%', minHeight: 40 }}>
+                        {rostering === t.id ? 'Rostering…' : 'Roster next week'}
+                      </button>
+                      <button onClick={() => openTplEdit(t)} style={{ ...btnSecondary, flex: '1 1 120px', minHeight: 38 }}>Edit</button>
+                      <button onClick={() => archiveTemplate(t)} style={{ ...btnSecondary, flex: '1 1 120px', minHeight: 38, color: '#fca5a5', borderColor: 'rgba(239,68,68,0.32)' }}>Archive</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: 'flex', marginTop: 12 }}>
+              <button onClick={() => setShowTemplates(false)} style={{ ...btnSecondary, flex: narrow ? '1 1 100%' : '0 0 auto', marginLeft: narrow ? 0 : 'auto' }}>Close</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {tplEdit && (
+        <Modal title="Edit roster template" onClose={() => setTplEdit(null)} width={520}>
+          <div data-area="edit roster template" style={{ paddingBottom: narrow ? 84 : 0 }}>
+            <Field label="Name *">
+              <input style={inputStyle} value={tplEdit.name} onChange={e => setTplEdit(x => ({ ...x, name: e.target.value }))} />
+            </Field>
+            <Field label="Days *">
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {WEEKDAY_NAMES.map((d, i) => {
+                  const on = tplEdit.weekdays.includes(i);
+                  return (
+                    <button type="button" key={d}
+                      onClick={() => setTplEdit(x => ({ ...x, weekdays: on ? x.weekdays.filter(y => y !== i) : cleanWeekdays([...x.weekdays, i]) }))}
+                      style={{ ...btnSmall, minHeight: 36, minWidth: 44, fontWeight: 700,
+                        background: on ? C.accentSoft : 'transparent', color: on ? C.accent : C.textMuted,
+                        borderColor: on ? C.accentBorder : C.border }}>
+                      {d}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+            <Field label={`Crew * (${tplEdit.worker_ids.length} ticked)`}
+              hint={tplEdit.removed ? `${tplEdit.removed} archived worker${tplEdit.removed === 1 ? '' : 's'} will be taken off this template when you save.` : 'Only Active workers are rostered; others are left out with a notice.'}>
+              <>
+                <input style={{ ...inputStyle, marginBottom: 6 }} value={tplEdit.search} placeholder="Search workers…"
+                  onChange={e => setTplEdit(x => ({ ...x, search: e.target.value }))} />
+                <div style={{ maxHeight: 200, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8, padding: '4px 10px', background: C.bg }}>
+                  {workers.filter(w => (w.name || '').toLowerCase().includes(tplEdit.search.trim().toLowerCase())).map(w => (
+                    <label key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', color: C.text, fontSize: 13, cursor: 'pointer', flexWrap: 'wrap' }}>
+                      <input type="checkbox" checked={tplEdit.worker_ids.includes(w.id)}
+                        onChange={() => setTplEdit(x => ({ ...x, worker_ids: x.worker_ids.includes(w.id) ? x.worker_ids.filter(y => y !== w.id) : [...x.worker_ids, w.id] }))} />
+                      {w.name}
+                      {(w.app_status || '') !== 'Active' && <span style={warnChip}>{w.app_status || 'not active'}</span>}
+                    </label>
+                  ))}
+                </div>
+              </>
+            </Field>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0 16px' }}>
+              <Field label="Arrival time">
+                <ClockField value={tplEdit.arrival_time} onChange={v => setTplEdit(x => ({ ...x, arrival_time: v }))} />
+              </Field>
+              {tplEdit.worker_ids.length > 1 && (
+                <Field label="How many do you need?" hint="Lower than the crew = first to accept win the spots.">
+                  <input type="number" min={1} max={tplEdit.worker_ids.length} step={1} style={inputStyle}
+                    value={tplEdit.positions === '' ? tplEdit.worker_ids.length : tplEdit.positions}
+                    onChange={e => setTplEdit(x => ({ ...x, positions: e.target.value }))} />
+                </Field>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+              <button onClick={saveTplEdit} style={{ ...btnPrimary, flex: '1 1 160px', minHeight: 40 }}>Save changes</button>
+              <button onClick={() => setTplEdit(null)} style={{ ...btnSecondary, flex: '1 1 120px', minHeight: 40 }}>Cancel</button>
             </div>
           </div>
         </Modal>
