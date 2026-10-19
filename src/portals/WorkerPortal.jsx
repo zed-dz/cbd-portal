@@ -26,6 +26,11 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
       portal: 'worker app',
       device: isMobile ? 'phone' : 'desktop',
       menu: 'tabs along the top, under the header',
+      // Every tab, in order: on a phone only the first few fit, the rest are
+      // reached by swiping the tab row sideways — the assistant must say so.
+      tabs: ['📋 My Allocations', '🕐 My Timesheets', '✋ Take 5', '👤 My Profile', '🪪 Certificates / Tickets', '🗂 History', '⏱ Clock In/Out', '🏖 Time off', '⚠️ Report incident', '📄 Documents'],
+      tabs_hint: isMobile ? 'only the first tabs fit on the screen; swipe the tab row left to reach Clock In/Out, Time off, Report incident and Documents' : 'all tabs are visible in one row',
+      phone_alerts: '👤 My Profile → "🔔 Phone alerts" → Turn on',
       sign_out: '"Sign Out" button in the header at the top-right, next to your name',
     };
     return () => { window.__portalLayout = prev; };
