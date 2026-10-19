@@ -208,15 +208,17 @@ export function DocumentsPage({ showToast, currentWorker }) {
 // signature, IP + device, and "Print signed copy" for any one signature.
 function DocSignaturesModal({ doc, st, sigs, showToast, onClose }) {
   const [pngs, setPngs] = useState({});   // signature id -> data URL
+  const [snaps, setSnaps] = useState({});  // signature id -> { text, sha } (wording stored at signing)
   const [loadingPngs, setLoadingPngs] = useState(true);
 
   useEffect(() => {
     let on = true;
-    supabase.from('document_signatures').select('id, signature_png').eq('document_id', doc.id).eq('version', doc.version)
+    supabase.from('document_signatures').select('id, signature_png, content_snapshot, content_sha256').eq('document_id', doc.id).eq('version', doc.version)
       .then(({ data, error }) => {
         if (!on) return;
         if (error) showToast(error.message, 'error');
         setPngs(Object.fromEntries((data || []).map(r => [r.id, r.signature_png])));
+        setSnaps(Object.fromEntries((data || []).map(r => [r.id, { text: r.content_snapshot || '', sha: r.content_sha256 || '' }])));
         setLoadingPngs(false);
       });
     return () => { on = false; };
@@ -230,6 +232,7 @@ function DocSignaturesModal({ doc, st, sigs, showToast, onClose }) {
       text: doc.body || '', currentVersion: doc.version, signedVersion: s.version,
       workerName: w.name, signedName: s.signed_name, signedAt: fmtDateTime(s.signed_at),
       ip: s.ip, userAgent: s.user_agent, signaturePng: pngs[s.id], printedAt: new Date().toLocaleString('en-AU', { timeZone: 'Australia/Sydney' }),
+      snapshot: snaps[s.id]?.text || '', snapshotSha256: snaps[s.id]?.sha || '',
     }), 'width=900,height=1000');
   };
 

@@ -5,9 +5,12 @@
 //   POST { client_id }         → only that client's invoices
 //   200  { ok, checked, changed, errors: string[], overdue_notified, xero_connected, scope_ok, message? }
 //
-// Which rows: client_invoices with a xero_invoice_id whose status is still open
-// (anything but PAID / VOIDED / DELETED), or never synced, or last synced more
-// than 24 h ago (a paid invoice can still be voided later).
+// Which rows: client_invoices with a xero_invoice_id that are still open
+// (status anything but PAID / VOIDED / DELETED) or have never been synced. A row
+// that Xero has reported in a final state (PAID / VOIDED / DELETED) is never
+// asked about again. Order: never-synced first, then the longest-unchecked, at
+// most MAX_ROWS (500) per run — so a new invoice is never starved by old ones
+// and the rest rotate through on the next runs.
 // Xero: GET /api.xro/2.0/Invoices?IDs=a,b,c in batches of 50.
 // Per row: xero_status, amount_due / amount_paid / total (inc GST), due_date,
 // fully_paid_on, xero_synced_at, sync_error. A status change writes ONE
@@ -24,11 +27,16 @@
 // GATE (verify_jwt = false):
 //   • cron: header x-digest-secret == DIGEST_SECRET (fails closed if unset)
 //   • service-role bearer (other functions)
-//   • a signed-in user with access_level admin or accounts (MONEY)
-//   Anything else → 401 (no / bad credentials) or 403 (signed in, not money).
+//   • a signed-in user with access_level admin (same rule as the RLS on
+//     client_invoices: is_portal_admin())
+//   Anything else → 401 (no / bad credentials) or 403 (signed in, not admin).
+//
+// Token refresh: xeroToken.ts (shared with xero-invoice / xero-data /
+// xero-push; a lease on the xero_tokens row so two refreshes never collide).
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { getXeroAccessToken } from './xeroToken.ts';
 
 const XERO_CLIENT_ID       = Deno.env.get('XERO_CLIENT_ID') || '';
 const XERO_CLIENT_SECRET   = Deno.env.get('XERO_CLIENT_SECRET') || '';
@@ -39,6 +47,7 @@ const DIGEST_SECRET        = Deno.env.get('DIGEST_SECRET') || '';
 
 const ACCOUNTING = 'https://api.xero.com/api.xro/2.0';
 const BATCH = 50;
+const MAX_ROWS = 500;   // 10 Xero calls per run, well inside Xero's 60 calls / minute
 const CLOSED = ['PAID', 'VOIDED', 'DELETED'];
 
 const ALLOWED_ORIGINS = [
@@ -106,8 +115,7 @@ async function gateCaller(req: Request): Promise<Gate> {
   if (error || !user?.email) return { ok: false, status: 401, error: 'Unauthorized' };
   const { data: w } = await createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY).from('workers')
     .select('id, name, access_level').eq('email', user.email.toLowerCase()).is('archived_at', null).maybeSingle();
-  const money = !!w && ['admin', 'accounts'].includes(w.access_level || '');
-  if (!money) return { ok: false, status: 403, error: 'Admin or accounts only' };
+  if (!w || w.access_level !== 'admin') return { ok: false, status: 403, error: 'Admin only' };
   return { ok: true, via: 'user', worker: { id: w.id, name: w.name }, email: user.email };
 }
 
@@ -126,15 +134,15 @@ serve(async (req) => {
     const clientId = typeof body?.client_id === 'string' && /^[0-9a-f-]{36}$/i.test(body.client_id) ? body.client_id : null;
     const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
     const today = sydneyToday();
-    const staleIso = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
 
     // ── Which rows need a look ──────────────────────────────────────────────
     let q = sb.from('client_invoices')
       .select('id, client, client_id, xero_invoice_id, xero_invoice_number, xero_status, due_date, overdue_notified_on, xero_synced_at')
       .not('xero_invoice_id', 'is', null)
-      .or(`xero_status.is.null,xero_status.not.in.(${CLOSED.join(',')}),xero_synced_at.is.null,xero_synced_at.lt.${staleIso}`)
-      .order('created_at', { ascending: true })
-      .limit(2000);
+      .or(`xero_status.is.null,xero_status.not.in.(${CLOSED.join(',')}),xero_synced_at.is.null`)
+      .order('xero_synced_at', { ascending: true, nullsFirst: true })
+      .order('created_at', { ascending: false })
+      .limit(MAX_ROWS);
     if (clientId) q = q.eq('client_id', clientId);
     const { data: rows, error: rErr } = await q;
     if (rErr) { console.error('load failed:', rErr.message); return json({ ok: false, checked: 0, changed: 0, errors: ['Could not read the invoice list.'] }); }
@@ -257,23 +265,7 @@ serve(async (req) => {
   }
 });
 
-// ── Token helper (same refresh as xero-data / xero-invoice) ─────────────────
+// ── Token helper: the shared, lock-safe refresh (xeroToken.ts) ────────────
 async function getAccessToken(sb: ReturnType<typeof createClient>): Promise<string | null> {
-  const { data } = await sb.from('xero_tokens').select('*').eq('id', 1).maybeSingle();
-  if (!data) return null;
-  if (new Date(data.expires_at).getTime() - Date.now() < 5 * 60 * 1000) {
-    const res = await fetch('https://identity.xero.com/connect/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': `Basic ${btoa(`${XERO_CLIENT_ID}:${XERO_CLIENT_SECRET}`)}` },
-      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: data.refresh_token }),
-    });
-    if (!res.ok) return null;
-    const tokens = await res.json();
-    await sb.from('xero_tokens').update({
-      access_token: tokens.access_token, refresh_token: tokens.refresh_token,
-      expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(), updated_at: new Date().toISOString(),
-    }).eq('id', 1);
-    return tokens.access_token;
-  }
-  return data.access_token;
+  return getXeroAccessToken(sb, XERO_CLIENT_ID, XERO_CLIENT_SECRET);
 }

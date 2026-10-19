@@ -6,11 +6,14 @@ import { C, R, btnSmall } from '../../theme';
 // signature when editing a submitted timesheet. `exportMaxWidth` (optional)
 // scales the exported PNG down to that many pixels wide, so a 3x phone screen
 // does not store a 1000+ px image (inductions / documents use 600).
+// Blank pads are never emitted (2026-10-20 audit): a tap with no movement, or a
+// stroke that never drew a segment, sends '' instead of an empty white PNG.
 export function SignaturePad({ value, onChange, height = 160, exportMaxWidth = 0, ariaLabel }) {
   const canvasRef = useRef(null);
   const drawing = useRef(false);
   const last = useRef({ x: 0, y: 0 });
   const [hasInk, setHasInk] = useState(!!value);
+  const inkRef = useRef(!!value);   // sync copy of hasInk for the pointer handlers
 
   // Prepare the canvas backing store at device resolution and (re)draw any
   // existing signature passed in via `value`.
@@ -35,6 +38,7 @@ export function SignaturePad({ value, onChange, height = 160, exportMaxWidth = 0
       const img = new Image();
       img.onload = () => ctx.drawImage(img, 0, 0, rect.width, rect.height);
       img.src = value;
+      inkRef.current = true;
       setHasInk(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -64,7 +68,7 @@ export function SignaturePad({ value, onChange, height = 160, exportMaxWidth = 0
     ctx.lineTo(p.x, p.y);
     ctx.stroke();
     last.current = p;
-    setHasInk(true);
+    if (!inkRef.current) { inkRef.current = true; setHasInk(true); }
   };
   const exportPng = () => {
     const canvas = canvasRef.current;
@@ -81,7 +85,7 @@ export function SignaturePad({ value, onChange, height = 160, exportMaxWidth = 0
   const end = () => {
     if (!drawing.current) return;
     drawing.current = false;
-    onChange?.(exportPng());
+    onChange?.(inkRef.current ? exportPng() : '');
   };
 
   const clear = () => {
@@ -89,6 +93,7 @@ export function SignaturePad({ value, onChange, height = 160, exportMaxWidth = 0
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, canvas.offsetWidth, canvas.offsetHeight);
+    inkRef.current = false;
     setHasInk(false);
     onChange?.('');
   };

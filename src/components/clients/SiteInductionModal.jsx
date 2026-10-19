@@ -33,7 +33,7 @@ export function SiteInductionModal({ site, client, onClose, showToast, currentWo
     setF({ title: live?.title || `${site.name} — site induction`, content: live?.content || '', required: live ? live.required !== false : true, bump: false });
     if (live) {
       const [{ data: s }, { data: w }] = await Promise.all([
-        supabase.from('site_induction_signatures').select('id, worker_id, signed_name, signed_at, version, ip, user_agent, signature_png').eq('induction_id', live.id).order('signed_at', { ascending: false }),
+        supabase.from('site_induction_signatures').select('id, worker_id, signed_name, signed_at, version, ip, user_agent, signature_png, content_snapshot, content_sha256').eq('induction_id', live.id).order('signed_at', { ascending: false }),
         supabase.from('workers').select('id, name'),
       ]);
       setSigs(s || []); setWorkers(Object.fromEntries((w || []).map(x => [x.id, x.name])));
@@ -69,6 +69,7 @@ export function SiteInductionModal({ site, client, onClose, showToast, currentWo
       text: ind?.content || '', currentVersion: ind?.version ?? null, signedVersion: s.version,
       workerName: workers[s.worker_id] || '', signedName: s.signed_name, signedAt: fmtDateTime(s.signed_at),
       ip: s.ip, userAgent: s.user_agent, signaturePng: s.signature_png, printedAt: new Date().toLocaleString('en-AU', { timeZone: 'Australia/Sydney' }),
+      snapshot: s.content_snapshot || '', snapshotSha256: s.content_sha256 || '',
     }), 'width=900,height=1000');
   };
 

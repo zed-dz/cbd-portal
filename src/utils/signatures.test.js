@@ -1,6 +1,8 @@
-import { signatureProblem, shortDevice, buildSignedCopyHtml, SIGNATURE_MAX_BYTES } from './signatures';
+import { signatureProblem, shortDevice, buildSignedCopyHtml, SIGNATURE_MAX_BYTES, SIGNATURE_MIN_CHARS } from './signatures';
 
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+// A drawing long enough to be a real mark (the floor is SIGNATURE_MIN_CHARS).
+const DRAWN = PNG + 'A'.repeat(1200);
 
 describe('signatureProblem', () => {
   test('empty signature is refused', () => {
@@ -15,8 +17,15 @@ describe('signatureProblem', () => {
     expect(signatureProblem(atCap)).toBeNull();
     expect(signatureProblem(atCap + 'A')).toMatch(/too large/);
   });
-  test('a normal PNG passes', () => {
-    expect(signatureProblem(PNG)).toBeNull();
+  test('a normal drawing passes', () => {
+    expect(signatureProblem(DRAWN)).toBeNull();
+  });
+  test('a blank / tiny PNG is refused (same floor as the server)', () => {
+    expect(SIGNATURE_MIN_CHARS).toBe(1100);
+    expect(signatureProblem(PNG)).toMatch(/too small/);
+    const justUnder = PNG + 'A'.repeat(SIGNATURE_MIN_CHARS - PNG.length - 1);
+    expect(signatureProblem(justUnder)).toMatch(/too small/);
+    expect(signatureProblem(justUnder + 'A')).toBeNull();
   });
 });
 
@@ -68,6 +77,23 @@ describe('buildSignedCopyHtml', () => {
   test('an older version gets the note', () => {
     expect(buildSignedCopyHtml({ ...base, signedVersion: 1 })).toContain('signed version 1');
     expect(buildSignedCopyHtml(base)).not.toContain('earlier wording');
+  });
+  test('prints the stored wording + fingerprint when the row has a snapshot', () => {
+    const snap = 'Appin — site induction\nVersion 1\n\n1. PPE <old wording>';
+    const sha = 'a'.repeat(64);
+    const html = buildSignedCopyHtml({ ...base, signedVersion: 1, currentVersion: 2, snapshot: snap, snapshotSha256: sha });
+    expect(html).toContain('1. PPE &lt;old wording&gt;');
+    expect(html).not.toContain('1. PPE &lt;always&gt;');      // not today's text
+    expect(html).toContain('exact wording this person signed');
+    expect(html).toContain(`SHA-256 ${sha}`);
+    expect(html).not.toContain('earlier wording is not kept');
+    expect(html).not.toMatch(/<script/i);
+  });
+  test('an old row without a snapshot falls back to the current text with a note', () => {
+    const html = buildSignedCopyHtml(base);
+    expect(html).toContain('1. PPE &lt;always&gt;');
+    expect(html).toContain('before the portal kept a copy');
+    expect(html).not.toContain('SHA-256');
   });
   test('never shows money', () => {
     expect(buildSignedCopyHtml(base)).not.toContain('$');

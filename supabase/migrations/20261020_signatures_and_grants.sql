@@ -74,10 +74,11 @@ revoke insert, update, delete on public.workers from anon;
 -- ── 4. signature evidence is write-once (security review, 2026-10-20) ───────
 -- Once ip, user_agent, signature_png, signed_name, signed_at or version hold a
 -- value, no UPDATE can change it, for EVERY role (office, service role,
--- postgres): the new value is silently replaced by the old one. Only an
--- empty field (NULL, or '' for ip / user agent) may be filled later, which is
--- what the notify-admins-ops fallback does when the insert trigger saw no
--- headers.
+-- postgres): the new value is silently replaced by the old one. An empty
+-- field (NULL, or '' for ip / user agent) could still be filled, but nothing
+-- does that in practice: stamp_signature_evidence() stamps every API insert,
+-- so the notify-admins-ops update (ip still null) never matches a row.
+-- (Comment corrected 2026-10-20, 20261020_audit_fixes.sql; SQL unchanged.)
 create or replace function public.keep_signature_evidence()
 returns trigger
 language plpgsql
