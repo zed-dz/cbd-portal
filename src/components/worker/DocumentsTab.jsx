@@ -3,10 +3,13 @@ import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary, btnSmall } from '../../theme';
 import { fmtDateTime } from '../../utils/dates';
 import { Spinner, EmptyState, Badge, Modal } from '../index';
+import { SignaturePad } from '../ui/SignaturePad';
+import { signatureProblem } from '../../utils/signatures';
 
 // Company documents e-sign (2026-10-19): contracts, policies, handbooks. The
 // office publishes a document (text body and/or a PDF) and says which worker
-// types must sign it. The worker reads it, ticks, types their name, signs.
+// types must sign it. The worker reads it, ticks, types their name, draws a
+// signature with a finger (required since 2026-10-20), signs.
 // Signatures carry the document version, so a new version asks again.
 
 export const DOCS_BUCKET = 'company-documents';
@@ -93,6 +96,7 @@ export function DocumentReader({ item, currentWorker, showToast, onClose, onSign
   const { doc, signed } = item;
   const [agree, setAgree] = useState(false);
   const [name, setName] = useState('');
+  const [drawn, setDrawn] = useState('');
   const [busy, setBusy] = useState(false);
 
   const openPdf = async () => {
@@ -105,9 +109,11 @@ export function DocumentReader({ item, currentWorker, showToast, onClose, onSign
     if (!agree) { showToast('Tick the box first.', 'error'); return; }
     const typed = name.trim();
     if (typed.length < 3) { showToast('Type your full name to sign.', 'error'); return; }
+    const problem = signatureProblem(drawn);
+    if (problem) { showToast(problem, 'error'); return; }
     setBusy(true);
     const { data, error } = await supabase.from('document_signatures').insert([{
-      document_id: doc.id, worker_id: currentWorker.id, version: doc.version, signed_name: typed,
+      document_id: doc.id, worker_id: currentWorker.id, version: doc.version, signed_name: typed, signature_png: drawn,
     }]).select('id').single();
     setBusy(false);
     if (error) { showToast(error.message, 'error'); return; }
@@ -138,8 +144,12 @@ export function DocumentReader({ item, currentWorker, showToast, onClose, onSign
           </label>
           {/* Full-width Sign button + bottom room: the floating help bubble sits
               bottom-right and covered a right-aligned button on 360 px phones. */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 84 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingBottom: 84 }}>
             <input style={{ ...inputStyle, width: '100%' }} value={name} onChange={e => setName(e.target.value)} placeholder="Type your full name" autoComplete="name" />
+            <div data-area="document signing pad">
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 6 }}>Sign with your finger *</div>
+              <SignaturePad onChange={setDrawn} height={170} exportMaxWidth={600} ariaLabel="Document signature — draw with your finger" />
+            </div>
             <button onClick={sign} disabled={busy} style={{ ...btnPrimary, minHeight: 44, width: '100%' }}>{busy ? 'Signing…' : '✍ Sign'}</button>
           </div>
         </div>

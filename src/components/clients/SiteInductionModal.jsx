@@ -5,12 +5,17 @@ import { fmtDateTime } from '../../utils/dates';
 import { logActivity } from '../../utils/activity';
 import { Field, Spinner, TableWrap, Th, Td, Badge } from '../index';
 import { Modal } from '../ui/Modal';
+import { openPrintWindow } from '../timesheet/TimesheetDetailView';
+import { shortDevice, buildSignedCopyHtml } from '../../utils/signatures';
+import { SignatureThumb } from '../ui/SignatureThumb';
 
 // Per-site induction / SWMS text — office side (2026-10-19). Opened from the
 // "Induction" button on a site in ClientSitesManager. One live induction per
 // site (older ones are archived, never deleted). Saving with "publish as a new
 // version" bumps the version so every worker signs again; a plain save keeps
-// the version (typo fix). The signatures table below shows who signed what.
+// the version (typo fix). The signatures table below shows who signed what:
+// drawn signature, typed name, time, IP and device, plus a printable signed
+// copy of any one signature (2026-10-20).
 
 export function SiteInductionModal({ site, client, onClose, showToast, currentWorker }) {
   const [ind, setInd] = useState(null);          // live induction row or null
@@ -28,7 +33,7 @@ export function SiteInductionModal({ site, client, onClose, showToast, currentWo
     setF({ title: live?.title || `${site.name} — site induction`, content: live?.content || '', required: live ? live.required !== false : true, bump: false });
     if (live) {
       const [{ data: s }, { data: w }] = await Promise.all([
-        supabase.from('site_induction_signatures').select('*').eq('induction_id', live.id).order('signed_at', { ascending: false }),
+        supabase.from('site_induction_signatures').select('id, worker_id, signed_name, signed_at, version, ip, user_agent, signature_png').eq('induction_id', live.id).order('signed_at', { ascending: false }),
         supabase.from('workers').select('id, name'),
       ]);
       setSigs(s || []); setWorkers(Object.fromEntries((w || []).map(x => [x.id, x.name])));
@@ -56,6 +61,15 @@ export function SiteInductionModal({ site, client, onClose, showToast, currentWo
       client_id: client?.id || null, site_id: site.id, after: { name: `${site.name}: ${payload.title}`, required: payload.required, version: payload.version || ind?.version || 1 } });
     showToast(ind ? (f.bump ? 'New version published — workers sign again.' : 'Induction updated.') : 'Induction created.', 'success');
     load();
+  };
+
+  const printSigned = (s) => {
+    openPrintWindow(buildSignedCopyHtml({
+      kind: 'Site induction', title: ind?.title || '', context: [client?.name, site.name].filter(Boolean).join(' — '),
+      text: ind?.content || '', currentVersion: ind?.version ?? null, signedVersion: s.version,
+      workerName: workers[s.worker_id] || '', signedName: s.signed_name, signedAt: fmtDateTime(s.signed_at),
+      ip: s.ip, userAgent: s.user_agent, signaturePng: s.signature_png, printedAt: new Date().toLocaleString('en-AU'),
+    }), 'width=900,height=1000');
   };
 
   const archive = async () => {
@@ -101,14 +115,17 @@ export function SiteInductionModal({ site, client, onClose, showToast, currentWo
               <div style={{ fontSize: 11, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Signed ({sigs.length})</div>
               {sigs.length === 0 ? <div style={{ color: C.textDim, fontSize: 12.5 }}>Nobody has signed yet.</div> : (
                 <TableWrap>
-                  <thead><tr><Th>Worker</Th><Th>Signed as</Th><Th>Version</Th><Th>When</Th></tr></thead>
+                  <thead><tr><Th>Worker</Th><Th>Signature</Th><Th>Signed as</Th><Th>Version</Th><Th>When</Th><Th>IP · device</Th><Th /></tr></thead>
                   <tbody>
                     {sigs.map(s => (
                       <tr key={s.id}>
                         <Td>{workers[s.worker_id] || '—'}</Td>
+                        <Td><SignatureThumb png={s.signature_png} who={s.signed_name} /></Td>
                         <Td>{s.signed_name}</Td>
                         <Td>{s.version === ind.version ? <Badge label={`v${s.version}`} color="green" /> : <Badge label={`v${s.version} (old)`} color="gray" />}</Td>
                         <Td>{fmtDateTime(s.signed_at)}</Td>
+                        <Td><div style={{ fontSize: 12, color: C.textMuted, whiteSpace: 'nowrap' }}>{s.ip || '—'}<br />{shortDevice(s.user_agent)}</div></Td>
+                        <Td><button onClick={() => printSigned(s)} style={{ ...btnSmall, minHeight: 36, whiteSpace: 'nowrap' }}>🖨 Print signed copy</button></Td>
                       </tr>
                     ))}
                   </tbody>

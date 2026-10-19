@@ -2,11 +2,14 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, inputStyle, btnPrimary, btnSecondary } from '../../theme';
 import { todayISO } from '../../utils/dates';
+import { signatureProblem } from '../../utils/signatures';
+import { SignaturePad } from '../ui/SignaturePad';
 
 // Site induction / SWMS sign-on (2026-10-19). When a worker holds an accepted
 // allocation at a site whose induction is REQUIRED and they have not signed
 // the current version, a banner sits at the top of the worker portal. "Read &
-// sign" opens a full-screen reader: the text, a tick, a typed full name, Sign.
+// sign" opens a full-screen reader: the text, a tick, a typed full name, a
+// finger-drawn signature (required since 2026-10-20), Sign.
 // The signature row carries the version, so a re-published induction asks
 // everyone again. Matching is by allocations.site_id (sites without an id on
 // the allocation cannot be matched and are skipped).
@@ -58,6 +61,7 @@ export function SiteInductionBanner({ currentWorker, showToast }) {
 export function InductionReader({ item, currentWorker, showToast, onClose, onSigned }) {
   const [agree, setAgree] = useState(false);
   const [name, setName] = useState('');
+  const [drawn, setDrawn] = useState('');
   const [busy, setBusy] = useState(false);
   const ind = item.induction;
 
@@ -65,10 +69,12 @@ export function InductionReader({ item, currentWorker, showToast, onClose, onSig
     if (!agree) { showToast('Tick "I have read and understood" first.', 'error'); return; }
     const typed = name.trim();
     if (typed.length < 3) { showToast('Type your full name to sign.', 'error'); return; }
+    const problem = signatureProblem(drawn);
+    if (problem) { showToast(problem, 'error'); return; }
     setBusy(true);
     const { data, error } = await supabase.from('site_induction_signatures').insert([{
-      induction_id: ind.id, worker_id: currentWorker.id, signed_name: typed, version: ind.version,
-    }]).select().single();
+      induction_id: ind.id, worker_id: currentWorker.id, signed_name: typed, version: ind.version, signature_png: drawn,
+    }]).select('id').single();
     setBusy(false);
     if (error) { showToast(error.message, 'error'); return; }
     supabase.functions.invoke('notify-admins-ops', { body: { kind: 'induction_signed', id: data.id } })
@@ -86,21 +92,25 @@ export function InductionReader({ item, currentWorker, showToast, onClose, onSig
         </div>
         <button onClick={onClose} style={{ ...btnSecondary, minHeight: 36, padding: '8px 12px' }}>Later</button>
       </div>
+      {/* One scroll area: the text, then the signing block under it. A fixed
+          footer with the pad in it would eat most of a 740 px phone screen. */}
       <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
         <div style={{ maxWidth: 720, margin: '0 auto', background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 18, color: C.text, fontSize: 15, lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>
           {ind.content || 'No text yet — ask the office.'}
         </div>
-      </div>
-      <div style={{ background: C.card, borderTop: `1px solid ${C.border}`, padding: '12px 16px', flexShrink: 0 }}>
-        <div style={{ maxWidth: 720, margin: '0 auto', display: 'grid', gap: 10 }}>
+        <div data-area="induction signing" style={{ maxWidth: 720, margin: '14px auto 0', background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16, display: 'grid', gap: 12 }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, color: C.text, minHeight: 36 }}>
             <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)} style={{ accentColor: C.accent, width: 20, height: 20 }} />
             I have read and understood this induction
           </label>
+          <input style={{ ...inputStyle, width: '100%' }} value={name} onChange={e => setName(e.target.value)} placeholder="Type your full name" autoComplete="name" />
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 6 }}>Sign with your finger *</div>
+            <SignaturePad onChange={setDrawn} height={170} exportMaxWidth={600} ariaLabel="Induction signature — draw with your finger" />
+          </div>
           {/* Full-width Sign button + bottom room: the floating help bubble sits
               bottom-right and covered a right-aligned button on 360 px phones. */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 84 }}>
-            <input style={{ ...inputStyle, width: '100%' }} value={name} onChange={e => setName(e.target.value)} placeholder="Type your full name" autoComplete="name" />
+          <div style={{ paddingBottom: 84 }}>
             <button onClick={sign} disabled={busy} style={{ ...btnPrimary, minHeight: 44, width: '100%' }}>{busy ? 'Signing…' : '✍ Sign'}</button>
           </div>
         </div>
