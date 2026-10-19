@@ -19,6 +19,7 @@ const ICONS = {
   allocation_declined: '❌',
   swap_requested: '🔁',
   allocation: '📋',
+  invoice_overdue: '🧾',
 };
 
 // Admin notification bell + dropdown. Uses a Supabase Realtime subscription on

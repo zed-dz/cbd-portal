@@ -8,6 +8,7 @@ import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, ClientSitesManage
 import { EmailHistoryPanel } from '../../components/inbox/EmailHistoryPanel';
 import { ActivityFeed } from '../../components/activity/ActivityFeed';
 import { logActivity } from '../../utils/activity';
+import { InvoiceStatusChip, checkInvoicePayments } from '../../components/accounting/InvoiceStatusChip';
 
 // Column grants hide the money columns on `clients` from non-admins (audit P1).
 const CLIENT_SAFE_COLS = 'id, name, site, contact, contact_email, contact_phone, notes, created_at, email_domains, rate_set_id, award_profile, archived_at';
@@ -711,19 +712,38 @@ function TimesheetsTabView({ client, showToast, canSeeRates = false }) {
   const [to, setTo] = useState(todayISO);
   const [status, setStatus] = useState('all');
   const [bundling, setBundling] = useState(false);
+  // Invoice rows (money → admin only) keyed by id, for the Invoiced column chip.
+  const [invoices, setInvoices] = useState({});
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       const { data } = await supabase.from('timesheet_headers')
-        .select('id, project, role, total_hours, status, created_at, pdf_emailed_at, invoiced_at, client_approved, workers(name), timesheets(date)')
+        .select('id, project, role, total_hours, status, created_at, pdf_emailed_at, invoiced_at, invoice_id, client_approved, workers(name), timesheets(date)')
         .ilike('client', escapeLike(client.name))
         .order('created_at', { ascending: false })
         .limit(1000);
       if (mounted) setRows(data || []);
+      if (!canSeeRates) return;
+      const { data: inv } = await supabase.from('client_invoices')
+        .select('id, xero_invoice_id, xero_invoice_number, xero_status, xero_url, status, error, amount_cents, total, amount_due, amount_paid, due_date, fully_paid_on, xero_synced_at, sync_error')
+        .eq('client_id', client.id)
+        .limit(500);
+      if (mounted) setInvoices(Object.fromEntries((inv || []).map(i => [i.id, i])));
     })();
     return () => { mounted = false; };
-  }, [client.id, client.name, registerKey]);
+  }, [client.id, client.name, registerKey, canSeeRates]);
+
+  const checkPayments = async () => {
+    setChecking(true);
+    try {
+      await checkInvoicePayments({ clientId: client.id, showToast });
+      setRegisterKey(k => k + 1);
+    } finally {
+      setChecking(false);
+    }
+  };
 
   const lineDates = (h) => (h.timesheets || []).map(t => t.date).filter(Boolean).sort();
   const dateLabel = (h) => {
@@ -820,6 +840,13 @@ function TimesheetsTabView({ client, showToast, canSeeRates = false }) {
             🧾 Xero invoice (draft)
           </button>
         )}
+        {canSeeRates && Object.keys(invoices).length > 0 && (
+          <button type="button" onClick={checkPayments} disabled={checking}
+            title="Ask Xero whether this client's invoices are paid, overdue or voided."
+            style={{ ...btnSecondary, padding: '7px 12px', fontSize: 12, opacity: checking ? 0.6 : 1 }}>
+            {checking ? 'Checking…' : '↻ Check payments'}
+          </button>
+        )}
       </div>
       {invoiceOpen && (
         <XeroInvoiceModal client={client} from={from} to={to} showToast={showToast}
@@ -843,7 +870,17 @@ function TimesheetsTabView({ client, showToast, canSeeRates = false }) {
                   {canSeeRates && (
                     <Td style={{ fontFamily: MONO, fontSize: 12 }}>
                       {h.invoiced_at
-                        ? <span style={{ color: C.success }}>✓ {fmtDate(h.invoiced_at)}</span>
+                        ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <span style={{ color: C.success }}>✓ {fmtDate(h.invoiced_at)}</span>
+                            {invoices[h.invoice_id] && (
+                              <>
+                                {invoices[h.invoice_id].xero_invoice_number && <span style={{ color: C.textMuted }}>{invoices[h.invoice_id].xero_invoice_number}</span>}
+                                <InvoiceStatusChip invoice={invoices[h.invoice_id]} />
+                              </>
+                            )}
+                          </span>
+                        )
                         : (h.status === 'approved' && !h.client_approved
                             ? <span title="Approved by the office but not yet accepted by the client — not invoiced until it is" style={{ color: C.textMuted, cursor: 'help' }}>awaiting client</span>
                             : '—')}
