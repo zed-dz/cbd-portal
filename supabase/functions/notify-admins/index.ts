@@ -11,10 +11,14 @@
 // service-role client. The allocation MUST belong to that worker.
 //
 // Request:
-//   POST { kind: 'allocation_accepted' | 'allocation_declined', allocation_id: uuid }
-//   — call it AFTER `respond_to_allocation` has returned, because the allocation's
-//     status is checked against the kind (accepted ⇒ 'confirmed' / 'completed',
-//     declined ⇒ 'declined'). A mismatch is a 409 and nothing is sent.
+//   POST { kind: 'allocation_accepted' | 'allocation_declined' | 'swap_requested', allocation_id: uuid }
+//   — accepted/declined: call it AFTER `respond_to_allocation` has returned, because
+//     the allocation's status is checked against the kind (accepted ⇒ 'confirmed' /
+//     'completed', declined ⇒ 'declined'). A mismatch is a 409 and nothing is sent.
+//   — swap_requested (2026-10-19): call it AFTER inserting the worker's own
+//     `shift_swap_requests` row. The newest PENDING request by this worker for
+//     this allocation is read server-side (404 `swap_request_not_found` if none);
+//     reason + suggested mate are taken from that row, never from the body.
 //
 // Response:
 //   200 { ok: true, sms: n, email: n, bell: boolean, deduped?: true }
@@ -62,7 +66,7 @@ const RESEND_ON            = !!(RESEND_API_KEY && MAIL_FROM);
 
 const RATE_LIMIT_PER_HOUR  = 20;
 const DEDUPE_WINDOW_MIN    = 10;
-const KINDS = ['allocation_accepted', 'allocation_declined'] as const;
+const KINDS = ['allocation_accepted', 'allocation_declined', 'swap_requested'] as const;
 type Kind = typeof KINDS[number];
 
 const CORS = {
@@ -360,8 +364,27 @@ Deno.serve(async (req) => {
     // 5. The kind must agree with what respond_to_allocation actually did.
     //    'filled' = the position went to someone else, so it is NOT an acceptance.
     const status = String(alloc.status || '');
-    const okStatus = kind === 'allocation_accepted' ? ['confirmed', 'completed'].includes(status) : status === 'declined';
+    const okStatus = kind === 'swap_requested'
+      ? ['pending', 'confirmed'].includes(status)
+      : kind === 'allocation_accepted' ? ['confirmed', 'completed'].includes(status) : status === 'declined';
     if (!okStatus) return json({ error: 'status_mismatch', status }, 409);
+
+    // 5b. Swap request — the row the worker just wrote (RLS only lets them write
+    //     one for their own allocation). Mate name resolved here, service-side.
+    let swap: { id: string; reason: string | null; to_worker_id: string | null } | null = null;
+    let mateName: string | null = null;
+    if (kind === 'swap_requested') {
+      const { data: sw } = await sb.from('shift_swap_requests')
+        .select('id, reason, to_worker_id')
+        .eq('allocation_id', alloc.id).eq('from_worker_id', worker.id).eq('status', 'pending')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (!sw) return json({ error: 'swap_request_not_found' }, 404);
+      swap = sw;
+      if (sw.to_worker_id) {
+        const { data: mate } = await sb.from('workers').select('name').eq('id', sw.to_worker_id).maybeSingle();
+        mateName = mate?.name || null;
+      }
+    }
 
     // 6. Idempotence — same (kind, allocation) already broadcast in the window?
     const windowStart = new Date(Date.now() - DEDUPE_WINDOW_MIN * 60_000).toISOString();
@@ -386,14 +409,31 @@ Deno.serve(async (req) => {
     }
 
     // 8. Text — built here, never by the client.
-    const verb     = kind === 'allocation_accepted' ? 'ACCEPTED' : 'DECLINED';
+    const isSwap   = kind === 'swap_requested';
+    const verb     = isSwap ? "CAN'T MAKE" : kind === 'allocation_accepted' ? 'ACCEPTED' : 'DECLINED';
     const where    = (alloc.site || alloc.client || 'job').toString().trim();
     const role     = (alloc.role || '').toString().trim();
     const when     = ddmm(alloc.start_date) + (alloc.end_date && alloc.end_date !== alloc.start_date ? `–${ddmm(alloc.end_date)}` : '');
-    const fillTxt  = positions != null && filled != null ? ` — ${filled} of ${positions} filled` : '';
-    const smsText  = `${worker.name} ${verb} ${where} (${[role, when].filter(Boolean).join(', ')})${fillTxt}`;
-    const subject  = `${worker.name} ${kind === 'allocation_accepted' ? 'accepted' : 'declined'} — ${alloc.client || where}${alloc.site ? ` — ${alloc.site}` : ''}`;
-    const lines    = [
+    const fillTxt  = !isSwap && positions != null && filled != null ? ` — ${filled} of ${positions} filled` : '';
+    const swapTxt  = isSwap
+      ? ` — asks for a swap${mateName ? `, suggests ${mateName}` : ''}${swap?.reason ? `. Reason: ${String(swap.reason).slice(0, 80)}` : ''}`
+      : '';
+    const smsText  = `${worker.name} ${verb} ${where} (${[role, when].filter(Boolean).join(', ')})${fillTxt}${swapTxt}`;
+    const subject  = isSwap
+      ? `Swap request — ${worker.name} can't make ${alloc.client || where}${alloc.site ? ` — ${alloc.site}` : ''}`
+      : `${worker.name} ${kind === 'allocation_accepted' ? 'accepted' : 'declined'} — ${alloc.client || where}${alloc.site ? ` — ${alloc.site}` : ''}`;
+    const lines    = isSwap ? [
+      `${worker.name} says they can't make the allocation below and asks for a swap.`,
+      '',
+      `Client: ${alloc.client || '—'}`,
+      `Site: ${alloc.site || '—'}`,
+      `Role: ${role || '—'}`,
+      `Dates: ${alloc.start_date || 'TBC'}${alloc.end_date && alloc.end_date !== alloc.start_date ? ` to ${alloc.end_date}` : ''}`,
+      `Reason: ${swap?.reason || '—'}`,
+      `Suggested replacement: ${mateName || 'none — office to pick'}`,
+      '',
+      `Approve or decline it under "Swap requests" at the top of the Allocations page: ${PORTAL_URL}`,
+    ] : [
       `${worker.name} has ${verb} the allocation below.`,
       '',
       `Client: ${alloc.client || '—'}`,
@@ -414,8 +454,8 @@ Deno.serve(async (req) => {
       if (!existingBell || !existingBell.length) {
         const { error: bellErr } = await sb.from('notifications').insert([{
           type: kind,
-          title: `${worker.name} ${verb} ${alloc.client || where}`,
-          body: `${[alloc.client, alloc.site, role].filter(Boolean).join(' · ')} — ${alloc.start_date || 'TBC'}${fillTxt}`,
+          title: isSwap ? `${worker.name} can't make ${alloc.client || where} — swap requested` : `${worker.name} ${verb} ${alloc.client || where}`,
+          body: `${[alloc.client, alloc.site, role].filter(Boolean).join(' · ')} — ${alloc.start_date || 'TBC'}${fillTxt}${isSwap && mateName ? ` · suggests ${mateName}` : ''}`,
           allocation_id: alloc.id,
           worker_id: worker.id,
         }]);
@@ -493,7 +533,7 @@ Deno.serve(async (req) => {
         verb: 'notified', object_type: 'allocation', object_id: alloc.id,
         client_id: alloc.client_id || null, site_id: alloc.site_id || null,
         after: { kind, sms: smsSent, email: emailSent, sms_targets: smsTargets.length, email_targets: emailTargets.length,
-                 text: smsText, positions, filled, status },
+                 text: smsText, positions, filled, status, swap_request_id: swap?.id || null },
       }]);
     } catch (e) { console.error('activity_events insert failed:', (e as Error).message); }
 
