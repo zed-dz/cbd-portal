@@ -5,6 +5,7 @@ import { C, btnSecondary } from './theme';
 import { ToastContainer, Spinner } from './components';
 import { LoginPage } from './pages/Login/LoginPage';
 import { SetPasswordPage } from './pages/Login/SetPasswordPage';
+import { MfaChallengePage } from './pages/Login/MfaChallengePage';
 import { AdminPortal } from './portals/AdminPortal';
 import { WorkerPortal } from './portals/WorkerPortal';
 import { PublicProfilePage } from './pages/PublicProfile/PublicProfilePage';
@@ -170,6 +171,11 @@ function AppShell() {
   // sign-in link) or when Supabase fires PASSWORD_RECOVERY: shows the
   // Set-password screen before anything else.
   const [needsPassword, setNeedsPassword] = useState(PASSWORD_LINK_TYPES.includes(ENTRY_AUTH.type) ? ENTRY_AUTH.type : null);
+  // Two-step login gate: 'idle' (no session) → 'checking' → 'required' (show
+  // the code screen) | 'clear' (portal). `mfaFirst` flips the order when a
+  // password update was refused at aal1 (Supabase wants the code first).
+  const [mfaGate, setMfaGate] = useState('idle');
+  const [mfaFirst, setMfaFirst] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [toasts, setToasts] = useState([]);
   const toastId = useRef(0);
@@ -255,6 +261,31 @@ function AppShell() {
     return () => window.removeEventListener('cbd:worker-updated', onUpdated);
   }, [fetchWorker]);
 
+  // Once a session exists, ask Supabase whether this person has a verified
+  // authenticator and the current token has not passed it yet (aal1 → aal2).
+  // Keyed on the user id so token refreshes / tab focus do not re-run it; the
+  // code screen's onDone flips the gate to 'clear' after a successful verify.
+  const sessionUserId = session?.user?.id || null;
+  useEffect(() => {
+    if (!sessionUserId) { setMfaGate('idle'); setMfaFirst(false); return; }
+    let cancelled = false;
+    setMfaGate('checking');
+    (async () => {
+      let required = false;
+      try {
+        const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        required = aal?.nextLevel === 'aal2' && aal?.currentLevel !== 'aal2';
+        if (!required && aal?.currentLevel !== 'aal2') {
+          // Belt and braces: the JWT may predate a freshly enrolled factor.
+          const { data: f } = await supabase.auth.mfa.listFactors();
+          required = (f?.totp || []).some(x => x.status === 'verified');
+        }
+      } catch { required = false; }
+      if (!cancelled) setMfaGate(required ? 'required' : 'clear');
+    })();
+    return () => { cancelled = true; };
+  }, [sessionUserId]);
+
   async function handleLogin(e) {
     e.preventDefault();
     setLoginError('');
@@ -270,7 +301,10 @@ function AppShell() {
     setSidebarOpen(false);
   }
 
-  if (authLoading) {
+  // Keep the spinner up while the two-step check runs so the portal (or the
+  // "No worker profile" screen) never flashes before the code screen.
+  const mfaPending = !!session && !needsPassword && (mfaGate === 'idle' || mfaGate === 'checking');
+  if (authLoading || mfaPending) {
     return (
       <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.bg }}>
         <Spinner size={40} />
@@ -281,7 +315,7 @@ function AppShell() {
   return (
     <>
       <ToastContainer toasts={toasts} onRemove={removeToast} />
-      {session && currentWorker && !needsPassword && <OmniHelpBubble />}
+      {session && currentWorker && !needsPassword && mfaGate === 'clear' && <OmniHelpBubble />}
       {!session ? (
         <LoginPage
           email={loginEmail} setEmail={setLoginEmail}
@@ -290,7 +324,7 @@ function AppShell() {
           onSubmit={handleLogin}
           startNotice={ENTRY_LINK_NOTICE}
         />
-      ) : needsPassword ? (
+      ) : needsPassword && !mfaFirst ? (
         <SetPasswordPage
           kind={needsPassword}
           email={session.user?.email}
@@ -300,6 +334,14 @@ function AppShell() {
             try { window.history.replaceState({}, '', window.location.pathname); } catch { /* ignore */ }
           }}
           onSignOut={async () => { setNeedsPassword(null); await handleSignOut(); }}
+          onNeedsMfa={() => { setMfaFirst(true); setMfaGate('required'); }}
+        />
+      ) : mfaGate === 'required' ? (
+        <MfaChallengePage
+          email={session.user?.email}
+          showToast={showToast}
+          onDone={() => { setMfaGate('clear'); setMfaFirst(false); }}
+          onSignOut={async () => { setMfaFirst(false); await handleSignOut(); }}
         />
       ) : !currentWorker ? (
         <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: C.bg, gap: 16, padding: 24 }}>
