@@ -571,10 +571,14 @@ export function DailyTimesheetForm({
     if (!allowAdmin) {
       const t5Dates = [...new Set(validLines.map(l => l.date))].filter(isTakeFiveDay);
       if (t5Dates.length) {
-        const { data: t5rows } = await supabase.from('take5')
+        const { data: t5rows, error: t5err } = await supabase.from('take5')
           .select('work_date').eq('worker_id', targetWorker).in('work_date', t5Dates);
+        // No signal: the check cannot be made, so it must not block — the sheet
+        // is parked on the phone by the offline queue below, like any other.
+        const t5Unknown = (typeof navigator !== 'undefined' && navigator.onLine === false)
+          || (t5err && isNetworkError(t5err));
         const have = new Set((t5rows || []).map(r => r.work_date));
-        const missing = t5Dates.filter(d => !have.has(d));
+        const missing = t5Unknown ? [] : t5Dates.filter(d => !have.has(d));
         if (missing.length) {
           setTake5Block({ dates: missing });
           showToast('A Take 5 is required on Tue/Thu before submitting your timesheet.', 'error');

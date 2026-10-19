@@ -111,8 +111,8 @@ test('offline: submit parks the sheet, "Send now" replays it once back online', 
 // form checks the take5 table BEFORE saving. Offline that read fails, the
 // result is treated as "no Take 5", and the sheet is refused with "A Take 5 is
 // required…" instead of being parked — even when the Take 5 was done. Remove
-// .fixme once DailyTimesheetForm skips (or trusts) the gate on a network error.
-test.fixme('offline on a Take 5 day (Tue/Thu): the sheet is still parked', async ({ page, mock, guard }) => {
+// Fixed 2026-10-19: DailyTimesheetForm skips the gate when the read cannot be made.
+test('offline on a Take 5 day (Tue/Thu): the sheet is still parked', async ({ page, mock, guard }) => {
   guard.allowConsole(/ERR_INTERNET_DISCONNECTED/);
   await openNewTimesheet(page, mock);
   await fillShift(page, { date: TAKE5_DAY, start: '07:00', end: '15:00', tasks: 'Line marking crew' });
