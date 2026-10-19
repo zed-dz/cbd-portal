@@ -229,7 +229,7 @@ function DocSignaturesModal({ doc, st, sigs, showToast, onClose }) {
       kind: 'Document', title: doc.title, context: doc.file_path ? 'has a PDF attachment' : '',
       text: doc.body || '', currentVersion: doc.version, signedVersion: s.version,
       workerName: w.name, signedName: s.signed_name, signedAt: fmtDateTime(s.signed_at),
-      ip: s.ip, userAgent: s.user_agent, signaturePng: pngs[s.id], printedAt: new Date().toLocaleString('en-AU'),
+      ip: s.ip, userAgent: s.user_agent, signaturePng: pngs[s.id], printedAt: new Date().toLocaleString('en-AU', { timeZone: 'Australia/Sydney' }),
     }), 'width=900,height=1000');
   };
 

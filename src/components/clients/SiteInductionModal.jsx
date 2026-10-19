@@ -68,7 +68,7 @@ export function SiteInductionModal({ site, client, onClose, showToast, currentWo
       kind: 'Site induction', title: ind?.title || '', context: [client?.name, site.name].filter(Boolean).join(' — '),
       text: ind?.content || '', currentVersion: ind?.version ?? null, signedVersion: s.version,
       workerName: workers[s.worker_id] || '', signedName: s.signed_name, signedAt: fmtDateTime(s.signed_at),
-      ip: s.ip, userAgent: s.user_agent, signaturePng: s.signature_png, printedAt: new Date().toLocaleString('en-AU'),
+      ip: s.ip, userAgent: s.user_agent, signaturePng: s.signature_png, printedAt: new Date().toLocaleString('en-AU', { timeZone: 'Australia/Sydney' }),
     }), 'width=900,height=1000');
   };
 
