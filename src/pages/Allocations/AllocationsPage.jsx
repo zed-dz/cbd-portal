@@ -127,7 +127,7 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
       supabase.from('certifications').select('worker_id, cert_name, expiry'),
       supabase.from('worker_certificates').select('worker_id, name, expiry_date'),
       supabase.from('shift_swap_requests').select('*').order('created_at', { ascending: false }).limit(60),
-      supabase.rpc('is_portal_admin'),
+      supabase.rpc('is_office_user'),   // required-tickets editor: any office user (no pay in it)
       supabase.rpc('current_worker_id'),
       supabase.from('roster_templates').select('*').is('archived_at', null).order('name'),
     ]);

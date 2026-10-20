@@ -6,6 +6,7 @@ import { todayISO } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
 import { buildMarginReport, marginReportCSVRows } from '../../utils/marginReport';
 import { DateField, Spinner, TableWrap, Th, Td, EmptyState, presetBounds } from '../../components';
+import { canSeeMoney } from '../../utils/access';
 
 // Labour margin per client / site — ADMIN ONLY. Charge and pay come from the
 // same payroll utils as the Payroll page (over approved + client-accepted
@@ -151,7 +152,7 @@ function MarginReport({ showToast }) {
 }
 
 export function ReportsPage({ showToast, currentWorker }) {
-  const isAdmin = currentWorker?.access_level === 'admin';
+  const isAdmin = canSeeMoney(currentWorker);
   const [counts, setCounts] = useState({});
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');

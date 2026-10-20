@@ -35,6 +35,7 @@ import { LeaveRequestsPage } from '../pages/Leave/LeaveRequestsPage';
 import { IncidentsPage } from '../pages/Safety/IncidentsPage';
 import { DocumentsPage } from '../pages/Documents/DocumentsPage';
 import { WorkerPortal } from './WorkerPortal';
+import { canSeeMoney } from '../utils/access';
 
 export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sidebarOpen, setSidebarOpen }) {
   // Land on Inbox if we just completed Gmail OAuth — the InboxPage will then
@@ -55,7 +56,8 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
   // (no forced enrolment — the owner decides later).
   const mfa = useMfaFactors();
   const showMfaNudge = currentWorker?.access_level === 'admin' && mfa.verified === false;
-  const isMoneyUser = currentWorker?.access_level === 'admin';
+  // Money screens: admin level and NOT an allocator (owner rule 2026-10-20).
+  const isMoneyUser = canSeeMoney(currentWorker);
   // Allocation Board → "Allocate" hands the Allocations page a pre-ticked crew.
   const [allocPrefill, setAllocPrefill] = useState(null);
   const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, licence_agent: 0, pending_workers: 0, payroll: 0, applications: 0, leave: 0, safety: 0 });
@@ -128,7 +130,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
     // MAIN + TOOLS; the DB enforces the same line with RLS, this just removes
     // the dead doors. Clients & Rates stays visible to managers for sites and
     // contacts — its rate panels are gated inside the page.
-    ...(currentWorker?.access_level === 'admin' ? [{
+    ...(isMoneyUser ? [{
       label: 'FINANCE',
       items: [
         { id: 'clients', label: '🏗 Clients & Rates' },
@@ -313,8 +315,8 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'xero_sync'        && isMoneyUser && <XeroSyncPage showToast={showToast} />}
           {activePage === 'licence_agent'    && <LicenceAgentPage showToast={showToast} />}
           {activePage === 'reports'          && <ReportsPage showToast={showToast} currentWorker={currentWorker} />}
-          {activePage === 'plant'            && currentWorker?.access_level === 'admin' && <PlantPage showToast={showToast} />}
-          {activePage === 'invoices'         && currentWorker?.access_level === 'admin' && <InvoicesPage showToast={showToast} />}
+          {activePage === 'plant'            && isMoneyUser && <PlantPage showToast={showToast} />}
+          {activePage === 'invoices'         && isMoneyUser && <InvoicesPage showToast={showToast} />}
           {activePage === 'bulk_messages'    && <BulkMessagesPage showToast={showToast} />}
           {activePage === 'inbox'            && <InboxPage         showToast={showToast} onNavigate={navigate} />}
           {activePage === 'templates'        && <TemplatesPage     showToast={showToast} />}

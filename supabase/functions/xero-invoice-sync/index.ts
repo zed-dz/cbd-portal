@@ -114,8 +114,8 @@ async function gateCaller(req: Request): Promise<Gate> {
   const { data: { user }, error } = await createClient(SUPABASE_URL, SUPABASE_ANON_KEY).auth.getUser(bearer);
   if (error || !user?.email) return { ok: false, status: 401, error: 'Unauthorized' };
   const { data: w } = await createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY).from('workers')
-    .select('id, name, access_level').eq('email', user.email.toLowerCase()).is('archived_at', null).maybeSingle();
-  if (!w || w.access_level !== 'admin') return { ok: false, status: 403, error: 'Admin only' };
+    .select('id, name, access_level, is_allocator').eq('email', user.email.toLowerCase()).is('archived_at', null).maybeSingle();
+  if (!w || w.access_level !== 'admin' || w.is_allocator) return { ok: false, status: 403, error: 'Admin only' };
   return { ok: true, via: 'user', worker: { id: w.id, name: w.name }, email: user.email };
 }
 

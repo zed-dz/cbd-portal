@@ -59,8 +59,8 @@ async function gateCaller(req: Request): Promise<GateResult> {
   const { data: { user }, error } = await createClient(SUPABASE_URL, SUPABASE_ANON_KEY).auth.getUser(bearer);
   if (error || !user?.email) return { ok: false, status: 401, error: 'Unauthorized' };
   const { data: w } = await createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY).from('workers')
-    .select('id, name, role, access_level').eq('email', user.email.toLowerCase()).is('archived_at', null).maybeSingle();
-  const money = !!w && ['admin', 'accounts'].includes(w.access_level || '');
+    .select('id, name, role, access_level, is_allocator').eq('email', user.email.toLowerCase()).is('archived_at', null).maybeSingle();
+  const money = !!w && ['admin', 'accounts'].includes(w.access_level || '') && !w.is_allocator  /* allocators never see pay */;
   if (!money) return { ok: false, status: 403, error: 'Admin or accounts only' };
   return { ok: true, via: 'user', email: user.email, worker: w };
 }

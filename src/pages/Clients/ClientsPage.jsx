@@ -9,6 +9,7 @@ import { EmailHistoryPanel } from '../../components/inbox/EmailHistoryPanel';
 import { ActivityFeed } from '../../components/activity/ActivityFeed';
 import { logActivity } from '../../utils/activity';
 import { InvoiceStatusChip, checkInvoicePayments } from '../../components/accounting/InvoiceStatusChip';
+import { canSeeMoney } from '../../utils/access';
 
 // Column grants hide the money columns on `clients` from non-admins (audit P1).
 const CLIENT_SAFE_COLS = 'id, name, site, contact, contact_email, contact_phone, notes, created_at, email_domains, rate_set_id, award_profile, archived_at';
@@ -79,7 +80,7 @@ function StatusBadge({ status }) {
 export function ClientsPage({ showToast, currentWorker }) {
   // Charge rates are Admin-only (owner, 2026-09-27). Managers keep clients,
   // sites and contacts; every dollar figure on this page is gated on this.
-  const canSeeRates = !currentWorker || currentWorker.access_level === 'admin';
+  const canSeeRates = !currentWorker || canSeeMoney(currentWorker);
   const [tab, setTab] = useState('clients');
 
   return (

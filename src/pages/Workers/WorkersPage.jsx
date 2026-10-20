@@ -14,6 +14,7 @@ import { onboardLink, publicProfileLink, whatsappLink, inviteMessage, normaliseM
 import { addAdminNotification } from '../../utils/notify';
 import { WORKER_SAFE_COLS } from '../../utils/workerCols';
 import { RoleRatesEditor, checkRoleRates, saveRoleRates } from '../../components/workers/RoleRatesEditor';
+import { canSeeMoney } from '../../utils/access';
 
 // Sequence counter for openEdit (see there). Module-level: one Workers page.
 const openEditSeq = { n: 0 };
@@ -113,7 +114,7 @@ export function WorkersPage({ showToast, currentWorker }) {
   // allocator on Manager level adds the person and taps "notify accounts";
   // accounts fill the pay side in. Missing prop falls back to visible so the
   // page never hides rates by accident.
-  const canSeeRates = !currentWorker || currentWorker.access_level === 'admin';
+  const canSeeRates = !currentWorker || canSeeMoney(currentWorker);
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
