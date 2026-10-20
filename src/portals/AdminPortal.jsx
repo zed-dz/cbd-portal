@@ -55,6 +55,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
   // (no forced enrolment — the owner decides later).
   const mfa = useMfaFactors();
   const showMfaNudge = currentWorker?.access_level === 'admin' && mfa.verified === false;
+  const isMoneyUser = currentWorker?.access_level === 'admin';
   // Allocation Board → "Allocate" hands the Allocations page a pre-ticked crew.
   const [allocPrefill, setAllocPrefill] = useState(null);
   const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, licence_agent: 0, pending_workers: 0, payroll: 0, applications: 0, leave: 0, safety: 0 });
@@ -299,13 +300,17 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'applications'     && <ApplicationsPage    showToast={showToast} onNavigate={navigate} />}
           {activePage === 'timesheets'       && <TimesheetsPage showToast={showToast} isMobile={isMobile} refreshBadge={refreshBadge} />}
           {activePage === 'clients'          && <ClientsPage showToast={showToast} currentWorker={currentWorker} />}
-          {activePage === 'rate_sets'        && <RateSetsPage showToast={showToast} />}
+          {/* Money pages render for admin level only — the menu already hides
+              them, this also shuts the side doors (cbd:navigate events, the help
+              assistant). Office staff without money access (e.g. allocators)
+              never see pay, rates or Xero. RLS enforces the same line. */}
+          {activePage === 'rate_sets'        && isMoneyUser && <RateSetsPage showToast={showToast} />}
           {activePage === 'sent_timesheets'  && <SentTimesheetsPage showToast={showToast} />}
-          {activePage === 'default_rates'    && <DefaultRatesPage showToast={showToast} />}
-          {activePage === 'payroll'          && <PayrollTrackerPage showToast={showToast} />}
-          {activePage === 'payments'         && <PaymentsPage showToast={showToast} />}
-          {activePage === 'payroll_config'   && <PayrollConfigPage showToast={showToast} />}
-          {activePage === 'xero_sync'        && <XeroSyncPage showToast={showToast} />}
+          {activePage === 'default_rates'    && isMoneyUser && <DefaultRatesPage showToast={showToast} />}
+          {activePage === 'payroll'          && isMoneyUser && <PayrollTrackerPage showToast={showToast} />}
+          {activePage === 'payments'         && isMoneyUser && <PaymentsPage showToast={showToast} />}
+          {activePage === 'payroll_config'   && isMoneyUser && <PayrollConfigPage showToast={showToast} />}
+          {activePage === 'xero_sync'        && isMoneyUser && <XeroSyncPage showToast={showToast} />}
           {activePage === 'licence_agent'    && <LicenceAgentPage showToast={showToast} />}
           {activePage === 'reports'          && <ReportsPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'plant'            && currentWorker?.access_level === 'admin' && <PlantPage showToast={showToast} />}
