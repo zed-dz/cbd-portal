@@ -175,7 +175,7 @@ function seedTables() {
 // RPCs the app calls, answered from the in-memory db. `ctx` = { user, db }.
 const RPC = {
   save_daily_timesheet: (args) => args.p_header_id || IDS.savedHeader,
-  is_portal_admin: (_a, ctx) => ctx.worker?.access_level === 'admin',
+  is_portal_admin: (_a, ctx) => ctx.worker?.access_level === 'admin' && !ctx.worker?.is_allocator,
   is_office_user: (_a, ctx) => ctx.worker?.role === 'admin',
   current_worker_id: (_a, ctx) => ctx.worker?.id || null,
   list_swap_candidates: () => [],

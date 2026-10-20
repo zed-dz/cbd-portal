@@ -1,6 +1,9 @@
 const { test, expect, expectNoSideScroll, openSignedIn } = require('./fixtures/test');
 
-const MENU_ITEMS = ['Time off requests', 'Safety', 'Documents', 'Plant', 'Reports'];
+const MENU_ITEMS = ['Time off requests', 'Safety', 'Documents', 'Reports'];
+// The test admin is ticked as an allocator. Allocators never see pay (owner rule
+// 2026-10-20), so the money pages must be missing from their menu.
+const MONEY_ITEMS = ['Plant', 'Invoices', 'Payroll'];
 
 test('admin: dashboard renders', async ({ page, mock }) => {
   await openSignedIn(page, mock, 'admin');
@@ -31,6 +34,9 @@ test('admin (phone): menu has the new pages and the 🔐 entry; top bar fits 360
   for (const label of MENU_ITEMS) {
     await expect(sidebar.getByRole('button', { name: label })).toBeVisible();
   }
+  for (const label of MONEY_ITEMS) {
+    await expect(sidebar.getByRole('button', { name: label })).toHaveCount(0);
+  }
   const twoStep = sidebar.locator('[data-area="two-step login button"]');
   await expect(twoStep).toBeVisible();
   await expect(twoStep).toContainText('🔐');
@@ -45,6 +51,9 @@ test('admin (desktop): sidebar shows the new pages; 🔐 sits in the top bar', a
   await expect(sidebar).toBeVisible();
   for (const label of MENU_ITEMS) {
     await expect(sidebar.getByRole('button', { name: label })).toBeVisible();
+  }
+  for (const label of MONEY_ITEMS) {
+    await expect(sidebar.getByRole('button', { name: label })).toHaveCount(0);
   }
   await expect(page.getByRole('button', { name: 'Two-step login' })).toBeVisible();
 });
