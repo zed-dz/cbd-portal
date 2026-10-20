@@ -1,6 +1,6 @@
 const { test, expect, expectNoSideScroll, openSignedIn } = require('./fixtures/test');
 
-const MENU_ITEMS = ['Time off requests', 'Safety', 'Documents', 'Reports'];
+const MENU_ITEMS = ['Time off requests', 'Policies', 'Safety', 'Documents', 'Reports'];
 // The test admin is ticked as an allocator. Allocators never see pay (owner rule
 // 2026-10-20), so the money pages must be missing from their menu.
 const MONEY_ITEMS = ['Plant', 'Invoices', 'Payroll'];

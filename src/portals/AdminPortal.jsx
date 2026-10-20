@@ -32,6 +32,7 @@ import { AppViewsPage } from '../pages/AppViews/AppViewsPage';
 import { PendingWorkersPage } from '../pages/PendingWorkers/PendingWorkersPage';
 import { ApplicationsPage } from '../pages/Applications/ApplicationsPage';
 import { LeaveRequestsPage } from '../pages/Leave/LeaveRequestsPage';
+import { PoliciesPage } from '../pages/Policies/PoliciesPage';
 import { IncidentsPage } from '../pages/Safety/IncidentsPage';
 import { DocumentsPage } from '../pages/Documents/DocumentsPage';
 import { WorkerPortal } from './WorkerPortal';
@@ -124,6 +125,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         { id: 'timesheets', label: '🕐 Timesheets', badge: badges.timesheets || null, badgeColor: 'red' },
         { id: 'sent_timesheets', label: '📤 Sent Timesheets' },
         { id: 'leave', label: '🏖 Time off requests', badge: badges.leave || null, badgeColor: 'yellow' },
+        { id: 'policies', label: '📚 Policies' },
       ],
     },
     // Money pages are Admin-only (owner, 2026-09-27). Managers/allocators keep
@@ -322,6 +324,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'templates'        && <TemplatesPage     showToast={showToast} />}
           {activePage === 'app_views'        && <AppViewsPage showToast={showToast} />}
           {activePage === 'leave'            && <LeaveRequestsPage showToast={showToast} currentWorker={currentWorker} refreshBadge={refreshBadge} />}
+          {activePage === 'policies'         && <PoliciesPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'safety'           && <IncidentsPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'documents'        && <DocumentsPage showToast={showToast} currentWorker={currentWorker} />}
         </div>

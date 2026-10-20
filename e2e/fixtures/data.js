@@ -166,6 +166,15 @@ function seedTables() {
     client_errors: [],
     clock_events: [],
     company_documents: [],
+    policy_categories: [
+      { id: 'pc-swms', name: 'SWMS', sort_order: 10, archived_at: null },
+      { id: 'pc-take5', name: 'Take 5', sort_order: 20, archived_at: null },
+    ],
+    policy_documents: [
+      { id: 'pd-1', category_id: 'pc-swms', category_name_snapshot: 'SWMS', title: 'Excavation SWMS', description: null,
+        file_path: 'pc-swms/1-excavation.pdf', file_name: 'excavation.pdf', mime_type: 'application/pdf', size_bytes: 482000,
+        visible_to_workers: true, created_at: '2026-10-20T00:00:00Z', archived_at: null },
+    ],
     document_signatures: [],
     plant_items: [],
     plant_hours: [],

@@ -12,6 +12,7 @@ import { TimeOffTab } from '../components/worker/TimeOffTab';
 import { IncidentReportTab } from '../components/worker/IncidentReportTab';
 import { SiteInductionBanner } from '../components/worker/SiteInductionBanner';
 import { DocumentsTab, DocumentsBanner } from '../components/worker/DocumentsTab';
+import { PoliciesTab } from '../components/policies/PolicyLibrary';
 import { addAdminNotification } from '../utils/notify';
 import { roleChipStyle } from '../constants/roles';
 
@@ -47,6 +48,7 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
     { id: 'timeoff', label: '🏖 Time off' },
     { id: 'incident', label: '⚠️ Report incident' },
     { id: 'documents', label: '📄 Documents' },
+    { id: 'policies', label: '📚 Policies' },
   ];
 
   return (
@@ -89,6 +91,7 @@ export function WorkerPortal({ currentWorker, onSignOut, showToast, isMobile }) 
         {activeTab === 'timeoff'        && <TimeOffTab currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'incident'       && <IncidentReportTab currentWorker={currentWorker} showToast={showToast} />}
         {activeTab === 'documents'      && <DocumentsTab currentWorker={currentWorker} showToast={showToast} />}
+        {activeTab === 'policies'       && <PoliciesTab showToast={showToast} />}
       </div>
     </div>
   );

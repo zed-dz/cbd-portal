@@ -17,6 +17,7 @@ test('worker portal: every tab renders', async ({ page, mock, isMobile }) => {
     ['Time off', page.getByText('🏖 Request time off')],
     ['Report incident', page.getByText(/Report an incident, near miss or hazard/)],
     ['Documents', page.locator('[data-area="documents"]')],
+    ['Policies', page.locator('[data-area="policy file"]').filter({ hasText: 'Excavation SWMS' })],
     ['My Profile', page.locator('[data-area="push-alerts"]').filter({ hasText: 'Phone alerts' })],
   ];
   for (const [label, content] of tabs) {
