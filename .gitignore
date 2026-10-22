@@ -45,3 +45,6 @@ yarn-error.log*
 /test-results-live
 /blob-report
 /playwright/.cache
+
+# The video guide lives in the private video-guide storage bucket, never in git (80 MB of mp4)
+CBD Portal Video Guide/
