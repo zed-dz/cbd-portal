@@ -327,7 +327,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'app_views'        && <AppViewsPage showToast={showToast} />}
           {activePage === 'leave'            && <LeaveRequestsPage showToast={showToast} currentWorker={currentWorker} refreshBadge={refreshBadge} />}
           {activePage === 'policies'         && <PoliciesPage showToast={showToast} currentWorker={currentWorker} />}
-          {activePage === 'video_guide'      && <VideoGuidePage showToast={showToast} />}
+          {activePage === 'video_guide'      && <VideoGuidePage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'safety'           && <IncidentsPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'documents'        && <DocumentsPage showToast={showToast} currentWorker={currentWorker} />}
         </div>

@@ -8,12 +8,10 @@ import { Spinner, EmptyState } from '../../components';
 // steps with their times, the words the voice says), one mp4 + poster + subtitles
 // per chapter, and the full master. Pick a chapter, or a single step inside it,
 // or search for a word and jump straight to the step that mentions it.
-// "Watched" ticks are per browser (localStorage) and nothing else is stored.
+// "Watched" ticks are saved per person in video_guide_progress (own rows only).
 
 const BUCKET = 'video-guide';
-const WATCHED_KEY = 'cbd.videoGuide.watched';
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-const readWatched = () => { try { return JSON.parse(localStorage.getItem(WATCHED_KEY) || '[]'); } catch { return []; } };
 
 async function signed(names, seconds = 3600) {
   const { data, error } = await supabase.storage.from(BUCKET).createSignedUrls(names, seconds);
@@ -21,13 +19,13 @@ async function signed(names, seconds = 3600) {
   return Object.fromEntries(data.map(d => [d.path, d.signedUrl]));
 }
 
-export function VideoGuidePage({ showToast }) {
+export function VideoGuidePage({ showToast, currentWorker }) {
   const [guide, setGuide] = useState(undefined);   // undefined = loading, null = nothing uploaded
   const [urls, setUrls] = useState({});
   const [pick, setPick] = useState(null);           // { kind: 'master' | 'chapter', n }
   const [q, setQ] = useState('');
   const [now, setNow] = useState(0);
-  const [watched, setWatched] = useState(readWatched);
+  const [watched, setWatched] = useState([]);
   const videoRef = useRef(null);
   const seekTo = useRef(null);
 
@@ -40,10 +38,14 @@ export function VideoGuidePage({ showToast }) {
         const names = ['guide.json', g.master.file, g.master.poster, g.master.subtitles, ...g.chapters.flatMap(c => [c.file, c.poster, c.subtitles])];
         setUrls(await signed(names));
         setGuide(g);
+        if (currentWorker?.id) {
+          const { data: rows } = await supabase.from('video_guide_progress').select('chapter').eq('worker_id', currentWorker.id);
+          setWatched((rows || []).map(r => r.chapter));
+        }
         setPick({ kind: 'chapter', n: g.chapters[0].n });
       } catch (e) { showToast(e.message, 'error'); setGuide(null); }
     })();
-  }, [showToast]);
+  }, [showToast, currentWorker?.id]);
 
   const current = useMemo(() => {
     if (!guide || !pick) return null;
@@ -59,9 +61,10 @@ export function VideoGuidePage({ showToast }) {
 
   const onEnded = () => {
     if (!current || pick.kind !== 'chapter') return;
-    const next = readWatched().includes(pick.n) ? readWatched() : [...readWatched(), pick.n];
-    try { localStorage.setItem(WATCHED_KEY, JSON.stringify(next)); } catch { /* private mode */ }
-    setWatched(next);
+    if (currentWorker?.id && !watched.includes(pick.n)) {
+      setWatched(w => [...w, pick.n]);
+      supabase.from('video_guide_progress').upsert({ worker_id: currentWorker.id, chapter: pick.n, watched_at: new Date().toISOString() }).then(({ error }) => { if (error) showToast(error.message, 'error'); });
+    }
     const i = guide.chapters.findIndex(c => c.n === pick.n);
     if (i >= 0 && i < guide.chapters.length - 1) play('chapter', guide.chapters[i + 1].n, 0);
   };
@@ -97,7 +100,7 @@ export function VideoGuidePage({ showToast }) {
         <div style={{ minWidth: 0 }}>
           <h2 style={{ margin: 0, color: C.text, fontSize: 20, fontWeight: 800 }}>🎬 Video guide</h2>
           <div style={{ color: C.textMuted, fontSize: 12.5, marginTop: 2 }}>
-            How the office portal works, screen by screen. {guide.chapters.length} chapters, {fmt(guide.master.duration)} in all. {watched.length ? `${watched.length} of ${guide.chapters.length} watched on this device.` : ''}
+            How the office portal works, screen by screen. {guide.chapters.length} chapters, {fmt(guide.master.duration)} in all. {watched.length ? `You have watched ${watched.length} of ${guide.chapters.length}.` : ''}
           </div>
         </div>
         <div style={{ position: 'relative', flex: '1 1 260px', maxWidth: 420 }}>
@@ -159,7 +162,7 @@ export function VideoGuidePage({ showToast }) {
           {tile('master', 'all', 'The whole guide', `${fmt(guide.master.duration)} · all ${guide.chapters.length} chapters in one`, guide.master.poster, isActive('master'))}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '8px 0 2px' }}>
             <span style={{ color: C.textMuted, fontSize: 11.5, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase' }}>Chapters</span>
-            {watched.length > 0 && <button onClick={() => { try { localStorage.removeItem(WATCHED_KEY); } catch { /* ignore */ } setWatched([]); }} style={{ ...btnSmall, minHeight: 28, fontSize: 11 }}>Clear ticks</button>}
+            {watched.length > 0 && <button onClick={async () => { const { error } = await supabase.from('video_guide_progress').delete().eq('worker_id', currentWorker.id); if (error) { showToast(error.message, 'error'); return; } setWatched([]); }} style={{ ...btnSmall, minHeight: 28, fontSize: 11 }}>Clear ticks</button>}
           </div>
           {guide.chapters.map(c => tile('chapter', c.n, `${watched.includes(c.n) ? '✓ ' : ''}${c.title}`, `${fmt(c.duration)} · ${c.steps.length} steps`, c.poster, isActive('chapter', c.n)))}
           <a href={urls[guide.master.file]} download style={{ ...btnSecondary, textAlign: 'center', textDecoration: 'none', marginTop: 8, minHeight: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>⬇ Download the whole guide</a>
