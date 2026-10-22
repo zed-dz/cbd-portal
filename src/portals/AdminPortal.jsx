@@ -33,6 +33,7 @@ import { PendingWorkersPage } from '../pages/PendingWorkers/PendingWorkersPage';
 import { ApplicationsPage } from '../pages/Applications/ApplicationsPage';
 import { LeaveRequestsPage } from '../pages/Leave/LeaveRequestsPage';
 import { PoliciesPage } from '../pages/Policies/PoliciesPage';
+import { VideoGuidePage } from '../pages/VideoGuide/VideoGuidePage';
 import { IncidentsPage } from '../pages/Safety/IncidentsPage';
 import { DocumentsPage } from '../pages/Documents/DocumentsPage';
 import { WorkerPortal } from './WorkerPortal';
@@ -126,6 +127,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         { id: 'sent_timesheets', label: '📤 Sent Timesheets' },
         { id: 'leave', label: '🏖 Time off requests', badge: badges.leave || null, badgeColor: 'yellow' },
         { id: 'policies', label: '📚 Policies' },
+        { id: 'video_guide', label: '🎬 Video guide' },
       ],
     },
     // Money pages are Admin-only (owner, 2026-09-27). Managers/allocators keep
@@ -325,6 +327,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'app_views'        && <AppViewsPage showToast={showToast} />}
           {activePage === 'leave'            && <LeaveRequestsPage showToast={showToast} currentWorker={currentWorker} refreshBadge={refreshBadge} />}
           {activePage === 'policies'         && <PoliciesPage showToast={showToast} currentWorker={currentWorker} />}
+          {activePage === 'video_guide'      && <VideoGuidePage showToast={showToast} />}
           {activePage === 'safety'           && <IncidentsPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'documents'        && <DocumentsPage showToast={showToast} currentWorker={currentWorker} />}
         </div>
