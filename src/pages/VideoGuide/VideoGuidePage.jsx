@@ -58,7 +58,7 @@ export function VideoGuidePage({ showToast }) {
           <div style={{ display: 'grid', gap: 6 }}>
             {master && (
               <button onClick={() => play(master.name, 'The whole guide')} aria-pressed={current?.name === master.name}
-                style={{ ...btnSecondary, justifyContent: 'space-between', minHeight: 44, textAlign: 'left', fontWeight: 700,
+                style={{ ...btnSecondary, display: 'flex', justifyContent: 'space-between', gap: 10, minHeight: 44, textAlign: 'left', fontWeight: 700,
                   background: current?.name === master.name ? C.accentSoft : 'transparent', borderColor: current?.name === master.name ? C.accentBorder : C.border, color: current?.name === master.name ? C.accent : C.text }}>
                 <span>▶ The whole guide</span><span style={{ color: C.textDim, fontSize: 11.5, fontWeight: 500 }}>{sizeMB(master)}</span>
               </button>
@@ -66,7 +66,7 @@ export function VideoGuidePage({ showToast }) {
             {clips.length > 0 && <div style={{ color: C.textMuted, fontSize: 11.5, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', margin: '8px 0 2px' }}>Chapters</div>}
             {clips.map(c => (
               <button key={c.name} onClick={() => play(c.name, c.title)} aria-pressed={current?.name === c.name}
-                style={{ ...btnSecondary, justifyContent: 'flex-start', gap: 10, minHeight: 44, textAlign: 'left',
+                style={{ ...btnSecondary, display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 10, minHeight: 44, textAlign: 'left',
                   background: current?.name === c.name ? C.accentSoft : 'transparent', borderColor: current?.name === c.name ? C.accentBorder : C.border, color: current?.name === c.name ? C.accent : C.text }}>
                 <span style={{ fontFamily: 'monospace', color: C.textDim, fontSize: 12 }}>{c.n}</span><span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{c.title}</span>
               </button>
