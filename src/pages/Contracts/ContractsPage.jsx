@@ -38,7 +38,7 @@ export function ContractsPage({ showToast, currentWorker, openSendFor }) {
       const [t, { data: c, error: e2 }, { data: w }] = await Promise.all([
         loadTemplates(),
         supabase.from('worker_contracts').select('*').order('created_at', { ascending: false }),
-        supabase.from('workers').select('id, name, email, mobile, address, job_title, worker_type, role, date_of_birth, subcontractor_abn, pay_rate_a, pay_rate_regular, casual_loading_pct, emergency_name, emergency_phone, app_status').is('archived_at', null).order('name'),
+        supabase.from('v_workers_admin').select('*').is('archived_at', null).order('name'),   // the admin view carries the pay columns the plain table hides
       ]);
       if (e2) throw e2;
       setTemplates(t); setContracts(c || []); setWorkers((w || []).filter(x => x.role !== 'admin'));

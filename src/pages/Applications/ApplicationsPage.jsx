@@ -122,7 +122,7 @@ export function ApplicationsPage({ showToast, onNavigate }) {
     load();
     if (data) {
       // Contract from the default template for their type; opens Contracts if details are missing.
-      supabase.from('workers').select('*').eq('id', data).single().then(({ data: w }) => w && autoSendContract({ worker: w, sender: null })).then(res => {
+      supabase.from('v_workers_admin').select('*').eq('id', data).single().then(({ data: w }) => w && autoSendContract({ worker: w, sender: null })).then(res => {
         if (res?.sent) showToast('Their contract was sent to sign in the app.', 'success');
         else if (res?.needsDetails) window.dispatchEvent(new CustomEvent('cbd:navigate', { detail: { page: 'contracts', contract: { workerId: data, templateId: res.template.id, contractId: res.id } } }));
       }).catch(() => {});
