@@ -34,6 +34,7 @@ import { ApplicationsPage } from '../pages/Applications/ApplicationsPage';
 import { LeaveRequestsPage } from '../pages/Leave/LeaveRequestsPage';
 import { PoliciesPage } from '../pages/Policies/PoliciesPage';
 import { VideoGuidePage } from '../pages/VideoGuide/VideoGuidePage';
+import { ContractsPage } from '../pages/Contracts/ContractsPage';
 import { IncidentsPage } from '../pages/Safety/IncidentsPage';
 import { DocumentsPage } from '../pages/Documents/DocumentsPage';
 import { WorkerPortal } from './WorkerPortal';
@@ -48,6 +49,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
     if (p.get('gmail_connected') === '1' || p.get('gmail_error')) return 'inbox';
     return 'dashboard';
   })();
+  const [contractPrompt, setContractPrompt] = useState(null);   // Add Worker → Contracts hand-off when specifics are missing
   const [activePage, setActivePage] = useState(initialPage);
   const [previewMode, setPreviewMode] = useState(false);
   const [blastOpen, setBlastOpen] = useState(false);
@@ -102,6 +104,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
     const onNav = (e) => {
       const page = e?.detail?.page;
       if (page) setActivePage(page);
+      if (e?.detail?.contract) setContractPrompt(e.detail.contract);
     };
     window.addEventListener('cbd:navigate', onNav);
     return () => window.removeEventListener('cbd:navigate', onNav);
@@ -142,6 +145,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         { id: 'default_rates', label: '💲 Default Rates' },
         { id: 'payroll', label: '💰 Payroll', badge: badges.payroll || null, badgeColor: 'green' },
         { id: 'invoices', label: '🧾 Invoices' },
+        { id: 'contracts', label: '📝 Contracts' },
         // Payments (Stripe) is hidden until its maths matches payroll/billing and
         // the Stripe keys are set (audit P2). Set REACT_APP_PAYMENTS_ENABLED=1 to show it.
         ...(process.env.REACT_APP_PAYMENTS_ENABLED === '1' ? [{ id: 'payments', label: '💳 Payments' }] : []),
@@ -328,6 +332,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'leave'            && <LeaveRequestsPage showToast={showToast} currentWorker={currentWorker} refreshBadge={refreshBadge} />}
           {activePage === 'policies'         && <PoliciesPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'video_guide'      && <VideoGuidePage showToast={showToast} currentWorker={currentWorker} />}
+          {activePage === 'contracts'        && isMoneyUser && <ContractsPage showToast={showToast} currentWorker={currentWorker} openSendFor={contractPrompt} />}
           {activePage === 'safety'           && <IncidentsPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'documents'        && <DocumentsPage showToast={showToast} currentWorker={currentWorker} />}
         </div>

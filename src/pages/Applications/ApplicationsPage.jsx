@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, btnPrimary, btnSecondary, btnSmall, btnDanger } from '../../theme';
 import { Spinner, Badge, EmptyState } from '../../components';
+import { autoSendContract } from '../../utils/contractSend';
 
 // Admin view of inbound applications from the marketing site / LinkedIn ad
 // / portal /apply page. Submissions land via the `submit-application` edge
@@ -119,6 +120,13 @@ export function ApplicationsPage({ showToast, onNavigate }) {
     if (error) { showToast(error.message, 'error'); return; }
     showToast(`Converted to worker — open Workers page to send onboarding link.`, 'success');
     load();
+    if (data) {
+      // Contract from the default template for their type; opens Contracts if details are missing.
+      supabase.from('workers').select('*').eq('id', data).single().then(({ data: w }) => w && autoSendContract({ worker: w, sender: null })).then(res => {
+        if (res?.sent) showToast('Their contract was sent to sign in the app.', 'success');
+        else if (res?.needsDetails) window.dispatchEvent(new CustomEvent('cbd:navigate', { detail: { page: 'contracts', contract: { workerId: data, templateId: res.template.id, contractId: res.id } } }));
+      }).catch(() => {});
+    }
     if (data && onNavigate) {
       // Soft cross-page nav so the admin can jump straight to the new worker.
       setTimeout(() => onNavigate('pending_workers'), 800);

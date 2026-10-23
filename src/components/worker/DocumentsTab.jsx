@@ -5,6 +5,7 @@ import { fmtDateTime } from '../../utils/dates';
 import { Spinner, EmptyState, Badge, Modal } from '../index';
 import { SignaturePad } from '../ui/SignaturePad';
 import { signatureProblem } from '../../utils/signatures';
+import { ContractsCard } from './ContractsCard';
 
 // Company documents e-sign (2026-10-19): contracts, policies, handbooks. The
 // office publishes a document (text body and/or a PDF) and says which worker
@@ -66,6 +67,7 @@ export function DocumentsTab({ currentWorker, showToast }) {
 
   return (
     <div data-area="documents" style={{ display: 'grid', gap: 12, maxWidth: 640, margin: '0 auto' }}>
+      <ContractsCard currentWorker={currentWorker} showToast={showToast} />
       <div style={{ color: C.textMuted, fontSize: 13 }}>
         {unsigned.length ? `${unsigned.length} document${unsigned.length === 1 ? '' : 's'} still need${unsigned.length === 1 ? 's' : ''} your signature.` : 'Everything is signed. New documents will appear here.'}
       </div>

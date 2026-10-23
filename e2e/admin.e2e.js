@@ -3,7 +3,7 @@ const { test, expect, expectNoSideScroll, openSignedIn } = require('./fixtures/t
 const MENU_ITEMS = ['Time off requests', 'Policies', 'Video guide', 'Safety', 'Documents', 'Reports'];
 // The test admin is ticked as an allocator. Allocators never see pay (owner rule
 // 2026-10-20), so the money pages must be missing from their menu.
-const MONEY_ITEMS = ['Plant', 'Invoices', 'Payroll'];
+const MONEY_ITEMS = ['Plant', 'Invoices', 'Payroll', 'Contracts'];
 
 test('admin: dashboard renders', async ({ page, mock }) => {
   await openSignedIn(page, mock, 'admin');

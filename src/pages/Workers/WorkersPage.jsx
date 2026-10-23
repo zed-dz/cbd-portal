@@ -15,6 +15,7 @@ import { addAdminNotification } from '../../utils/notify';
 import { WORKER_SAFE_COLS } from '../../utils/workerCols';
 import { RoleRatesEditor, checkRoleRates, saveRoleRates } from '../../components/workers/RoleRatesEditor';
 import { canSeeMoney } from '../../utils/access';
+import { autoSendContract } from '../../utils/contractSend';
 
 // Sequence counter for openEdit (see there). Module-level: one Workers page.
 const openEditSeq = { n: 0 };
@@ -279,6 +280,16 @@ export function WorkersPage({ showToast, currentWorker }) {
       if (writeRoleRates && roleRates.length) {
         const rrErr = await saveRoleRates(data.id, roleRates, []);
         if (rrErr) showToast(`Worker saved, but the rates by role were not: ${rrErr}`, 'error');
+      }
+
+      // Employment contract: filled from this record and sent by itself; if the template
+      // needs details the portal cannot know, the Contracts page opens with just those fields.
+      if (canSeeRates && payload.role !== 'admin') {
+        autoSendContract({ worker: { ...payload, id: data.id, name: data.name }, sender: currentWorker }).then(res => {
+          if (res.sent) showToast(`${data.name} added. Their contract was sent to sign in the app.`, 'success');
+          else if (res.needsDetails) { showToast(`${data.name} added. Type the contract details to send it.`); window.dispatchEvent(new CustomEvent('cbd:navigate', { detail: { page: 'contracts', contract: { workerId: data.id, templateId: res.template.id, contractId: res.id } } })); }
+          else if (res.skipped) showToast(`${data.name} added. No contract sent: ${res.skipped}.`);
+        }).catch(e => showToast(`Worker saved, but the contract was not prepared: ${e.message}`, 'error'));
       }
 
       if (!canSeeRates) {
