@@ -87,10 +87,12 @@ export function ContractsPage({ showToast, currentWorker, openSendFor }) {
   // ── sending ──
   const preview = useMemo(() => {
     if (!sendForm || !sendForm.worker || !sendForm.template) return null;
-    const values = { ...knownValues(sendForm.worker, currentWorker, { name: COMPANY_NAME }), ...sendForm.typed };
-    const f = fillTemplate(sendForm.template.body, values);
-    const custom = placeholdersIn(sendForm.template.body).filter(k => !(k in knownValues({}, null)) || f.missing.includes(k));
-    return { ...f, toType: custom };
+    const known = knownValues(sendForm.worker, currentWorker, { name: COMPANY_NAME });
+    const f = fillTemplate(sendForm.template.body, { ...known, ...sendForm.typed });
+    // Fields to type: custom placeholders, plus known ones the worker record leaves blank.
+    // Decided from the record alone, so a field does not vanish while it is being typed.
+    const toType = placeholdersIn(sendForm.template.body).filter(k => !(k in known) || String(known[k] || '').trim() === '');
+    return { ...f, toType };
   }, [sendForm, currentWorker]);
   const doSend = async () => {
     if (preview.missing.length) { showToast(`Still missing: ${preview.missing.map(labelFor).join(', ')}`, 'error'); return; }
