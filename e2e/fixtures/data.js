@@ -169,11 +169,7 @@ function seedTables() {
     contract_templates: [],
     worker_contracts: [
       { id: 'wc-1', worker_id: IDS.worker, title: 'Casual employment agreement', template_version: 1, status: 'sent', sent_at: '2026-10-23T00:00:00Z',
-        body: 'CASUAL EMPLOYMENT AGREEMENT
-
-Between CBD Plant & Labour Pty Ltd and Sam Taylor.
-
-1. Your first engagement is on 3 November 2026 as Labourer.' },
+        body: 'CASUAL EMPLOYMENT AGREEMENT. Between CBD Plant & Labour Pty Ltd and Sam Taylor. 1. Your first engagement is on 3 November 2026 as Labourer.' },
     ],
     policy_categories: [
       { id: 'pc-swms', name: 'SWMS', sort_order: 10, archived_at: null },
