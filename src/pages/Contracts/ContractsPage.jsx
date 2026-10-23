@@ -86,7 +86,7 @@ export function ContractsPage({ showToast, currentWorker, openSendFor }) {
 
   // ── sending ──
   const preview = useMemo(() => {
-    if (!sendForm) return null;
+    if (!sendForm || !sendForm.worker || !sendForm.template) return null;
     const values = { ...knownValues(sendForm.worker, currentWorker, { name: COMPANY_NAME }), ...sendForm.typed };
     const f = fillTemplate(sendForm.template.body, values);
     const custom = placeholdersIn(sendForm.template.body).filter(k => !(k in knownValues({}, null)) || f.missing.includes(k));
