@@ -53,6 +53,7 @@ const escLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
 // USER-entered text (comments, names, client/project strings) must never kill
 // the send: strip "$" from it before drawing. The throw in text() stays as the
 // money-leak tripwire for anything WE compose (layout strings, computed cells).
+const EMAIL_RE_OK = (e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
 const stripUser = (s: unknown) => String(s ?? '').replace(/\$/g, '');
 
 // DB text that lands in the email HTML is escaped; a client or project named
@@ -209,6 +210,25 @@ async function buildPdf(header: any, lines: any[], workerName: string, po: strin
     y -= 10;
   }
 
+
+  // Signatures (Zeff, 2026-10-26: client AND worker signature on the docket).
+  const drawSig = async (label: string, png: string | null, who: string) => {
+    newPageIfNeeded(90);
+    text(label.toUpperCase(), M, 8, bold, muted); y -= 12;
+    if (png && png.startsWith('data:image/png;base64,')) {
+      try {
+        const img = await doc.embedPng(Uint8Array.from(atob(png.slice(22)), c => c.charCodeAt(0)));
+        const w = Math.min(200, img.width), hgt = w * (img.height / img.width);
+        page.drawImage(img, { x: M, y: y - hgt, width: w, height: hgt }); y -= hgt + 6;
+      } catch { text('(signature image could not be read)', M, 9, font, muted); y -= 12; }
+    } else { text('not signed', M, 9, font, muted); y -= 12; }
+    if (who) { text(stripUser(who), M, 9); y -= 14; }
+    y -= 6;
+  };
+  await drawSig('Worker signature', header.worker_signature || null, workerName);
+  const signerLine = [stripUser(header.client_approved_by || ''), header.client_signer_company ? `(${stripUser(header.client_signer_company)})` : '', header.client_approved_at ? `on ${new Date(header.client_approved_at).toLocaleString('en-AU', { timeZone: 'Australia/Sydney' })}` : ''].filter(Boolean).join(' ');
+  await drawSig('Client / supervisor signature', header.client_signature || null, signerLine);
+
   newPageIfNeeded(50);
   const approvedNote = header.client_approved
     ? `Accepted by ${stripUser(header.client_approved_by) || 'the site representative'} on ${header.client_approved_at ? new Date(header.client_approved_at).toLocaleDateString('en-AU', { timeZone: 'Australia/Sydney' }) : '—'}`
@@ -301,7 +321,7 @@ serve(async (req) => {
 
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-  const sel = 'id, client, project, role, status, comments, wet_hire, total_hours, client_approved, client_approved_by, client_approved_at, pdf_emailed_at, locked, version, worker_id, workers(name)';
+  const sel = 'id, client, project, role, status, comments, wet_hire, total_hours, client_approved, client_approved_by, client_approved_at, pdf_emailed_at, locked, version, worker_id, site_id, site_name_snapshot, worker_signature, client_signature, client_signer_email, client_signer_company, signed_on_site_at, workers(name)';
   let q = sb.from('timesheet_headers').select(sel);
   if (body.token)          q = q.eq('client_approval_token', body.token);
   else if (body.header_id) q = q.eq('id', body.header_id);
@@ -328,7 +348,7 @@ serve(async (req) => {
   const to = new Set<string>();
   const cc = new Set<string>();
   const { data: clientRows } = await sb.from('clients')
-    .select('id, contact_email').ilike('name', escLike((h.client || '').trim())).limit(1);
+    .select('id, contact_email, timesheet_emails').ilike('name', escLike((h.client || '').trim())).limit(1);
   const client = clientRows?.[0];
   if (client && h.project) {
     const { data: jobs } = await sb.from('client_jobs')
@@ -340,6 +360,14 @@ serve(async (req) => {
     const e = client.contact_email.trim().toLowerCase();
     if (to.size === 0) to.add(e); else if (!to.has(e)) cc.add(e);
   }
+  // The supervisor who signed gets their copy, and the client's assigned timesheet inbox(es)
+  // (site list overrides the client list) get every approved sheet (Zeff / Paul, 2026-10-26).
+  const signer = String((h as any).client_signer_email || '').trim().toLowerCase();
+  if (signer && EMAIL_RE_OK(signer)) { cc.delete(signer); to.add(signer); }
+  let assigned: string[] = [];
+  if ((h as any).site_id) { const { data: srow } = await sb.from('client_sites').select('timesheet_emails').eq('id', (h as any).site_id).maybeSingle(); assigned = (srow?.timesheet_emails || []) as string[]; }
+  if (!assigned.length && client?.id) { const { data: crow } = await sb.from('clients').select('timesheet_emails').eq('id', client.id).maybeSingle(); assigned = (crow?.timesheet_emails || []) as string[]; }
+  for (const a of assigned.map(x => String(x).trim().toLowerCase()).filter(EMAIL_RE_OK)) { cc.delete(a); to.add(a); }
   if (to.size === 0) {
     await sb.from('notifications').insert([{
       type: 'timesheet_pdf_blocked',
@@ -372,7 +400,7 @@ serve(async (req) => {
     return `<tr><td>${fmtDate(l.date)} (${dayName(l.date)})</td><td>${fmtTime(l.start_time)}</td><td>${fmtTime(l.end_time)}</td><td>${brk ? brk + ' h' : '—'}</td><td align="right"><strong>${(parseFloat(l.total_hours ?? l.pay_hours) || 0).toFixed(2)}</strong></td></tr>`;
   }).join('');
   const html = `
-    <p>Hi,</p>
+    <p>Hi,</p>${(h as any).signed_on_site_at ? `<p>Signed on site by <strong>${esc(h.client_approved_by || 'the supervisor')}</strong> on the worker's phone.</p>` : ''}
     <p>The timesheet for <strong>${esc(label)}</strong> has been accepted${h.client_approved_by ? ` by ${esc(h.client_approved_by)}` : ''}${body.reason === 'auto' ? ' (finalised automatically after 7 days with no response)' : ''}. A PDF copy is attached for your records.</p>${po ? `<p><strong>Purchase order:</strong> ${esc(po)}</p>` : ''}
     <table cellpadding="6" cellspacing="0" border="1" style="border-collapse:collapse;border-color:#ddd;font-family:Arial,sans-serif;font-size:13px">
       <tr style="background:#f6f4f1"><th align="left">Date</th><th align="left">Start</th><th align="left">Finish</th><th align="left">Break</th><th align="right">Hours</th></tr>

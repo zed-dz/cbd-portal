@@ -43,6 +43,8 @@ export async function markClientApprovedManually(headerId, approverNote) {
   if (error) return { ok: false, error: error.message };
   const { error: e2 } = await supabase.from('timesheets')
     .update({ client_approved: true, status: 'approved' }).eq('header_id', headerId);
+  // The office hears about it (Chris, 2026-10-26: "when they sign it we get a notification").
+  supabase.from('notifications').insert([{ type: 'timesheet_signed_on_site', title: `Docket signed on site — ${approverNote || 'supervisor'}`, body: 'The supervisor signed on the worker\'s phone. Approved, locked and billable; the PDF is going to the supervisor and the client\'s timesheet inbox.' }]).then(() => {}, () => {});
   // A verbal acceptance still gets the client their PDF record automatically.
   supabase.functions.invoke('send-timesheet-pdf', { body: { header_id: headerId, reason: 'admin' } }).catch(() => {});
   return { ok: !e2, error: e2?.message };

@@ -3,6 +3,8 @@ import { supabase } from '../../supabaseClient';
 import { C, btnPrimary, btnSecondary, inputStyle } from '../../theme';
 import { Spinner } from '../../components';
 import { TimesheetDetailView } from '../../components/timesheet/TimesheetDetailView';
+import { SignaturePad } from '../../components/ui/SignaturePad';
+import { signatureProblem } from '../../utils/signatures';
 
 // Public, token-gated page the SITE SUPERVISOR opens from the email/SMS link
 // after an admin approves a timesheet (no login — the token is the trust
@@ -13,6 +15,8 @@ export function ClientApprovePage({ token }) {
   const [state, setState] = useState('loading'); // loading | notfound | ready | accepting | accepted | disputing | disputed
   const [payload, setPayload] = useState(null);
   const [approver, setApprover] = useState('');
+  const [approverEmail, setApproverEmail] = useState('');
+  const [drawn, setDrawn] = useState('');
   const [error, setError] = useState('');
   const [disputeOpen, setDisputeOpen] = useState(false);
   const [disputeNote, setDisputeNote] = useState('');
@@ -30,11 +34,13 @@ export function ClientApprovePage({ token }) {
   }, [token]);
 
   const accept = async () => {
+    if (approver.trim().length < 2) { setError('Type your name to accept.'); return; }
+    const problem = signatureProblem(drawn); if (problem) { setError(problem); return; }
+    if (approverEmail.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(approverEmail.trim())) { setError("That email doesn't look right."); return; }
+    setError('');
     setState('accepting');
     setError('');
-    const { data, error: e } = await supabase.rpc('approve_timesheet_via_token', {
-      p_token: token, p_approver: approver || null,
-    });
+    const { data, error: e } = await supabase.rpc('approve_timesheet_via_token', { p_token: token, p_approver: approver.trim() || null, p_email: approverEmail.trim().toLowerCase() || null, p_signature: drawn || null });
     if (e || data !== true) {
       setError(e?.message || 'Could not record the approval — please try again or contact the office.');
       setState('ready');
@@ -110,12 +116,23 @@ export function ClientApprovePage({ token }) {
           <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 10 }}>
             Accepting confirms the hours above are correct — they'll be finalised for invoicing. If we don't hear back within 7 days, the timesheet is finalised automatically.
           </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 4 }}>Sign with your finger to accept</div>
+            <SignaturePad value={drawn} onChange={setDrawn} height={140} ariaLabel="Draw your signature" />
+          </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <input
               style={{ ...inputStyle, maxWidth: 260 }}
-              placeholder="Your name (optional)"
+              placeholder="Your name *"
               value={approver}
               onChange={e => setApprover(e.target.value)}
+            />
+            <input
+              style={{ ...inputStyle, maxWidth: 300 }}
+              type="email" inputMode="email" autoCapitalize="off"
+              placeholder="Your email (we send you the signed PDF)"
+              value={approverEmail}
+              onChange={e => setApproverEmail(e.target.value)}
             />
             <button onClick={accept} disabled={state === 'accepting' || state === 'disputing'} style={{ ...btnPrimary, background: C.success, padding: '10px 26px' }}>
               {state === 'accepting' ? 'Recording…' : '✓ Accept timesheet'}

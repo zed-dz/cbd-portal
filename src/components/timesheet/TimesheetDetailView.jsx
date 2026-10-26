@@ -269,6 +269,12 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
         </div>
       )}
 
+      {header.worker_signature && String(header.worker_signature).startsWith('data:image') && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 11, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Worker signature</div>
+          <img src={header.worker_signature} alt="Worker signature" style={{ maxWidth: 260, background: '#fff', borderRadius: 8, border: `1px solid ${C.border}` }} />
+        </div>
+      )}
       {header.client_signature && (
         <div style={{ marginTop: 14 }}>
           <div style={{ fontSize: 11, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Client signature</div>

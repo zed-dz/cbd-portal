@@ -500,9 +500,10 @@ Deno.serve(async (req) => {
       if (r.ok) sentVia.push(`email ${contact.email}`); else failures.push(`email: ${r.detail || r.via}`);
       try { await sb.from('message_log').insert([{ channel: 'email', audience: 'client', recipient_name: contact.name, recipient_email: contact.email, subject, body: lines.join('\n'), status: r.ok ? 'sent' : 'failed', error: r.ok ? null : (r.detail || r.via).slice(0, 300), sent_by: callerWorkerId, batch_id: batchId }]); } catch { /* log only */ }
     }
-    // Text only when the supervisor has no email: the client asked for email + PDF (paper trail).
-    if (contact.phone && !contact.email) {
-      await bell('timesheet_signoff_no_email', `No email for ${contact.name} — sign-off went by text only`, `Add an email under Clients & Rates → Manage sites so ${clientName || 'the client'} gets the PDF and a paper trail.`);
+    // Text AND email (Chris, 2026-10-26): the text carries the link the supervisor taps on site;
+    // the email carries the PDF for the paper trail. No email on file → bell the office.
+    if (contact.phone) {
+      if (!contact.email) await bell('timesheet_signoff_no_email', `No email for ${contact.name} — sign-off went by text only`, `Add an email under Clients & Rates → Manage sites so ${clientName || 'the client'} gets the PDF and a paper trail.`);
       const to = normaliseAUMobile(contact.phone);
       if (to) {
         const cfg = await loadTwilioConfig(sb);

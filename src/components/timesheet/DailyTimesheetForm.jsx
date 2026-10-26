@@ -35,7 +35,7 @@ const emptyHoursLine = () => ({
 export const blankDaily = () => ({
   id: null,
   client: '', project: '', role: '',
-  wet_hire: false, comments: '', client_signature: '',
+  wet_hire: false, comments: '', client_signature: '', worker_signature: '',
   // 'Did you finish work early?' — null until the worker answers (required).
   finished_early: null, finished_early_reason: '',
   status: 'pending',
@@ -51,6 +51,7 @@ export function dailyFromHeader(header, lineRows) {
     finished_early: header.finished_early == null ? null : !!header.finished_early,
     finished_early_reason: header.finished_early_reason || '',
     client_signature: header.client_signature || '',
+    worker_signature: header.worker_signature || '',
     status: header.status || 'pending',
     hours_lines: (lineRows || []).map(r => ({
       date: r.date || '',
@@ -141,7 +142,7 @@ export function DailyTimesheetForm({
   // beside the pad — the drawn PNG itself lives in form.client_signature.
   // `touched` = drawn THIS session; a signature loaded from an old sheet must
   // not re-trigger the approve-on-the-spot flow (it was recorded back then).
-  const [sig, setSig] = useState({ name: '', company: '', touched: false });
+  const [sig, setSig] = useState({ name: '', company: '', email: '', touched: false });
   // Fatigue context from the DB: when the worker's last saved shift ended and
   // how many hours are already saved for this Mon–Sun week (other sheets).
   const [fatigueCtx, setFatigueCtx] = useState({ previousEndMs: null, otherWeekHours: 0 });
@@ -557,6 +558,15 @@ export function DailyTimesheetForm({
       showToast("Add the supervisor's name next to their signature — or clear the signature to use the text-a-link flow.", 'error');
       return;
     }
+    if (signedOnSite && String(sig.email).trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(sig.email).trim())) {
+      showToast("That supervisor email doesn't look right.", 'error');
+      return;
+    }
+    // The worker signs their own sheet (Zeff, 2026-10-26: client AND worker signature on the docket).
+    if (!allowAdmin && !String(form.worker_signature || '').startsWith('data:image')) {
+      showToast('Sign your timesheet in the "Your signature" box before submitting.', 'error');
+      return;
+    }
 
     // "Tasks Completed" is mandatory for a worker submitting their own sheet.
     // Managers editing/approving legacy sheets aren't hard-blocked on it.
@@ -636,6 +646,10 @@ export function DailyTimesheetForm({
         site_name_snapshot: form.project || null,
         role_name_snapshot: form.role || null,
         fatigue_flags: fatigue.breaches.length ? fatigue.breaches : null,
+        worker_signature: String(form.worker_signature || '').startsWith('data:image') ? form.worker_signature : null,
+        client_signer_email: signedOnSite ? (String(sig.email || '').trim().toLowerCase() || null) : null,
+        client_signer_company: signedOnSite ? (String(sig.company || '').trim() || null) : null,
+        signed_on_site_at: signedOnSite ? new Date().toISOString() : null,
       },
       linePatch: { client_id: clientId, site_id: siteId },
     };
@@ -1057,10 +1071,22 @@ export function DailyTimesheetForm({
           the spot (markClientApprovedManually) and the supervisor link is
           skipped; left blank = the usual text-a-link flow, unchanged. */}
       {!allowAdmin && (
+        <div data-area="worker signature" style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 14px', margin: '4px 0 12px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>✍️ Your signature *</div>
+          <div style={{ fontSize: 12, color: C.textMuted, margin: '2px 0 10px' }}>Sign with your finger. It goes on the docket next to the supervisor's signature.</div>
+          <SignaturePad
+            value={String(form.worker_signature || '').startsWith('data:image') ? form.worker_signature : ''}
+            onChange={v => setField('worker_signature', v)}
+            height={120}
+          />
+        </div>
+      )}
+
+      {!allowAdmin && (
         <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 14px', margin: '4px 0 12px' }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>✍️ Client signature (optional)</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>✍️ Supervisor signature (optional)</div>
           <div style={{ fontSize: 12, color: C.textMuted, margin: '2px 0 10px' }}>
-            Supervisor with you? Get them to sign now — otherwise we text them a link.
+            Supervisor with you? Get them to sign now, with their name and email: the sheet is approved on the spot and they get the PDF. Otherwise we text them a link.
           </div>
           <SignaturePad
             value={String(form.client_signature || '').startsWith('data:image') ? form.client_signature : ''}
@@ -1078,6 +1104,11 @@ export function DailyTimesheetForm({
                 <input style={inputStyle} value={sig.company}
                   onChange={e => setSig(s => ({ ...s, company: e.target.value }))}
                   placeholder="e.g. MLC Civil" />
+              </Field>
+              <Field label="Supervisor email" hint="They get the signed PDF straight away.">
+                <input style={inputStyle} type="email" inputMode="email" autoCapitalize="off" value={sig.email}
+                  onChange={e => setSig(s => ({ ...s, email: e.target.value }))}
+                  placeholder="name@client.com.au" />
               </Field>
             </div>
           )}

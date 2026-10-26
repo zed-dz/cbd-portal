@@ -16,7 +16,7 @@ import { SiteInductionModal } from './SiteInductionModal';
 // `approves_timesheets` marks who receives the timesheet approval link for work
 // on that site. Kept separate from `is_primary` deliberately.
 
-const blankSite    = { name: '', address: '', notes: '', map_link: '', po_number: '', is_active: true };
+const blankSite    = { name: '', address: '', notes: '', map_link: '', po_number: '', timesheet_emails_text: '', is_active: true };
 const blankContact = { name: '', role: '', email: '', phone: '', is_primary: false, approves_timesheets: false };
 
 export function ClientSitesManager({ client, onClose, showToast, currentWorker }) {
@@ -54,6 +54,7 @@ export function ClientSitesManager({ client, onClose, showToast, currentWorker }
       notes: siteForm.notes || null,
       map_link: siteForm.map_link || null,
       po_number: (siteForm.po_number || '').trim() || null,
+      timesheet_emails: String(siteForm.timesheet_emails_text || '').split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)),
       is_active: siteForm.is_active !== false,
     };
     const { error } = siteForm.id
@@ -134,7 +135,7 @@ export function ClientSitesManager({ client, onClose, showToast, currentWorker }
                 {site.notes && <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{site.notes}</div>}
               </div>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                <button style={btnSmall} onClick={() => setSiteForm({ ...site })}>Edit</button>
+                <button style={btnSmall} onClick={() => setSiteForm({ ...site, timesheet_emails_text: (site.timesheet_emails || []).join(', ') })}>Edit</button>
                 <button style={btnSmall} onClick={() => setInductionSite(site)} title="Site induction / SWMS the crew must read and sign">🦺 Induction</button>
                 <button style={btnSmall} onClick={() => toggleSiteActive(site)}>{site.is_active === false ? 'Reactivate' : 'Deactivate'}</button>
               </div>
@@ -193,6 +194,11 @@ export function ClientSitesManager({ client, onClose, showToast, currentWorker }
             <input style={inputStyle} value={siteForm.po_number || ''} maxLength={60}
               onChange={e => setSiteForm(f => ({ ...f, po_number: e.target.value }))}
               placeholder="e.g. PO-45821" />
+          </Field>
+          <Field label="Send approved timesheets to (this site only)" hint="Leave empty to use the client's list.">
+            <input style={inputStyle} value={siteForm.timesheet_emails_text || ''}
+              onChange={e => setSiteForm(f => ({ ...f, timesheet_emails_text: e.target.value }))}
+              placeholder="engineer@client.com.au" />
           </Field>
           <Field label="Notes">
             <input style={inputStyle} value={siteForm.notes || ''}

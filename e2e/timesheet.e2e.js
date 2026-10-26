@@ -17,6 +17,13 @@ async function fillShift(page, { date, start, end, tasks }) {
   await page.locator('input[type="time"]').nth(0).fill(start);
   await page.locator('input[type="time"]').nth(1).fill(end);
   await page.getByPlaceholder('Briefly describe the tasks you completed today').fill(tasks);
+  // The worker signs their own sheet (required since 2026-10-26): a squiggle on the pad.
+  const pad = page.locator('[data-area="worker signature"] canvas');
+  await pad.scrollIntoViewIfNeeded();
+  const b = await pad.boundingBox();
+  await page.mouse.move(b.x + 15, b.y + 60); await page.mouse.down();
+  for (let i = 1; i <= 30; i++) await page.mouse.move(b.x + 15 + i * 6, b.y + 60 + Math.sin(i / 2) * 25);
+  await page.mouse.up();
 }
 
 const finishedEarly = (page, answer) => page.locator('[data-area="finished early question"]').getByRole('radio', { name: answer });
