@@ -329,8 +329,15 @@ Deno.serve(async (req) => {
     if (allocErr) throw allocErr;
 
     const byWorker = new Map<string, { sites: Set<string>; clients: Set<string> }>();
+    // Weekend rule (owner, 2026-10-26: a worker was texted on a Sunday): a block booking that
+    // spans days (e.g. 20 Oct → 30 Nov) only counts Monday to Friday. A booking for exactly
+    // this one day counts whatever the day is, because the office booked that date.
+    const dow = new Date(today + 'T12:00:00+10:00').getUTCDay();   // 0 = Sunday, 6 = Saturday
+    const weekend = dow === 0 || dow === 6;
     for (const a of allocs || []) {
       if (!a.end_date && a.start_date !== today) continue;   // null end_date ⇒ single day
+      const singleDay = !a.end_date || a.end_date === a.start_date;
+      if (weekend && !singleDay) continue;
       const cur = byWorker.get(a.worker_id) || { sites: new Set<string>(), clients: new Set<string>() };
       if (a.site)   cur.sites.add(String(a.site).trim());
       if (a.client) cur.clients.add(String(a.client).trim());

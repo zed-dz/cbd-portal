@@ -103,7 +103,7 @@ const dayName = (d: string | null) => d
   ? new Date(d + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short' })
   : '';
 
-async function buildPdf(header: any, lines: any[], workerName: string) {
+async function buildPdf(header: any, lines: any[], workerName: string, po: string | null = null) {
   const doc  = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -153,6 +153,7 @@ async function buildPdf(header: any, lines: any[], workerName: string) {
     ['Project', stripUser(header.project) || '—'],
     ['Role',    stripUser(header.role) || '—'],
     ['Wet hire', header.wet_hire ? 'Yes' : 'No'],
+    ['PO number', stripUser(po) || 'not supplied'],
   ];
   for (const [k, v] of meta) {
     text(k.toUpperCase(), M, 8, bold, muted);
@@ -357,8 +358,13 @@ serve(async (req) => {
     return json({ error: 'no client email on file' }, 422);
   }
 
+  // The client's PO: the site's, else the project's with this site name (printed on the PDF + email).
+  let po: string | null = null;
+  if ((h as any).site_id) { const { data: srow } = await sb.from('client_sites').select('po_number').eq('id', (h as any).site_id).maybeSingle(); po = String(srow?.po_number || '').trim() || null; }
+  if (!po && clientRows?.[0]?.id && (h.project || (h as any).site_name_snapshot)) { const { data: jrow } = await sb.from('client_jobs').select('po_number').eq('client_id', clientRows[0].id).ilike('name', escLike(String((h as any).site_name_snapshot || h.project).trim())).limit(1); po = String(jrow?.[0]?.po_number || '').trim() || null; }
+
   const dates = (lines || []).map((l: any) => l.date).filter(Boolean).sort();
-  const label = oneLine(`${workerName} — ${h.project || h.client}${h.total_hours ? ` (${Number(h.total_hours).toFixed(2)}h)` : ''}`);
+  const label = oneLine(`${workerName} — ${h.project || h.client}${po ? ` — PO ${po}` : ''}${h.total_hours ? ` (${Number(h.total_hours).toFixed(2)}h)` : ''}`);
   const filename = `timesheet-${workerName.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${dates[0] || 'sheet'}.pdf`;
   const subject = `Approved timesheet — ${label}`;
   const rowsHtml = (lines || []).map((l: any) => {
@@ -367,7 +373,7 @@ serve(async (req) => {
   }).join('');
   const html = `
     <p>Hi,</p>
-    <p>The timesheet for <strong>${esc(label)}</strong> has been accepted${h.client_approved_by ? ` by ${esc(h.client_approved_by)}` : ''}${body.reason === 'auto' ? ' (finalised automatically after 7 days with no response)' : ''}. A PDF copy is attached for your records.</p>
+    <p>The timesheet for <strong>${esc(label)}</strong> has been accepted${h.client_approved_by ? ` by ${esc(h.client_approved_by)}` : ''}${body.reason === 'auto' ? ' (finalised automatically after 7 days with no response)' : ''}. A PDF copy is attached for your records.</p>${po ? `<p><strong>Purchase order:</strong> ${esc(po)}</p>` : ''}
     <table cellpadding="6" cellspacing="0" border="1" style="border-collapse:collapse;border-color:#ddd;font-family:Arial,sans-serif;font-size:13px">
       <tr style="background:#f6f4f1"><th align="left">Date</th><th align="left">Start</th><th align="left">Finish</th><th align="left">Break</th><th align="right">Hours</th></tr>
       ${rowsHtml}
@@ -394,7 +400,7 @@ serve(async (req) => {
   let pdf: Uint8Array;
   let pdfSha256 = '';
   try {
-    pdf = await buildPdf(h, lines || [], workerName);
+    pdf = await buildPdf(h, lines || [], workerName, po);
     const shaBuf = await crypto.subtle.digest('SHA-256', pdf);
     pdfSha256 = [...new Uint8Array(shaBuf)].map(b => b.toString(16).padStart(2, '0')).join('');
   } catch (eBuild) {

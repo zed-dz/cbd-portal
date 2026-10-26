@@ -16,7 +16,7 @@ import { SiteInductionModal } from './SiteInductionModal';
 // `approves_timesheets` marks who receives the timesheet approval link for work
 // on that site. Kept separate from `is_primary` deliberately.
 
-const blankSite    = { name: '', address: '', notes: '', map_link: '', is_active: true };
+const blankSite    = { name: '', address: '', notes: '', map_link: '', po_number: '', is_active: true };
 const blankContact = { name: '', role: '', email: '', phone: '', is_primary: false, approves_timesheets: false };
 
 export function ClientSitesManager({ client, onClose, showToast, currentWorker }) {
@@ -53,6 +53,7 @@ export function ClientSitesManager({ client, onClose, showToast, currentWorker }
       address: siteForm.address || null,
       notes: siteForm.notes || null,
       map_link: siteForm.map_link || null,
+      po_number: (siteForm.po_number || '').trim() || null,
       is_active: siteForm.is_active !== false,
     };
     const { error } = siteForm.id
@@ -129,6 +130,7 @@ export function ClientSitesManager({ client, onClose, showToast, currentWorker }
                 </div>
                 {site.address && <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{site.address}</div>}
                 {site.map_link && <a href={site.map_link} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#93c5fd', textDecoration: 'none' }}>📍 Map pin</a>}
+                {site.po_number && <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>PO {site.po_number}</div>}
                 {site.notes && <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{site.notes}</div>}
               </div>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -186,6 +188,11 @@ export function ClientSitesManager({ client, onClose, showToast, currentWorker }
                 ⚠ Doesn't look like a Google/Apple Maps link — it will still save, but check it opens a map.
               </div>
             )}
+          </Field>
+          <Field label="Purchase order (PO) number" hint="Goes on every timesheet email and PDF for this site, so the client can match it.">
+            <input style={inputStyle} value={siteForm.po_number || ''} maxLength={60}
+              onChange={e => setSiteForm(f => ({ ...f, po_number: e.target.value }))}
+              placeholder="e.g. PO-45821" />
           </Field>
           <Field label="Notes">
             <input style={inputStyle} value={siteForm.notes || ''}

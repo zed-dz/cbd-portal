@@ -31,7 +31,7 @@ const rateCardDefaults = {
 
 const jobDefaults = {
   name: '', description: '', site: '', address: '',
-  site_contact_name: '', site_contact_email: '', site_contact_phone: '',
+  site_contact_name: '', site_contact_email: '', site_contact_phone: '', po_number: '',
   start_date: '', end_date: '', status: 'active',
   required_roles: [], notes: '',
 };
@@ -1491,6 +1491,7 @@ function JobsPanel({ client, showToast }) {
       site_contact_name:  j.site_contact_name  || '',
       site_contact_email: j.site_contact_email || '',
       site_contact_phone: j.site_contact_phone || '',
+      po_number: j.po_number || '',
       start_date: j.start_date || '',
       end_date: j.end_date || '', status: j.status || 'active',
       required_roles: j.required_roles || [], notes: j.notes || '',
@@ -1630,6 +1631,7 @@ function JobsPanel({ client, showToast }) {
                 👤 SITE CONTACT (PROJECT-SPECIFIC)
               </div>
             </div>
+            <Field label="Purchase order (PO) number"><input style={inputStyle} value={form.po_number || ''} maxLength={60} onChange={e => setForm(f => ({ ...f, po_number: e.target.value }))} placeholder="e.g. PO-45821" /></Field>
             <Field label="Site Contact Name"><input style={inputStyle} value={form.site_contact_name} onChange={e => setForm(f => ({ ...f, site_contact_name: e.target.value }))} placeholder="e.g. John Smith" /></Field>
             <Field label="Phone"><input style={inputStyle} type="tel" value={form.site_contact_phone} onChange={e => setForm(f => ({ ...f, site_contact_phone: e.target.value }))} placeholder="04xx xxx xxx" /></Field>
             <div style={{ gridColumn: '1 / -1' }}>

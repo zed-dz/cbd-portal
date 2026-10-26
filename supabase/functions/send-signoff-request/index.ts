@@ -14,6 +14,11 @@
 // 200 { ok: false, error, alreadySent?: true }   (soft failures, so the UI toasts)
 // 401 / 403 / 404 as usual.
 //
+// Channel rule (site supervisor feedback via the owner, 2026-10-26): EMAIL with the
+// timesheet PDF attached and the client's PO number, so the client has a paper trail.
+// A text goes out only when the contact has no email on file, and the office is told
+// to add one.
+//
 // Supervisor lookup order (first with an email or phone wins):
 //   1. the sheet's site (site_id, else site name within the client): contacts
 //      flagged approves_timesheets, then is_primary, then any
@@ -22,6 +27,8 @@
 //   3. the client's project (client_jobs) site contact
 //   4. the client's head-office contact
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { PDFDocument, StandardFonts, rgb } from 'https://esm.sh/pdf-lib@1.17.1';
+import { encodeBase64 } from 'https://deno.land/std@0.224.0/encoding/base64.ts';
 
 const SUPABASE_URL         = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_ANON_KEY    = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -131,8 +138,9 @@ async function sendSms(cfg: TwilioCfg, to: string, body: string): Promise<{ ok: 
 }
 
 // ── Email: Resend first, Gmail fallback (mirrors send-bulk-email) ──────────
-async function sendViaResend(opts: { to: string; subject: string; text: string; html?: string; replyTo?: string | null }) {
-  const payload: Record<string, unknown> = { from: MAIL_FROM, to: [opts.to], subject: opts.subject, text: opts.text };
+async function sendViaResend(opts: { to: string; subject: string; text: string; html?: string; replyTo?: string | null; attachments?: Array<{ filename: string; content: string }> }) {
+  const fromHeader = MAIL_FROM.includes('<') ? MAIL_FROM : `${SENDER_DISPLAY_NAME} <${MAIL_FROM}>`;   // branded From name
+  const payload: Record<string, unknown> = { from: fromHeader, to: [opts.to], subject: opts.subject, text: opts.text, ...(opts.attachments?.length ? { attachments: opts.attachments } : {}) };
   if (opts.html) payload.html = opts.html;
   if (opts.replyTo) payload.reply_to = opts.replyTo;
   try {
@@ -231,11 +239,11 @@ async function sendGmailRaw(accessToken: string, mime: string) {
 
 // Resend → Gmail. `gmail` is resolved lazily only when needed.
 async function deliverEmail(sb: ReturnType<typeof createClient>, gmailBox: { ctx?: GmailCtx; tried: boolean },
-  opts: { to: string; subject: string; text: string; html: string }): Promise<{ ok: boolean; via: string; detail: string }> {
+  opts: { to: string; subject: string; text: string; html: string; attachments?: Array<{ filename: string; content: string }> }): Promise<{ ok: boolean; via: string; detail: string }> {
   const ensureGmail = async () => { if (!gmailBox.tried) { gmailBox.tried = true; gmailBox.ctx = await getGmail(sb); } return gmailBox.ctx || null; };
   if (RESEND_ON) {
     const g0 = gmailBox.tried ? gmailBox.ctx : null;
-    const r = await sendViaResend({ to: opts.to, subject: opts.subject, text: opts.text, html: opts.html, replyTo: g0?.emailAddress || null });
+    const r = await sendViaResend({ to: opts.to, subject: opts.subject, text: opts.text, html: opts.html, replyTo: g0?.emailAddress || null, attachments: opts.attachments });
     if (r.ok) return { ok: true, via: 'resend', detail: '' };
     const g = await ensureGmail();
     if (!g) return { ok: false, via: 'resend', detail: r.detail };
@@ -274,6 +282,67 @@ function renderHtml(subject: string, lines: string[]) {
 </body></html>`;
 }
 
+
+// ── PDF of the sheet (hours only) — same shape as send-timesheet-pdf ──────────
+const fmtTime = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString('en-AU', { timeZone: 'Australia/Sydney', hour: 'numeric', minute: '2-digit' }) : '—';
+const fmtDate = (d: string | null) => d ? new Date(d + 'T12:00:00').toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
+const dayName = (d: string | null) => d ? new Date(d + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short' }) : '';
+const stripUser = (s: unknown) => String(s ?? '').replace(/\$/g, '');
+
+async function buildSignoffPdf(header: any, lines: any[], workerName: string, po: string | null) {
+  const doc  = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const A4: [number, number] = [595.28, 841.89];
+  const M = 48;
+  const ink = rgb(0.12, 0.13, 0.16), muted = rgb(0.42, 0.44, 0.48), accent = rgb(0.976, 0.451, 0.086), line = rgb(0.88, 0.87, 0.85);
+  let page = doc.addPage(A4); let y = A4[1] - M;
+  const newPageIfNeeded = (need: number) => { if (y - need < M) { page = doc.addPage(A4); y = A4[1] - M; } };
+  // HOURS-ONLY CONTRACT: a "$" anywhere aborts the build rather than leak money to a client.
+  const text = (s: string, x: number, size = 10, f = font, color = ink) => {
+    if (String(s ?? '').includes('$')) throw new Error(`money leak blocked: refusing to draw "$" on a client PDF (${String(s).slice(0, 60)})`);
+    page.drawText(s ?? '', { x, y, size, font: f, color });
+  };
+  const wrap = (s: string, size: number, maxW: number) => {
+    const words = String(s || '').split(/\s+/); const out: string[] = []; let cur = '';
+    for (const w of words) { const t = cur ? cur + ' ' + w : w; if (font.widthOfTextAtSize(t, size) > maxW && cur) { out.push(cur); cur = w; } else cur = t; }
+    if (cur) out.push(cur); return out;
+  };
+  text(SENDER_DISPLAY_NAME, M, 18, bold, accent); y -= 20;
+  text('Timesheet for sign-off', M, 13, bold); y -= 24;
+  const meta: Array<[string, string]> = [
+    ['Worker', stripUser(workerName) || '—'], ['Client', stripUser(header.client) || '—'],
+    ['Site', stripUser(header.site_name_snapshot || header.project) || '—'], ['Role', stripUser(header.role) || '—'],
+    ['PO number', stripUser(po) || 'not supplied'],
+  ];
+  for (const [k, v] of meta) { text(k.toUpperCase(), M, 8, bold, muted); text(String(v), M + 90, 10); y -= 15; }
+  y -= 8;
+  const cols = [{ h: 'Date', x: M }, { h: 'Day', x: M + 78 }, { h: 'Start', x: M + 128 }, { h: 'End', x: M + 196 }, { h: 'Break', x: M + 264 }, { h: 'Total hrs', x: M + 330 }];
+  newPageIfNeeded(40);
+  for (const c of cols) text(c.h.toUpperCase(), c.x, 8, bold, muted);
+  y -= 6; page.drawLine({ start: { x: M, y }, end: { x: A4[0] - M, y }, thickness: 0.7, color: line }); y -= 14;
+  let total = 0;
+  for (const l of lines) {
+    newPageIfNeeded(20);
+    const hrs = parseFloat(l.total_hours ?? l.pay_hours ?? 0) || 0; total += hrs;
+    text(fmtDate(l.date), cols[0].x, 10); text(dayName(l.date), cols[1].x, 10, font, muted);
+    text(fmtTime(l.start_time), cols[2].x, 10); text(fmtTime(l.end_time), cols[3].x, 10);
+    const brk = parseFloat(l.total_break_hours ?? (l.break_minutes != null ? l.break_minutes / 60 : 0)) || 0;
+    text(brk ? `${brk} h` : '—', cols[4].x, 10); text(hrs.toFixed(2), cols[5].x, 10, bold); y -= 16;
+  }
+  y -= 2; page.drawLine({ start: { x: M, y }, end: { x: A4[0] - M, y }, thickness: 0.7, color: line }); y -= 16;
+  newPageIfNeeded(20); text('TOTAL', cols[4].x, 9, bold, muted); text(`${(parseFloat(header.total_hours) || total).toFixed(2)} h`, cols[5].x, 11, bold); y -= 26;
+  if (header.comments) {
+    newPageIfNeeded(40); text('TASKS COMPLETED', M, 8, bold, muted); y -= 14;
+    for (const ln of wrap(stripUser(header.comments), 10, A4[0] - 2 * M)) { newPageIfNeeded(14); text(ln, M, 10); y -= 13; }
+    y -= 10;
+  }
+  newPageIfNeeded(50);
+  text('APPROVAL', M, 8, bold, muted); y -= 14;
+  text('Awaiting site sign-off. Accept or query it with the link in the email (no login needed).', M, 10); y -= 20;
+  text(`Generated by the ${SENDER_DISPLAY_NAME} portal — hours only, no rates shown.`, M, 8, font, muted);
+  return doc.save();
+}
 
 // ── Handler ────────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
@@ -315,7 +384,7 @@ Deno.serve(async (req) => {
     if (!UUID_RE.test(headerId)) return json({ error: 'invalid_header_id' }, 400);
 
     const { data: h } = await sb.from('timesheet_headers')
-      .select('id, worker_id, client, project, status, client_approval_token, client_approved, client_approval_sent_at, total_hours, client_id, site_id, site_name_snapshot, workers(name)')
+      .select('id, worker_id, client, project, role, comments, status, client_approval_token, client_approved, client_approval_sent_at, total_hours, client_id, site_id, site_name_snapshot, workers(name)')
       .eq('id', headerId).maybeSingle();
     if (!h) return json({ error: 'timesheet_not_found' }, 404);
     if (!office && h.worker_id !== callerWorkerId) return json({ error: 'not_your_timesheet' }, 403);
@@ -401,27 +470,39 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: err });
     }
 
+    // The client's PO: the site's, else the project's with this site name.
+    let po: string | null = null;
+    if (siteId) { const { data: srow } = await sb.from('client_sites').select('po_number').eq('id', siteId).maybeSingle(); po = clean(srow?.po_number); }
+    if (!po && clientRow && siteName) { const { data: jrow } = await sb.from('client_jobs').select('po_number').eq('client_id', clientRow.id).ilike('name', siteName.replace(/[\\%_]/g, (m: string) => `\\${m}`)).limit(1); po = clean(jrow?.[0]?.po_number); }
+    // The sheet itself, as a PDF (hours only).
+    const { data: sheetLines } = await sb.from('timesheets').select('date, start_time, end_time, total_hours, pay_hours, total_break_hours, break_minutes').eq('header_id', h.id).order('date');
+    let pdfB64: string | null = null;
+    try { pdfB64 = encodeBase64(await buildSignoffPdf(h, sheetLines || [], workerName, po)); } catch (e) { console.error('signoff pdf failed:', (e as Error).message); }
+    const pdfName = `Timesheet - ${workerName.replace(/[^\w ]+/g, '')} - ${(siteName || clientName).replace(/[^\w ]+/g, '')}${po ? ` - PO ${po.replace(/[^\w-]+/g, '')}` : ''}.pdf`;
+
     const link  = `${PORTAL_URL}/approve-ts/${token}`;
     const hours = h.total_hours ? ` (${Number(h.total_hours).toFixed(2)}h)` : '';
-    const label = `${workerName} — ${siteName || clientName}${hours}`;
+    const label = `${workerName} — ${siteName || clientName}${po ? ` — PO ${po}` : ''}${hours}`;
     const sentVia: string[] = [];
     const failures: string[] = [];
     const batchId = crypto.randomUUID();   // message_log.batch_id is NOT NULL; sent_by is a worker uuid
 
     if (contact.email) {
-      const subject = `Timesheet approval requested — ${label}`;
+      const subject = `Timesheet for sign-off — ${label}`;
       const lines = [
         `Hi ${contact.name},`, '',
-        `Please review and accept the timesheet for ${label}.`, '',
-        `Open it here (no login needed): ${link}`, '',
-        'Once you accept, the hours are finalised for invoicing. If we do not hear back within 7 days, the hours are finalised automatically.', '',
-        'Thanks!',
+        `${workerName}'s timesheet for ${siteName || clientName} is attached as a PDF${po ? ` (PO ${po})` : ''}${hours ? `, ${Number(h.total_hours).toFixed(2)} hours in total` : ''}.`, '',
+        `Accept it, or query it, here (no login needed): ${link}`, '',
+        'Once accepted, the hours are final for invoicing. If we do not hear back within 7 days, they are finalised automatically.', '',
+        'Keep this email for your records.',
       ];
-      const r = await deliverEmail(sb, { tried: false }, { to: contact.email, subject, text: lines.join('\n'), html: renderHtml(subject, lines) });
+      const r = await deliverEmail(sb, { tried: false }, { to: contact.email, subject, text: lines.join('\n'), html: renderHtml(subject, lines), attachments: pdfB64 ? [{ filename: pdfName, content: pdfB64 }] : [] });
       if (r.ok) sentVia.push(`email ${contact.email}`); else failures.push(`email: ${r.detail || r.via}`);
       try { await sb.from('message_log').insert([{ channel: 'email', audience: 'client', recipient_name: contact.name, recipient_email: contact.email, subject, body: lines.join('\n'), status: r.ok ? 'sent' : 'failed', error: r.ok ? null : (r.detail || r.via).slice(0, 300), sent_by: callerWorkerId, batch_id: batchId }]); } catch { /* log only */ }
     }
-    if (contact.phone) {
+    // Text only when the supervisor has no email: the client asked for email + PDF (paper trail).
+    if (contact.phone && !contact.email) {
+      await bell('timesheet_signoff_no_email', `No email for ${contact.name} — sign-off went by text only`, `Add an email under Clients & Rates → Manage sites so ${clientName || 'the client'} gets the PDF and a paper trail.`);
       const to = normaliseAUMobile(contact.phone);
       if (to) {
         const cfg = await loadTwilioConfig(sb);
