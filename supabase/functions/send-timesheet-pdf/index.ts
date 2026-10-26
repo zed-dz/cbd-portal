@@ -257,6 +257,17 @@ async function sendViaResend(to: string[], cc: string[], subject: string, html: 
   return (j?.id as string) || null;
 }
 
+
+// RFC 2047 "encoded-word" for any header that may carry non-ASCII (the long dash in
+// our subjects). Without it Gmail showed the subject as "â€”".
+const encodeHeader = (value: string) => {
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x00-\x7F]*$/.test(value)) return value;
+  let bin = ''; for (const b of new TextEncoder().encode(value)) bin += String.fromCharCode(b);
+  return `=?UTF-8?B?${btoa(bin)}?=`;
+};
+const b64Lines = (s: string) => encodeBase64(new TextEncoder().encode(s)).replace(/(.{76})/g, '$1\r\n');
+
 async function sendViaGmail(sb: any, to: string[], cc: string[], subject: string, html: string, pdf: Uint8Array, filename: string) {
   const { data: tok } = await sb.from('gmail_tokens').select('*').eq('id', 1).maybeSingle();
   if (!tok?.refresh_token) throw new Error('no Gmail connection');
@@ -274,17 +285,18 @@ async function sendViaGmail(sb: any, to: string[], cc: string[], subject: string
   const boundary = 'ts_' + crypto.randomUUID().replace(/-/g, '');
   const b64pdf = encodeBase64(pdf).replace(/(.{76})/g, '$1\r\n');
   const mime = [
-    `From: ${BRAND} <${tok.email_address}>`,
+    `From: ${encodeHeader(BRAND)} <${tok.email_address}>`,
     `To: ${to.join(', ')}`,
     ...(cc.length ? [`Cc: ${cc.join(', ')}`] : []),
-    `Subject: ${subject}`,
+    `Subject: ${encodeHeader(subject)}`,
     'MIME-Version: 1.0',
     `Content-Type: multipart/mixed; boundary="${boundary}"`,
     '',
     `--${boundary}`,
     'Content-Type: text/html; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
     '',
-    html,
+    b64Lines(html),
     `--${boundary}`,
     `Content-Type: application/pdf; name="${filename}"`,
     `Content-Disposition: attachment; filename="${filename}"`,
@@ -411,7 +423,7 @@ serve(async (req) => {
     const brk = parseFloat(l.total_break_hours ?? (l.break_minutes != null ? l.break_minutes / 60 : 0)) || 0;
     return `<tr><td>${fmtDate(l.date)} (${dayName(l.date)})</td><td>${fmtTime(l.start_time)}</td><td>${fmtTime(l.end_time)}</td><td>${brk ? brk + ' h' : '—'}</td><td align="right"><strong>${(parseFloat(l.total_hours ?? l.pay_hours) || 0).toFixed(2)}</strong></td></tr>`;
   }).join('');
-  const html = `
+  const html = `<meta charset="utf-8">
     <p>Hi,</p>${(h as any).signed_on_site_at ? `<p>Signed on site by <strong>${esc(h.client_approved_by || 'the supervisor')}</strong> on the worker's phone.</p>` : ''}
     <p>The timesheet for <strong>${esc(label)}</strong> has been accepted${h.client_approved_by ? ` by ${esc(h.client_approved_by)}` : ''}${body.reason === 'auto' ? ' (finalised automatically after 7 days with no response)' : ''}. A PDF copy is attached for your records.</p>${po ? `<p><strong>Purchase order:</strong> ${esc(po)}</p>` : ''}
     <table cellpadding="6" cellspacing="0" border="1" style="border-collapse:collapse;border-color:#ddd;font-family:Arial,sans-serif;font-size:13px">
