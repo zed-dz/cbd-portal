@@ -30,22 +30,13 @@ export async function sendTimesheetForClientApproval(headerId, { force = false }
 // Admin fallback for verbal/phone approvals: same effect as the supervisor
 // clicking the link — signs off AND approves, so it lands in Payroll.
 export async function markClientApprovedManually(headerId, approverNote) {
-  // Approve = state change + LOCK (same as the supervisor link path), so a
-  // verbally-accepted sheet cannot drift afterwards without Reset workflow.
-  const { error } = await supabase.from('timesheet_headers').update({
-    client_approved: true,
-    client_approved_at: new Date().toISOString(),
-    client_approved_by: approverNote || 'Marked manually by admin',
-    status: 'approved',
-    locked: true,
-    approved_at: new Date().toISOString(),
-  }).eq('id', headerId);
+  // Approve = state change + LOCK, done on the server: a worker's phone may not flip its
+  // own sheet (RLS), so approve_timesheet_on_site checks the supervisor signature + name
+  // and does it for the sheet's own worker, or for the office. It also bells the office.
+  const { data, error } = await supabase.rpc('approve_timesheet_on_site', { p_header_id: headerId, p_signer: approverNote || 'Marked manually by admin' });
   if (error) return { ok: false, error: error.message };
-  const { error: e2 } = await supabase.from('timesheets')
-    .update({ client_approved: true, status: 'approved' }).eq('header_id', headerId);
-  // The office hears about it (Chris, 2026-10-26: "when they sign it we get a notification").
-  supabase.from('notifications').insert([{ type: 'timesheet_signed_on_site', title: `Docket signed on site — ${approverNote || 'supervisor'}`, body: 'The supervisor signed on the worker\'s phone. Approved, locked and billable; the PDF is going to the supervisor and the client\'s timesheet inbox.' }]).then(() => {}, () => {});
-  // A verbal acceptance still gets the client their PDF record automatically.
+  if (!data?.ok) return { ok: false, error: data?.error || 'could not approve' };
+  // The signed PDF goes to the supervisor and the client's timesheet inbox automatically.
   supabase.functions.invoke('send-timesheet-pdf', { body: { header_id: headerId, reason: 'admin' } }).catch(() => {});
-  return { ok: !e2, error: e2?.message };
+  return { ok: true };
 }
