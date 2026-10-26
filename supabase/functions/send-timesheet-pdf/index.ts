@@ -362,10 +362,22 @@ serve(async (req) => {
   }
   // The supervisor who signed gets their copy, and the client's assigned timesheet inbox(es)
   // (site list overrides the client list) get every approved sheet (Zeff / Paul, 2026-10-26).
+  // A signer email typed on the worker's phone is unverified: it only receives the PDF when
+  // it matches the client's email domains or a contact already on file; otherwise the office
+  // is told to confirm it (security review 2026-10-26).
   const signer = String((h as any).client_signer_email || '').trim().toLowerCase();
-  if (signer && EMAIL_RE_OK(signer)) { cc.delete(signer); to.add(signer); }
+  if (signer && EMAIL_RE_OK(signer)) {
+    const domain = signer.split('@')[1];
+    const { data: crow0 } = client?.id ? await sb.from('clients').select('email_domains, contact_email').eq('id', client.id).maybeSingle() : { data: null };
+    const domains = ((crow0?.email_domains || []) as string[]).map(d => String(d).toLowerCase().replace(/^@/, ''));
+    const { data: knownContacts } = client?.id ? await sb.from('client_site_contacts').select('email, client_sites!inner(client_id)').eq('client_sites.client_id', client.id) : { data: [] };
+    const known = new Set([...(knownContacts || []).map((k: any) => String(k.email || '').toLowerCase()), String(crow0?.contact_email || '').toLowerCase()].filter(Boolean));
+    const trusted = known.has(signer) || domains.includes(domain) || (crow0?.contact_email && String(crow0.contact_email).toLowerCase().split('@')[1] === domain);
+    if (trusted) { cc.delete(signer); to.add(signer); }
+    else await sb.from('notifications').insert([{ type: 'timesheet_signer_unverified', title: `Check the supervisor email on ${workerName}'s timesheet`, body: `${signer} was typed on the worker's phone and does not match ${h.client || 'the client'}'s known addresses. The PDF went to the client's inbox only. Add the domain under the client, or resend from Timesheets once confirmed.` }]);
+  }
   let assigned: string[] = [];
-  if ((h as any).site_id) { const { data: srow } = await sb.from('client_sites').select('timesheet_emails').eq('id', (h as any).site_id).maybeSingle(); assigned = (srow?.timesheet_emails || []) as string[]; }
+  if ((h as any).site_id && client?.id) { const { data: srow } = await sb.from('client_sites').select('timesheet_emails').eq('id', (h as any).site_id).eq('client_id', client.id).maybeSingle(); assigned = (srow?.timesheet_emails || []) as string[]; }
   if (!assigned.length && client?.id) { const { data: crow } = await sb.from('clients').select('timesheet_emails').eq('id', client.id).maybeSingle(); assigned = (crow?.timesheet_emails || []) as string[]; }
   for (const a of assigned.map(x => String(x).trim().toLowerCase()).filter(EMAIL_RE_OK)) { cc.delete(a); to.add(a); }
   if (to.size === 0) {
