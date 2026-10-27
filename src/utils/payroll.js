@@ -420,7 +420,7 @@ export function computePayrollRow(ts, worker, clientRecord, config = {}, rateLin
 
   return {
     worker_name: worker.name, worker_type: worker.worker_type,
-    date: ts.date, scenario: ts.scenario, site: ts.site, client: ts.client, role: ts.role,
+    date: ts.date, scenario: ts.scenario, site: ts.site || ts.project || '', client: ts.client, role: ts.role,
     day_name: dayFromDate(ts.date),
     shift_times: fmtShiftTimes(ts.start_time, ts.end_time),
     break_minutes: ts.break_minutes || 0,
