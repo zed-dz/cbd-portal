@@ -29,7 +29,7 @@ begin
   return n;
 end;
 $function$;
-revoke all on function public.chase_unanswered_signoffs() from public;
+revoke all on function public.chase_unanswered_signoffs() from public, anon, authenticated;
 
 do $$ begin
   perform cron.unschedule('chase-unanswered-signoffs');
