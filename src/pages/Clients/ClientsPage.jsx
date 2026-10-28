@@ -12,11 +12,11 @@ import { InvoiceStatusChip, checkInvoicePayments } from '../../components/accoun
 import { canSeeMoney } from '../../utils/access';
 
 // Column grants hide the money columns on `clients` from non-admins (audit P1).
-const CLIENT_SAFE_COLS = 'id, name, site, contact, contact_email, contact_phone, notes, created_at, email_domains, rate_set_id, award_profile, archived_at, timesheet_emails';
+const CLIENT_SAFE_COLS = 'id, name, site, contact, contact_email, contact_phone, notes, created_at, email_domains, rate_set_id, award_profile, archived_at, timesheet_emails, pdf_delivery';
 const CLIENT_MONEY_COLS = 'rate_regular, rate_overtime, rate_night, rate_weekend, charge_travel, charge_meal, rate_a, rate_b, rate_c';
 
 const clientDefaults = {
-  name: '', site: '', contact: '', contact_email: '', contact_phone: '', timesheet_emails_text: '',
+  name: '', site: '', contact: '', contact_email: '', contact_phone: '', timesheet_emails_text: '', pdf_delivery: 'daily',
   award_profile: '',   // '' = project default; A/B/C = Dashpivot rules, PORTAL = legacy 7.6h+RDO
   rate_a: '', rate_b: '', rate_c: '',
   charge_travel: '', charge_meal: '', notes: '',
@@ -180,6 +180,7 @@ function ClientsList({ showToast, canSeeRates = true, currentWorker = null }) {
       name: c.name, site: c.site || '', contact: c.contact || '',
       contact_email: c.contact_email || '', contact_phone: c.contact_phone || '',
       timesheet_emails_text: (c.timesheet_emails || []).join(', '),
+      pdf_delivery: c.pdf_delivery || 'daily',
       award_profile: c.award_profile || '',
       rate_a: c.rate_a ?? c.rate_regular ?? '',
       rate_b: c.rate_b ?? c.rate_overtime ?? c.rate_night ?? '',
@@ -200,6 +201,7 @@ function ClientsList({ showToast, canSeeRates = true, currentWorker = null }) {
       name: form.name, site: form.site, contact: form.contact,
       contact_email: form.contact_email, contact_phone: form.contact_phone,
       timesheet_emails: String(form.timesheet_emails_text || '').split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)),
+      pdf_delivery: form.pdf_delivery === 'instant' ? 'instant' : 'daily',
       rate_a: A,
       rate_b: n(form.rate_b),
       rate_c: n(form.rate_c),
@@ -384,6 +386,12 @@ function ClientsList({ showToast, canSeeRates = true, currentWorker = null }) {
             <Field label="Contact Person"><input style={inputStyle} value={form.contact} onChange={e => setForm(f => ({ ...f, contact: e.target.value }))} /></Field>
             <Field label="Contact Email"><input style={inputStyle} type="email" value={form.contact_email} onChange={e => setForm(f => ({ ...f, contact_email: e.target.value }))} /></Field>
             <Field label="Send approved timesheets to" hint="Every approved timesheet PDF goes to these addresses (accounts, engineers). Separate with commas."><input style={inputStyle} value={form.timesheet_emails_text || ''} onChange={e => setForm(f => ({ ...f, timesheet_emails_text: e.target.value }))} placeholder="accounts@client.com.au, engineer@client.com.au" /></Field>
+            <Field label="How the PDFs are sent" hint="Once a night = one email per site with every PDF approved that day attached (site engineers asked for this). Straight away = one email per timesheet, the moment it is approved.">
+              <select style={inputStyle} value={form.pdf_delivery || 'daily'} onChange={e => setForm(f => ({ ...f, pdf_delivery: e.target.value }))}>
+                <option value="daily">Once a night, bundled per site (midnight)</option>
+                <option value="instant">Straight away, one email per timesheet</option>
+              </select>
+            </Field>
             <Field label="Hour rules" hint="How this client's timesheet hours split into Normal / 1.5× / 2×. Dashpivot Standard is what clients have signed ~4,700 timesheets on. Legacy = the old 7.6h + RDO model, kept restorable.">
               <select style={inputStyle} value={form.award_profile}
                 onChange={e => setForm(f => ({ ...f, award_profile: e.target.value }))}>

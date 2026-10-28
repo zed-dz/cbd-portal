@@ -973,7 +973,9 @@ function DailyTimesheetsAdmin({ showToast, refreshBadge, isMobile }) {
                 const r = await invokeApprove(viewing.id);
                 setApproving(false);
                 if (r.ok) {
-                  showToast(r.data?.pdf?.ok
+                  showToast(r.data?.pdf?.held
+                    ? "Approved and locked — PDF stored, goes out in tonight's bundle to the client"
+                    : r.data?.pdf?.ok
                     ? 'Approved and locked — PDF emailed to the client'
                     : 'Approved and locked — PDF email pending (the bell lights up if it fails)', 'success');
                   setViewing(null); load(); refreshBadge?.();

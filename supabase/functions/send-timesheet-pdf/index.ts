@@ -360,7 +360,7 @@ serve(async (req) => {
   const to = new Set<string>();
   const cc = new Set<string>();
   const { data: clientRows } = await sb.from('clients')
-    .select('id, contact_email, timesheet_emails').ilike('name', escLike((h.client || '').trim())).limit(1);
+    .select('id, contact_email, timesheet_emails, pdf_delivery').ilike('name', escLike((h.client || '').trim())).limit(1);
   const client = clientRows?.[0];
   if (client && h.project) {
     const { data: jobs } = await sb.from('client_jobs')
@@ -513,6 +513,16 @@ serve(async (req) => {
       body: `${reason}. Nothing was emailed. Resend from Timesheets once storage is back up.`,
     }]);
     return json({ error: 'pdf upload failed', detail: up.error.message }, 500);
+  }
+
+  // Nightly bundle (Chris 2026-10-28): clients on pdf_delivery = 'daily' get ONE email per
+  // site at midnight with every PDF of the day attached (send-timesheet-bundle-daily).
+  // The exact PDF is already built + stored + in the ledger; only the email waits.
+  // force:true (the office's Resend button) always sends straight away.
+  if (sendId && (client as any)?.pdf_delivery === 'daily' && !body.force) {
+    await markSend({ status: 'held' });
+    await sb.from('activity_events').insert([{ actor_name: 'portal', verb: 'held', object_type: 'timesheet_header', object_id: h.id, after: { to: toArr, cc: ccArr, pdf_path: pdfPath, bundle: 'nightly' } }]);
+    return json({ ok: true, held: true, to: toArr, cc: ccArr, pdf_path: pdfPath, sha256: pdfSha256 });
   }
 
   let via = '';

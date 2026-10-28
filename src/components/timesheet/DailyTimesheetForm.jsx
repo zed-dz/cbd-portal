@@ -23,6 +23,14 @@ import {
   resizeImage, blobToDataUrl, uploadTimesheetPhotos, listTimesheetPhotos, removeTimesheetPhoto, MAX_PHOTOS,
 } from '../../utils/timesheetPhotos';
 import { PlantUsedBlock, savePlantHours } from './PlantUsedBlock';
+// Draft on the phone (crew feedback via Chris, 2026-10-28: the Take 5 popped up and
+// the whole timesheet had to be typed again). Everything typed — hours, tasks, both
+// signatures, plant — is kept in localStorage per worker until the sheet is saved.
+const draftKey = (wid) => `ts-draft:${wid}`;
+function loadDraft(wid) { try { const j = JSON.parse(localStorage.getItem(draftKey(wid)) || 'null'); return j && j.form && j.form.hours_lines ? j : null; } catch { return null; } }
+function saveDraft(wid, d) { try { localStorage.setItem(draftKey(wid), JSON.stringify(d)); } catch { /* storage full or blocked: the form still works */ } }
+function clearDraft(wid) { try { localStorage.removeItem(draftKey(wid)); } catch { /* ignore */ } }
+
 
 const BREAK_OPTIONS = [0, 0.5, 0.75, 1];
 
@@ -125,8 +133,9 @@ export function DailyTimesheetForm({
   allowReview = false, onGoToTake5,
   workers = [], onWorkerChange,
 }) {
-  const [form, setForm] = useState(initial || blankDaily());
-  const [plantUsed, setPlantUsed] = useState([]);   // [{ plant_id, hours, notes }] — saved to plant_hours after the header
+  const draftRef = useRef(!allowAdmin && !initial && workerId ? loadDraft(workerId) : null);
+  const [form, setForm] = useState(() => initial || draftRef.current?.form || blankDaily());
+  const [plantUsed, setPlantUsed] = useState(draftRef.current?.plantUsed || []);   // [{ plant_id, hours, notes }] — saved to plant_hours after the header
   const [clients, setClients] = useState([]);
   const [roles, setRoles] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -142,18 +151,41 @@ export function DailyTimesheetForm({
   // beside the pad — the drawn PNG itself lives in form.client_signature.
   // `touched` = drawn THIS session; a signature loaded from an old sheet must
   // not re-trigger the approve-on-the-spot flow (it was recorded back then).
-  const [sig, setSig] = useState({ name: '', company: '', email: '', touched: false });
+  const [sig, setSig] = useState(draftRef.current?.sig || { name: '', company: '', email: '', touched: false });
   // Fatigue context from the DB: when the worker's last saved shift ended and
   // how many hours are already saved for this Mon–Sun week (other sheets).
   const [fatigueCtx, setFatigueCtx] = useState({ previousEndMs: null, otherWeekHours: 0 });
-  const [fatigueConfirmed, setFatigueConfirmed] = useState(false);
+  const [fatigueConfirmed, setFatigueConfirmed] = useState(!!draftRef.current?.fatigueConfirmed);
   // Photos: new ones wait in memory until the header id exists (post-save);
   // saved ones come back from timesheet_photos with signed URLs.
   const [photos, setPhotos] = useState([]);
   const [savedPhotos, setSavedPhotos] = useState([]);
   const [photoBusy, setPhotoBusy] = useState(false);
 
-  useEffect(() => { setForm(initial || blankDaily()); }, [initial]);
+  useEffect(() => { setForm(initial || draftRef.current?.form || blankDaily()); }, [initial]);
+
+  // Keep the draft fresh while the worker types; drop it once the sheet is saved.
+  const [restored, setRestored] = useState(!!draftRef.current);
+  const [padEpoch, setPadEpoch] = useState(0);   // remounts the signature pads on Start fresh
+  const draftDone = useRef(false);
+  useEffect(() => {
+    if (allowAdmin || initial || !workerId || draftDone.current) return undefined;
+    const t = setTimeout(() => saveDraft(workerId, { form, sig, plantUsed, fatigueConfirmed, at: Date.now() }), 400);
+    return () => clearTimeout(t);
+  }, [form, sig, plantUsed, fatigueConfirmed, allowAdmin, initial, workerId]);
+  const startFresh = () => {
+    clearDraft(workerId); draftRef.current = null; setRestored(false);
+    setForm(blankDaily()); setSig({ name: '', company: '', email: '', touched: false }); setPlantUsed([]); setFatigueConfirmed(false);
+    setPadEpoch(e => e + 1);
+  };
+  // Tue/Thu: ask for the Take 5 the moment the sheet opens, not after it is filled in.
+  useEffect(() => {
+    if (allowAdmin || initial || !workerId) return;
+    const today = todayISO();
+    if (!isTakeFiveDay(today)) return;
+    supabase.from('take5').select('id').eq('worker_id', workerId).eq('work_date', today).limit(1)
+      .then(({ data, error }) => { if (!error && data && data.length === 0) setTake5Block({ dates: [today], early: true }); });
+  }, [allowAdmin, initial, workerId]);
 
   useEffect(() => {
     let mounted = true;
@@ -400,6 +432,7 @@ export function DailyTimesheetForm({
     if (r.droppedPhotos) showToast('The photos could not be kept offline. Add them again from My Timesheets once it has sent.', 'error');
     photos.forEach(p => { try { URL.revokeObjectURL(p.preview); } catch { /* already gone */ } });
     setPhotos([]);
+    draftDone.current = true; clearDraft(workerId);
     onSaved?.(null);
     return true;
   };
@@ -747,6 +780,7 @@ export function DailyTimesheetForm({
         });
       }
     }
+    draftDone.current = true; clearDraft(workerId);
     onSaved?.(data);
   };
 
@@ -755,6 +789,12 @@ export function DailyTimesheetForm({
 
   return (
     <div>
+      {restored && (
+        <div data-area="draft restored" style={{ background: C.cardHover, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', margin: '0 0 12px', fontSize: 12, color: C.textMuted, display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span>↩ We kept what you typed last time. Check it and press Submit.</span>
+          <button type="button" onClick={startFresh} style={{ ...btnSecondary, padding: '4px 10px', fontSize: 11 }}>Start fresh</button>
+        </div>
+      )}
       {/* Header */}
       {allowAdmin && (
         <Field label="Worker *">
@@ -1074,7 +1114,7 @@ export function DailyTimesheetForm({
         <div data-area="worker signature" style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 14px', margin: '4px 0 12px' }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>✍️ Your signature *</div>
           <div style={{ fontSize: 12, color: C.textMuted, margin: '2px 0 10px' }}>Sign with your finger. It goes on the docket next to the supervisor's signature.</div>
-          <SignaturePad
+          <SignaturePad key={`w${padEpoch}`}
             value={String(form.worker_signature || '').startsWith('data:image') ? form.worker_signature : ''}
             onChange={v => setField('worker_signature', v)}
             height={120}
@@ -1088,7 +1128,7 @@ export function DailyTimesheetForm({
           <div style={{ fontSize: 12, color: C.textMuted, margin: '2px 0 10px' }}>
             Supervisor with you? Get them to sign now, with their name and email: the sheet is approved on the spot and they get the PDF. Otherwise we text them a link.
           </div>
-          <SignaturePad
+          <SignaturePad key={`c${padEpoch}`}
             value={String(form.client_signature || '').startsWith('data:image') ? form.client_signature : ''}
             onChange={v => { setField('client_signature', v); setSig(s => ({ ...s, touched: !!v })); }}
             height={130}
@@ -1118,9 +1158,11 @@ export function DailyTimesheetForm({
       {take5Block && (
         <div style={{ background: C.warningSoft, border: `1px solid ${C.warning}`, borderRadius: 8, padding: '12px 16px', margin: '4px 0 12px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ color: C.text, fontSize: 13, flex: 1, minWidth: 220 }}>
-            <strong>⚠ A Take 5 is required on Tue/Thu before submitting your timesheet.</strong>
+            <strong>{take5Block.early ? '✋ Today is a Take 5 day.' : '⚠ A Take 5 is required on Tue/Thu before submitting your timesheet.'}</strong>
             <div style={{ color: C.textMuted, fontSize: 12, marginTop: 3 }}>
-              Missing for: {take5Block.dates.join(', ')}. Complete a Take 5 for that date, then submit again.
+              {take5Block.early
+                ? 'Do it now (about a minute), then fill in your hours. Nothing you type is lost.'
+                : `Missing for: ${take5Block.dates.join(', ')}. Press Do it now — when the Take 5 is in, this timesheet submits by itself. Nothing you typed is lost.`}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -1168,7 +1210,7 @@ export function DailyTimesheetForm({
       {take5Modal && (
         <Modal title="✋ Take 5 — pre-start safety check" onClose={() => setTake5Modal(false)} width={640}>
           <div style={{ color: C.textMuted, fontSize: 13, marginBottom: 12 }}>
-            Complete this Take 5, then press Submit on your timesheet again — everything you typed is still there.
+            Complete this Take 5. Your timesheet keeps everything you typed{take5Block?.early ? '' : ' and submits by itself when the Take 5 is in'}.
           </div>
           <Take5Form
             workerId={targetWorker}
@@ -1177,7 +1219,12 @@ export function DailyTimesheetForm({
               work_date: take5Block?.dates?.[0] || todayISO(),
               site: [form.client, form.project].filter(Boolean).join(' — '),
             }}
-            onSubmitted={() => { setTake5Modal(false); setTake5Block(null); }}
+            onSubmitted={() => {
+              const wasEarly = !!take5Block?.early;
+              setTake5Modal(false); setTake5Block(null);
+              // "submit, submit": the Take 5 is in, so the sheet goes in on its own.
+              if (!wasEarly) setTimeout(() => handleSave(), 150);
+            }}
           />
         </Modal>
       )}

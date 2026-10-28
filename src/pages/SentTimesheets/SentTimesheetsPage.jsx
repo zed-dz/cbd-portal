@@ -20,6 +20,7 @@ const STATUS_CHIP = {
   sent:   { color: '#4ade80', bg: 'rgba(34,197,94,0.12)',  border: 'rgba(34,197,94,0.35)' },
   failed: { color: '#f87171', bg: 'rgba(239,68,68,0.12)',  border: 'rgba(239,68,68,0.35)' },
   queued: { color: '#eab308', bg: 'rgba(234,179,8,0.12)',  border: 'rgba(234,179,8,0.35)' },
+  held:   { color: '#93c5fd', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.35)' },   // waiting for tonight's bundle
 };
 
 function statusChip(status) {
@@ -122,7 +123,7 @@ export function SentTimesheetsPage({ showToast }) {
       <div style={{ background: 'rgba(249,115,22,0.07)', border: '1px solid rgba(249,115,22,0.2)', borderRadius: 10, padding: '12px 16px', marginBottom: 20, fontSize: 13, color: C.textMuted }}>
         📤 <strong style={{ color: C.text }}>Sent Timesheets</strong> — every client-PDF email attempt, newest first.
         <strong style={{ color: C.text }}> Open PDF</strong> shows the exact file the client received (not a rebuild);
-        <strong style={{ color: C.text }}> Resend</strong> sends it again and logs a new row. Hours only — no rates ever leave the portal.
+        <strong style={{ color: C.text }}> Resend</strong> sends it again and logs a new row. <strong style={{ color: C.text }}>Held</strong> = built and waiting for the client's nightly bundle (one email per site at midnight); Resend sends it now. Hours only — no rates ever leave the portal.
       </div>
 
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
@@ -133,6 +134,7 @@ export function SentTimesheetsPage({ showToast }) {
           <option value="sent">Sent</option>
           <option value="failed">Failed</option>
           <option value="queued">Queued</option>
+          <option value="held">Held for tonight's bundle</option>
         </select>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <div style={{ width: 175 }}><DateField value={from} onChange={setFrom} placeholder="From date…" /></div>

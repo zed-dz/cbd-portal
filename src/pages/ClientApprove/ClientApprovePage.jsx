@@ -98,7 +98,7 @@ export function ClientApprovePage({ token }) {
         <div style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.35)', borderRadius: 10, padding: '16px 20px', marginTop: 18, textAlign: 'center' }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: C.success }}>✓ Timesheet accepted</div>
           <div style={{ fontSize: 13, color: C.textMuted, marginTop: 4 }}>
-            {h.client_approved_by ? `Accepted by ${h.client_approved_by}. ` : ''}The hours are now finalised for invoicing, and a PDF copy has been emailed to your office automatically. You can close this page.
+            {h.client_approved_by ? `Accepted by ${h.client_approved_by}. ` : ''}The hours are now finalised for invoicing, and a PDF copy goes to your office automatically (straight away, or in the nightly bundle with the day's other sheets). You can close this page.
           </div>
         </div>
       ) : state === 'disputed' ? (
