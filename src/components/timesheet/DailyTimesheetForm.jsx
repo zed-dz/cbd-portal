@@ -1145,7 +1145,7 @@ export function DailyTimesheetForm({
                   onChange={e => setSig(s => ({ ...s, company: e.target.value }))}
                   placeholder="e.g. MLC Civil" />
               </Field>
-              <Field label="Supervisor email" hint="They get the signed PDF straight away.">
+              <Field label="Supervisor email" hint="They get the signed PDF (straight away, or in the night's bundle with the day's other sheets).">
                 <input style={inputStyle} type="email" inputMode="email" autoCapitalize="off" value={sig.email}
                   onChange={e => setSig(s => ({ ...s, email: e.target.value }))}
                   placeholder="name@client.com.au" />
