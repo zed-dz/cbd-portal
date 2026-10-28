@@ -120,7 +120,7 @@ serve(async (req) => {
   const now = new Date();
 
   const { data: held, error: heldErr } = await sb.from('timesheet_sends')
-    .select('id, header_id, client_id, to_emails, cc_emails, pdf_path, created_at, timesheet_headers(id, client, project, site_id, site_name_snapshot, total_hours, client_approved_by, client_approved_at, signed_on_site_at, workers(name))')
+    .select('id, header_id, client_id, to_emails, cc_emails, pdf_path, created_at, timesheet_headers(id, status, locked, client, project, site_id, site_name_snapshot, total_hours, client_approved_by, client_approved_at, signed_on_site_at, workers(name))')
     .eq('status', 'held').not('pdf_path', 'is', null).order('created_at');
   if (heldErr) return json({ error: heldErr.message }, 500);
   if (!held?.length) return json({ ok: true, bundles: 0, note: 'nothing held' });
@@ -131,11 +131,19 @@ serve(async (req) => {
     return json({ ok: true, bundles: 0, skipped: `not the midnight hour (Sydney ${sydneyHour(now)}:00); ${held.length} held` });
   }
 
-  // Group: one email per client + site.
+  // A sheet that left 'approved' after it was held (office Reset workflow) must not go out.
+  const stale = held.filter((r: any) => (r.timesheet_headers?.status || '') !== 'approved');
+  if (stale.length) await sb.from('timesheet_sends').update({ status: 'failed', error: 'timesheet was no longer approved at bundle time' }).in('id', stale.map((r: any) => r.id));
+  const live = held.filter((r: any) => (r.timesheet_headers?.status || '') === 'approved');
+
+  // Group: one email per client + site + recipient set. Each address only ever gets the
+  // PDFs whose own ledger row named it (a foreman who signed one sheet does not receive
+  // the rest of the site's sheets unless the site list names him).
   const groups = new Map<string, any[]>();
-  for (const r of held) {
+  for (const r of live) {
     const h = (r as any).timesheet_headers || {};
-    const key = `${r.client_id || h.client || 'client'}|${h.site_id || h.site_name_snapshot || h.project || 'site'}`;
+    const rcpt = [...new Set([...(r.to_emails || []), ...(r.cc_emails || [])].map((e: string) => String(e).toLowerCase()))].sort().join(',');
+    const key = `${r.client_id || h.client || 'client'}|${h.site_id || h.site_name_snapshot || h.project || 'site'}|${rcpt}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(r);
   }
