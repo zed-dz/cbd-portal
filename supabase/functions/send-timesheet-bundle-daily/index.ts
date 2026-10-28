@@ -119,11 +119,18 @@ serve(async (req) => {
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   const now = new Date();
 
-  const { data: held, error: heldErr } = await sb.from('timesheet_sends')
-    .select('id, header_id, client_id, to_emails, cc_emails, pdf_path, created_at, timesheet_headers(id, status, locked, client, project, site_id, site_name_snapshot, total_hours, client_approved_by, client_approved_at, signed_on_site_at, workers(name))')
+  // No FK from the ledger to the headers (deliberate: a ledger row outlives its sheet),
+  // so the headers are read in a second query and attached by id.
+  const { data: heldRows, error: heldErr } = await sb.from('timesheet_sends')
+    .select('id, header_id, client_id, to_emails, cc_emails, pdf_path, created_at')
     .eq('status', 'held').not('pdf_path', 'is', null).order('created_at');
   if (heldErr) return json({ error: heldErr.message }, 500);
-  if (!held?.length) return json({ ok: true, bundles: 0, note: 'nothing held' });
+  if (!heldRows?.length) return json({ ok: true, bundles: 0, note: 'nothing held' });
+  const { data: hdrs } = await sb.from('timesheet_headers')
+    .select('id, status, locked, client, project, site_id, site_name_snapshot, total_hours, client_approved_by, client_approved_at, signed_on_site_at, workers(name)')
+    .in('id', [...new Set(heldRows.map((r: any) => r.header_id).filter(Boolean))]);
+  const hmap = new Map((hdrs || []).map((h: any) => [h.id, h]));
+  const held = heldRows.map((r: any) => ({ ...r, timesheet_headers: hmap.get(r.header_id) || null }));
 
   const oldest = Math.min(...held.map((r: any) => new Date(r.created_at).getTime()));
   const overdue = now.getTime() - oldest > 26 * 3600 * 1000;
