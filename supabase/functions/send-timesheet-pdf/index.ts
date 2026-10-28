@@ -37,6 +37,8 @@ const GMAIL_CLIENT_ID      = Deno.env.get('GMAIL_CLIENT_ID') || '';
 const GMAIL_CLIENT_SECRET  = Deno.env.get('GMAIL_CLIENT_SECRET') || '';
 const BRAND                = Deno.env.get('GMAIL_SENDER_NAME') || 'CBD Plant & Labour';
 const RESEND_ON            = !!(RESEND_API_KEY && MAIL_FROM);
+// MAIL_FROM is either a bare address or already "Name <addr>" — never wrap it twice.
+const fromHeader = () => MAIL_FROM.includes('<') ? MAIL_FROM : `${BRAND} <${MAIL_FROM}>`;
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -246,7 +248,7 @@ async function sendViaResend(to: string[], cc: string[], subject: string, html: 
     method: 'POST',
     headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      from: `${BRAND} <${MAIL_FROM}>`,
+      from: fromHeader(),
       to, ...(cc.length ? { cc } : {}),
       subject, html,
       attachments: [{ filename, content: encodeBase64(pdf) }],
@@ -532,7 +534,8 @@ serve(async (req) => {
     if (!RESEND_ON) throw new Error('Resend not configured');
     providerMessageId = await sendViaResend(toArr, ccArr, subject, html, pdf, filename);
     via = 'resend';
-  } catch (_e1) {
+  } catch (e1) {
+    console.warn('resend failed, trying gmail:', String((e1 as Error).message).slice(0, 300));
     try {
       const g = await sendViaGmail(sb, toArr, ccArr, subject, html, pdf, filename);
       providerMessageId = g.id;

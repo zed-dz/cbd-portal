@@ -35,6 +35,8 @@ const RESEND_API_KEY       = Deno.env.get('RESEND_API_KEY') || '';
 const MAIL_FROM            = Deno.env.get('MAIL_FROM') || '';
 const BRAND                = Deno.env.get('GMAIL_SENDER_NAME') || 'CBD Plant & Labour';
 const RESEND_ON            = !!(RESEND_API_KEY && MAIL_FROM);
+// MAIL_FROM is either a bare address or already "Name <addr>" — never wrap it twice.
+const fromHeader = () => MAIL_FROM.includes('<') ? MAIL_FROM : `${BRAND} <${MAIL_FROM}>`;
 const DIGEST_SECRET        = Deno.env.get('DIGEST_SECRET') || '';
 
 const CORS = {
@@ -66,7 +68,7 @@ async function sendViaResend(to: string, subject: string, html: string) {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: `${BRAND} <${MAIL_FROM}>`, to: [to], subject, html }),
+    body: JSON.stringify({ from: fromHeader(), to: [to], subject, html }),
   });
   if (!res.ok) throw new Error(`Resend ${res.status}: ${await res.text()}`);
 }
