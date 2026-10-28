@@ -7,6 +7,7 @@ import { logActivity } from '../../utils/activity';
 import { Spinner, Modal, Field, TableWrap, Th, Td, EmptyState, Badge, allocationBadge, DateField, ClockField } from '../../components';
 import { ROLE_GROUPS, ALL_ROLE_NAMES, roleChipStyle } from '../../constants/roles';
 import { isLikelyMapLink } from '../../utils/mapLink';
+import JobFileCard, { pickSupervisor } from '../../components/allocations/JobFileCard';
 import { requiredTicketsFor, ticketGaps, gapLabel, certsByWorker } from '../../utils/ticketCheck';
 import { seriesDates, weekdayIndex, addDays, dayDiff, newSeriesId, WEEKDAY_NAMES } from '../../utils/series';
 import {
@@ -101,7 +102,7 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
       address: quickSite.address || null,
       map_link: quickSite.map_link || null,
       is_active: true,
-    }]).select().single();
+    }]).select('id, client_id, name, address, map_link, is_active').single();
     if (error) { showToast(error.message, 'error'); return; }
     setSites(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
     setForm(f => ({
@@ -118,11 +119,12 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
     const [a, w, c, s, k, rt, c1, c2, sw, adm, me, tp] = await Promise.all([
       supabase.from('allocations').select('*, workers(name, job_title), allocation_groups(positions, filled_at)').order('created_at', { ascending: false }),
       supabase.from('workers').select('id, name, mobile, email, app_status').is('archived_at', null).order('name'),
-      supabase.from('clients').select('id, name').order('name'),
+      supabase.from('clients').select('id, name, timesheet_emails').order('name'),
       // A client can run several jobs at once, so sites are their own list and the
       // Site picker below narrows to the chosen client rather than being free text.
-      supabase.from('client_sites').select('id, client_id, name, address, map_link').eq('is_active', true).order('name'),
-      supabase.from('client_site_contacts').select('id, site_id, name, role, email, phone, is_primary').order('name'),
+      // v_client_sites_office carries the office-only columns (PO, who gets the PDFs); workers can't read them.
+      supabase.from('v_client_sites_office').select('id, client_id, name, address, map_link, po_number, timesheet_emails').eq('is_active', true).order('name'),
+      supabase.from('client_site_contacts').select('id, site_id, name, role, email, phone, is_primary, approves_timesheets').order('name'),
       supabase.from('role_required_tickets').select('*').is('archived_at', null).order('role_name'),
       supabase.from('certifications').select('worker_id, cert_name, expiry'),
       supabase.from('worker_certificates').select('worker_id, name, expiry_date'),
@@ -1123,10 +1125,7 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
                     // Picking a known site fills the supervisor from that site's
                     // approving contact, so the person who signs off the timesheet
                     // is the one who actually runs that job.
-                    const contact = hit
-                      ? siteContacts.find(k => k.site_id === hit.id && k.is_primary)
-                        || siteContacts.find(k => k.site_id === hit.id)
-                      : null;
+                    const contact = hit ? pickSupervisor(siteContacts.filter(k => k.site_id === hit.id)) : null;
                     setForm(f => ({
                       ...f,
                       site: v,
@@ -1154,6 +1153,12 @@ export function AllocationsPage({ showToast, prefill = null, onPrefillUsed }) {
                 )}
               </>
             </Field>
+            {(() => {
+              // The job file for the picked site: who signs off, who gets the PDFs. Office only.
+              const cs = clients.filter(c => c.name === form.client);
+              const hit = sites.find(s => cs.some(c => c.id === s.client_id) && s.name === form.site);
+              return hit ? <JobFileCard site={hit} client={cs.find(c => c.id === hit.client_id)} contacts={siteContacts} /> : null;
+            })()}
             <Field label="Site Address"><input style={inputStyle} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} /></Field>
             <div style={{ gridColumn: '1 / -1' }}>
               <Field label="Map link (pin drop)" hint="Paste the Google/Apple Maps link the client texted. The worker gets a tappable Open Map button on their allocation.">

@@ -8,6 +8,7 @@ import { logActivity } from '../../utils/activity';
 import { notifyAllocationCreated } from '../../utils/allocationNotify';
 import { addAdminNotification } from '../../utils/notify';
 import { ROLE_GROUPS } from '../../constants/roles';
+import JobFileCard, { pickSupervisor } from '../../components/allocations/JobFileCard';
 
 // Calendar entry types — RDO / leave days get their own colours instead of the
 // per-worker colour, so the roster reads at a glance.
@@ -146,9 +147,9 @@ export function AllocationsCalendarPage({ showToast }) {
       supabase.from('workers').select('id, name, job_title, mobile, email').is('archived_at', null).order('name'),
       supabase.from('timesheets').select('worker_id, date')
         .eq('status', 'approved').gte('date', rangeStart).lte('date', rangeEnd),
-      supabase.from('clients').select('id, name').is('archived_at', null).order('name'),
-      supabase.from('client_sites').select('id, client_id, name, address, map_link').eq('is_active', true).order('name'),
-      supabase.from('client_site_contacts').select('id, site_id, name, phone, is_primary').order('name'),
+      supabase.from('clients').select('id, name, timesheet_emails').is('archived_at', null).order('name'),
+      supabase.from('v_client_sites_office').select('id, client_id, name, address, map_link, po_number, timesheet_emails').eq('is_active', true).order('name'),
+      supabase.from('client_site_contacts').select('id, site_id, name, role, email, phone, is_primary, approves_timesheets').order('name'),
     ]);
     if (a.error) showToast(a.error.message, 'error');
     else setAllocations(a.data || []);
@@ -890,9 +891,7 @@ function AllocationModal({ modal, form, setForm, closeModal, handleSave, saving,
   const clientSites = sites.filter(s => clientIds.includes(s.client_id));
   const pickSite = (v) => {
     const hit = clientSites.find(s => s.name === v);
-    const contact = hit
-      ? siteContacts.find(k => k.site_id === hit.id && k.is_primary) || siteContacts.find(k => k.site_id === hit.id)
-      : null;
+    const contact = hit ? pickSupervisor(siteContacts.filter(k => k.site_id === hit.id)) : null;
     setForm(f => ({
       ...f, site: v,
       ...(hit?.address && !f.address ? { address: hit.address } : {}),
@@ -937,6 +936,7 @@ function AllocationModal({ modal, form, setForm, closeModal, handleSave, saving,
             {form.site && !clientSites.some(s => s.name === form.site) && <option value={form.site}>{form.site}</option>}
           </select>
         </Field>
+        {(() => { const hit = clientSites.find(s => s.name === form.site); return hit ? <JobFileCard site={hit} client={clients.find(c => c.id === hit.client_id)} contacts={siteContacts} /> : null; })()}
         <div style={{ gridColumn: '1 / -1' }}>
           <Field label="Role to be performed">
             <select style={inputStyle} value={form.role || ''} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>

@@ -565,7 +565,7 @@ function SitesTabView({ client, refreshKey, onManage }) {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const { data: s } = await supabase.from('client_sites').select('*').eq('client_id', client.id).order('name');
+      const { data: s } = await supabase.from('v_client_sites_office').select('*').eq('client_id', client.id).order('name');
       let k = [];
       const ids = (s || []).map(x => x.id);
       if (ids.length) {
@@ -601,6 +601,9 @@ function SitesTabView({ client, refreshKey, onManage }) {
               {site.address && <span>🏠 {site.address}</span>}
               {site.map_link && <a href={site.map_link} target="_blank" rel="noreferrer" style={{ color: '#93c5fd', textDecoration: 'none' }}>📍 Map pin</a>}
               {site.notes && <span>{site.notes}</span>}
+            </div>
+            <div style={{ fontSize: 12, color: C.textMuted, marginTop: 3 }}>
+              ✉ Approved PDFs go to: {(site.timesheet_emails || []).length ? site.timesheet_emails.join(', ') : <span style={{ color: C.warning }}>client default (none set for this site)</span>}
             </div>
             {mine.length > 0 && (
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7 }}>

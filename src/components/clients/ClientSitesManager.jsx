@@ -31,7 +31,7 @@ export function ClientSitesManager({ client, onClose, showToast, currentWorker }
   const load = useCallback(async () => {
     setLoading(true);
     const { data: s, error } = await supabase
-      .from('client_sites').select('*').eq('client_id', client.id).order('name');
+      .from('v_client_sites_office').select('*').eq('client_id', client.id).order('name');
     if (error) showToast(error.message, 'error');
     const siteIds = (s || []).map(x => x.id);
     let k = [];
