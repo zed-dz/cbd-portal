@@ -246,7 +246,19 @@ function WorkerAllocations({ currentWorker, showToast }) {
   if (loading) return <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>;
   if (!allocations.length) return <EmptyState message="No allocations found." />;
 
-  const renderCard = (a) => (
+  // Sick / leave / RDO / injured / public-holiday days are recorded by the
+  // office on the Allocation Board. They are not jobs: no site, no Accept.
+  const DAY_TYPE_LABEL = { rdo: 'RDO day', personal_leave: 'Sick / personal leave', annual_leave: 'Annual leave', injured: 'Injured — not on site', public_holiday: 'Public holiday' };
+  const renderDayCard = (a) => (
+    <div key={a.id} style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: 16, display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div>
+        <div style={{ fontWeight: 700, color: C.text }}>{DAY_TYPE_LABEL[a.allocation_type] || a.allocation_type}</div>
+        {a.start_date && <div style={{ color: C.textMuted, fontSize: 13 }}>{a.start_date}{a.end_date && a.end_date !== a.start_date ? ` → ${a.end_date}` : ''}</div>}
+      </div>
+      <span style={{ fontSize: 11, color: C.textMuted, fontStyle: 'italic' }}>recorded by the office</span>
+    </div>
+  );
+  const renderCard = (a) => (a.allocation_type || 'work') !== 'work' ? renderDayCard(a) : (
         <div key={a.id} style={{ background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
             <div style={{ fontWeight: 700, color: C.text, fontSize: 15 }}>{a.site || 'No site'}</div>

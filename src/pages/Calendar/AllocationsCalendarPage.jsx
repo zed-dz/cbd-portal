@@ -17,6 +17,8 @@ const ALLOCATION_TYPES = [
   { id: 'rdo', label: 'RDO day', color: '#16a34a' },
   { id: 'personal_leave', label: 'Personal / Sick leave', color: '#ca8a04' },
   { id: 'annual_leave', label: 'Annual leave', color: '#0284c7' },
+  { id: 'injured', label: 'Injured', color: '#dc2626' },
+  { id: 'public_holiday', label: 'Public holiday', color: '#9333ea' },
 ];
 const typeMeta = (a) => ALLOCATION_TYPES.find(t => t.id === (a.allocation_type || 'work')) || ALLOCATION_TYPES[0];
 const isNightAlloc = (a) => !!a.start_time && new Date(a.start_time).getHours() >= 14;

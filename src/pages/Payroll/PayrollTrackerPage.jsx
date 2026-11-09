@@ -5,6 +5,7 @@ import { fmtDate } from '../../utils/dates';
 import { downloadCSV } from '../../utils/csv';
 import { computePayrollRow, buildXeroCSV, buildPayBreakdownCSV, buildInvoiceCSV, applyFullTimeMinDay, findRateLine, withRoleRate } from '../../utils/payroll';
 import { Spinner, TableWrap, Th, Td, EmptyState, presetBounds } from '../../components';
+import PayrollNotesPanel from '../../components/allocations/PayrollNotesPanel';
 
 const XERO_CLIENT_ID = process.env.REACT_APP_XERO_CLIENT_ID || '';
 
@@ -463,6 +464,7 @@ export function PayrollTrackerPage({ showToast }) {
         </div>
       )}
 
+      <PayrollNotesPanel from={dateFrom} to={dateTo} />
       {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : filtered.length === 0 ? (
         <EmptyState message={dateFrom || dateTo ? 'No approved timesheets in this date range.' : 'No approved timesheets yet. Approve timesheets first, then come back here.'} />
       ) : (

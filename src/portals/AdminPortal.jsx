@@ -303,7 +303,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'dashboard'        && <DashboardPage showToast={showToast} currentWorker={currentWorker} onNavigate={navigate} />}
           {activePage === 'workers'          && <WorkersPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'allocations'      && <AllocationsPage showToast={showToast} prefill={allocPrefill} onPrefillUsed={() => setAllocPrefill(null)} />}
-          {activePage === 'board'            && <AllocationBoardPage showToast={showToast} isMobile={isMobile} currentWorker={currentWorker}
+          {activePage === 'board'            && <AllocationBoardPage showToast={showToast} isMobile={isMobile} currentWorker={currentWorker} onNavigate={navigate}
                                                    onAllocate={(ids, date) => { setAllocPrefill({ workerIds: ids, date }); navigate('allocations'); }} />}
           {activePage === 'calendar'         && <AllocationsCalendarPage showToast={showToast} />}
           {activePage === 'pending_workers'  && <PendingWorkersPage showToast={showToast} />}
