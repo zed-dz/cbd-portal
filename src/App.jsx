@@ -8,6 +8,7 @@ import { SetPasswordPage } from './pages/Login/SetPasswordPage';
 import { MfaChallengePage } from './pages/Login/MfaChallengePage';
 import { AdminPortal } from './portals/AdminPortal';
 import { WorkerPortal } from './portals/WorkerPortal';
+import { PartnerPortal } from './portals/PartnerPortal';
 import { PublicProfilePage } from './pages/PublicProfile/PublicProfilePage';
 import { OnboardProfilePage } from './pages/OnboardProfile/OnboardProfilePage';
 import { ApplyPage } from './pages/Apply/ApplyPage';
@@ -163,6 +164,9 @@ export default function App() {
 function AppShell() {
   const [session, setSession] = useState(null);
   const [currentWorker, setCurrentWorker] = useState(null);
+  // Sales partner (2026-11-09): an auth user with no workers row whose e-mail
+  // matches sales_partners.email gets the partner portal instead of "No profile".
+  const [currentPartner, setCurrentPartner] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -209,7 +213,15 @@ function AppShell() {
     const { data, error } = await supabase.from('workers').select(WORKER_SAFE_COLS)
       .ilike('email', pattern).is('archived_at', null).order('created_at', { ascending: true }).limit(1);
     if (error) { showToast('Could not load profile: ' + error.message, 'error'); }
-    setCurrentWorker(data?.[0] ?? null);
+    const worker = data?.[0] ?? null;
+    setCurrentWorker(worker);
+    let partner = null;
+    if (!worker) {
+      const { data: p } = await supabase.from('sales_partners').select('*')
+        .ilike('email', pattern).in('status', ['active', 'invited']).is('archived_at', null).limit(1);
+      partner = p?.[0] ?? null;
+    }
+    setCurrentPartner(partner);
     setAuthLoading(false);
   }, [showToast]);
 
@@ -258,6 +270,7 @@ function AppShell() {
       if (!session) {
         lastFetchedEmail.current = null;
         setCurrentWorker(null);
+        setCurrentPartner(null);
         setAuthLoading(false);
         return;
       }
@@ -367,6 +380,13 @@ function AppShell() {
             if (lastFetchedEmail.current) { setAuthLoading(true); fetchWorker(lastFetchedEmail.current); }
           }}
           onSignOut={async () => { setMfaFirst(false); await handleSignOut(); }}
+        />
+      ) : !currentWorker && currentPartner ? (
+        <PartnerPortal
+          partner={currentPartner}
+          onSignOut={handleSignOut}
+          showToast={showToast}
+          isMobile={isMobile}
         />
       ) : !currentWorker ? (
         <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: C.bg, gap: 16, padding: 24 }}>

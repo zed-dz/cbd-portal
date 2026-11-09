@@ -38,6 +38,7 @@ import { VideoGuidePage } from '../pages/VideoGuide/VideoGuidePage';
 import { ContractsPage } from '../pages/Contracts/ContractsPage';
 import { IncidentsPage } from '../pages/Safety/IncidentsPage';
 import { DocumentsPage } from '../pages/Documents/DocumentsPage';
+import { SalesPartnersPage } from '../pages/SalesPartners/SalesPartnersPage';
 import { WorkerPortal } from './WorkerPortal';
 import { canSeeMoney } from '../utils/access';
 
@@ -65,10 +66,10 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
   const isMoneyUser = canSeeMoney(currentWorker);
   // Allocation Board → "Allocate" hands the Allocations page a pre-ticked crew.
   const [allocPrefill, setAllocPrefill] = useState(null);
-  const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, licence_agent: 0, pending_workers: 0, payroll: 0, applications: 0, leave: 0, safety: 0 });
+  const [badges, setBadges] = useState({ workers: 0, allocations: 0, timesheets: 0, licence_agent: 0, pending_workers: 0, payroll: 0, applications: 0, leave: 0, safety: 0, sales_partners: 0 });
 
   const refreshBadge = useCallback(async () => {
-    const [w, a, ts, lic, pw, pr, ap, lv, sf] = await Promise.all([
+    const [w, a, ts, lic, pw, pr, ap, lv, sf, sp] = await Promise.all([
       supabase.from('workers').select('id', { count: 'exact', head: true }).is('archived_at', null),
       supabase.from('allocations').select('*', { count: 'exact', head: true }).in('status', ['pending', 'confirmed']),
       supabase.from('timesheets').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
@@ -78,6 +79,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       supabase.from('worker_applications').select('*', { count: 'exact', head: true }).eq('status', 'new'),
       supabase.from('leave_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('incident_reports').select('id', { count: 'exact', head: true }).eq('status', 'open'),
+      supabase.from('partner_referrals').select('id', { count: 'exact', head: true }).in('status', ['submitted', 'under_review']).is('archived_at', null),
     ]);
     setBadges({
       workers: w.count || 0,
@@ -89,6 +91,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
       applications: ap.count || 0,
       leave: lv.count || 0,
       safety: sf.count || 0,
+      sales_partners: sp.count || 0,
     });
   }, []);
 
@@ -173,6 +176,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         { id: 'app_views', label: '📲 App Views' },
         { id: 'safety', label: '🦺 Safety', badge: badges.safety || null, badgeColor: 'red' },
         { id: 'documents', label: '📄 Documents' },
+        { id: 'sales_partners', label: '🤝 Sales partners', badge: badges.sales_partners || null, badgeColor: 'orange' },
         { id: 'reports', label: '📁 Reports' },
       ],
     },
@@ -338,6 +342,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'contracts'        && isMoneyUser && <ContractsPage showToast={showToast} currentWorker={currentWorker} openSendFor={contractPrompt} />}
           {activePage === 'safety'           && <IncidentsPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'documents'        && <DocumentsPage showToast={showToast} currentWorker={currentWorker} />}
+          {activePage === 'sales_partners'   && <SalesPartnersPage showToast={showToast} currentWorker={currentWorker} isMobile={isMobile} />}
         </div>
       </div>
 
