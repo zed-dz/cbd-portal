@@ -184,7 +184,10 @@ function mapPayment(o: Any): TxnRow | null {
     invoice_number: trunc(number, 100),
     invoice_xero_id: doc.InvoiceID || doc.CreditNoteID || doc.PrepaymentID || doc.OverpaymentID || null,
     total: amount === null ? null : Math.round(amount * pt.sign * 100) / 100,
-    subtotal: null, gst: null, tax_type: null, account_code: null,       // filled by books_enrich_payments
+    // subtotal/gst/tax_type/account_code are NOT sent: PostgREST only updates the
+    // columns present in the payload, so a re-sync never wipes what
+    // books_enrich_payments filled in from the invoice (bug found 2026-11-09:
+    // 1A read $0 because every hourly sync nulled the payments' GST).
     bank_account: trunc(o.Account?.Name ?? o.Account?.Code ?? null, 120),
     status: o.Status ?? null,
     is_reconciled: typeof o.IsReconciled === 'boolean' ? o.IsReconciled : null,
