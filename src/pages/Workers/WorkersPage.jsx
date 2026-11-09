@@ -16,6 +16,8 @@ import { WORKER_SAFE_COLS } from '../../utils/workerCols';
 import { RoleRatesEditor, checkRoleRates, saveRoleRates } from '../../components/workers/RoleRatesEditor';
 import { canSeeMoney } from '../../utils/access';
 import { autoSendContract } from '../../utils/contractSend';
+import { IntakeFromPhotos, INTAKE_BUCKET } from '../../components/workers/IntakeFromPhotos';
+import { mapIntakeToForm, ticketRows, profilePayload, PROFILE_FIELDS } from '../../components/workers/intakeMap';
 
 // Sequence counter for openEdit (see there). Module-level: one Workers page.
 const openEditSeq = { n: 0 };
@@ -134,6 +136,8 @@ export function WorkersPage({ showToast, currentWorker }) {
   const [medical, setMedical]     = useState(null);
   const [roleRates, setRoleRates] = useState([]);          // subcontractor rates by role
   const [roleRateIds, setRoleRateIds] = useState([]);      // ids as loaded, to archive removed rows
+  const [intakeOpen, setIntakeOpen] = useState(false);     // "Add from photos" picker
+  const [intake, setIntake] = useState(null);              // what the photos said: { profile, tickets, checks, paths, via }
   const draftKey = modal === 'add'
     ? 'worker_add'
     : modal && typeof modal === 'object'
@@ -180,7 +184,50 @@ export function WorkersPage({ showToast, currentWorker }) {
     })();
   }, []);
 
-  const openAdd = () => { setEditCerts([]); setRoleRates([]); setRoleRateIds([]); setModal('add'); };
+  const openAdd = () => { setEditCerts([]); setRoleRates([]); setRoleRateIds([]); setIntake(null); setModal('add'); };
+
+  // "Add from photos" read the paperwork: open the SAME Add Worker form, pre-filled.
+  // The add-form draft is dropped first, otherwise useDraft would restore a stale
+  // half-typed worker over the top of what the photos said.
+  const openFromIntake = (data) => {
+    const m = mapIntakeToForm(data, { jobTitles: JOB_TITLES });
+    try { localStorage.removeItem('cbd_draft_worker_add'); } catch (e) { /* no storage */ }
+    setEditCerts([]); setRoleRates([]); setRoleRateIds([]);
+    setIntake({ profile: m.profile, tickets: m.tickets, checks: m.checks, paths: data.paths || [], via: m.via, images: m.images });
+    setModal('add');
+    setForm({ ...workerDefaults, ...m.formPatch });
+    setIntakeOpen(false);
+    showToast(`Read ${m.images} photo${m.images === 1 ? '' : 's'} — check the details, set the type, rate and start date, then save.`, 'success');
+  };
+
+  // After the worker row exists: ticked tickets → certifications, each with
+  // its photo copied from the private intake upload into cert-photos (the
+  // bucket the Tickets section and the Licence Agent page already read).
+  const saveIntakeTickets = async (workerId) => {
+    if (!intake) return;
+    const rows = [];
+    const kept = intake.tickets.filter(t => t.keep && t.cert_name.trim());
+    for (let i = 0; i < kept.length; i++) {
+      const t = { ...kept[i], doc_url: null };
+      const src = Number.isInteger(t.source_image_index) ? intake.paths[t.source_image_index] : null;
+      if (src) {
+        try {
+          const { data: blob, error: dErr } = await supabase.storage.from(INTAKE_BUCKET).download(src);
+          if (dErr || !blob) throw dErr || new Error('download failed');
+          const dest = `${workerId}/${Date.now()}-${i + 1}.jpg`;
+          const { error: uErr } = await supabase.storage.from('cert-photos').upload(dest, blob, { contentType: 'image/jpeg' });
+          if (uErr) throw uErr;
+          t.doc_url = dest;
+        } catch (e) {
+          showToast(`Photo for "${t.cert_name}" was not attached: ${e.message}`, 'error');
+        }
+      }
+      rows.push(t);
+    }
+    if (!rows.length) return;
+    const { error } = await supabase.from('certifications').insert(ticketRows(rows, workerId));
+    if (error) showToast(`Worker saved, but the tickets were not: ${error.message}`, 'error');
+  };
   const openEdit = async (w) => {
     // Opening a second worker before the first finished loading used to land
     // the first worker's certs/payroll/medical in the second modal (audit P2).
@@ -237,6 +284,7 @@ export function WorkersPage({ showToast, currentWorker }) {
     setEditCerts([]);
     setPayroll(null);
     setMedical(null);
+    setIntake(null);
   };
 
   const handleSave = async () => {
@@ -275,8 +323,12 @@ export function WorkersPage({ showToast, currentWorker }) {
     }
 
     if (modal === 'add') {
+      // Details read from the photos that the form has no box for (DOB, licence,
+      // emergency contact…) ride along on the insert — all plain workers columns.
+      if (intake) Object.assign(payload, profilePayload(intake.profile));
       const { data, error } = await supabase.from('workers').insert([payload]).select('id, name, email, profile_token').single();
       if (error) { showToast(error.message, 'error'); setSaving(false); return; }
+      if (intake) await saveIntakeTickets(data.id);
       if (writeRoleRates && roleRates.length) {
         const rrErr = await saveRoleRates(data.id, roleRates, []);
         if (rrErr) showToast(`Worker saved, but the rates by role were not: ${rrErr}`, 'error');
@@ -576,7 +628,10 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
             {allLicences.map(l => <option key={l} value={l}>{l}</option>)}
           </select>
         </div>
-        <button onClick={openAdd} style={btnPrimary}>+ Add Worker</button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button onClick={() => setIntakeOpen(true)} style={btnSecondary} title="Photograph the paperwork and let the portal fill the form">📷 Add from photos</button>
+          <button onClick={openAdd} style={btnPrimary}>+ Add Worker</button>
+        </div>
       </div>
 
       {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div> : filtered.length === 0 ? (
@@ -694,6 +749,9 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
             onDismiss={draft.dismissBanner}
             label={modal === 'add' ? 'Unsaved draft restored.' : 'Unsaved edits to this worker were restored.'}
           />
+          {modal === 'add' && intake && (
+            <IntakeCheckPanel intake={intake} />
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
             <Field label="Full Name *"><input style={inputStyle} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></Field>
             <Field label="Email *"><input style={inputStyle} type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></Field>
@@ -869,6 +927,10 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
                 untouched for existing rows. */}
           </div>
 
+          {modal === 'add' && intake && (
+            <IntakeDetailsPanel intake={intake} setIntake={setIntake} />
+          )}
+
           {modal === 'add' && (
             <div style={{
               marginTop: 14, background: 'rgba(19,181,234,0.08)', border: '1px solid rgba(19,181,234,0.25)',
@@ -1008,6 +1070,101 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
           onClose={() => setBlastCrew(null)}
           showToast={showToast}
         />
+      )}
+
+      {intakeOpen && (
+        <IntakeFromPhotos
+          onClose={() => setIntakeOpen(false)}
+          onResult={openFromIntake}
+          onFallback={() => { setIntakeOpen(false); openAdd(); showToast('Could not read the photos — add the worker by hand.', 'info'); }}
+          showToast={showToast}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Add from photos: the two panels inside the Add Worker form ─────────────
+
+// Yellow "Check these" list: the function's warnings (under 18, expiring
+// licence, VEVO…) plus every field the model was not sure about.
+function IntakeCheckPanel({ intake }) {
+  const checks = intake.checks || [];
+  return (
+    <div style={{
+      background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.35)',
+      borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 12.5,
+    }} data-testid="intake-check-panel">
+      <div style={{ fontSize: 10, fontFamily: '"DM Mono", monospace', letterSpacing: 1.5, textTransform: 'uppercase', color: '#fde047', fontWeight: 700, marginBottom: 6 }}>
+        📷 Read from {intake.images} photo{intake.images === 1 ? '' : 's'} · check these
+      </div>
+      {checks.length === 0 ? (
+        <div style={{ color: C.textMuted }}>Nothing flagged — still read every box before you save.</div>
+      ) : (
+        <ul style={{ margin: 0, paddingLeft: 18, color: '#fde68a', lineHeight: 1.6 }}>
+          {checks.map((c, i) => <li key={i}>{c.text}</li>)}
+        </ul>
+      )}
+      <div style={{ marginTop: 6, color: C.textDim, fontSize: 11 }}>
+        Worker type, pay rate and start date are yours to set below; the contract template fills itself from this record on save.
+      </div>
+    </div>
+  );
+}
+
+// The details the form has no box for, plus the tickets with tick boxes. Each
+// ticked ticket becomes a certifications row (photo attached) after Save.
+function IntakeDetailsPanel({ intake, setIntake }) {
+  const setProfile = (k, v) => setIntake(x => ({ ...x, profile: { ...x.profile, [k]: v } }));
+  const setTicket = (key, patch) => setIntake(x => ({ ...x, tickets: x.tickets.map(t => t.key === key ? { ...t, ...patch } : t) }));
+  const filled = PROFILE_FIELDS.filter(([k]) => intake.profile[k]);
+  return (
+    <div style={{ marginTop: 6, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 14px' }} data-testid="intake-details-panel">
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.text, letterSpacing: 1, marginBottom: 8 }}>🪪 FROM THE PHOTOS</div>
+
+      {filled.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0 12px' }}>
+          {filled.map(([k, label, type]) => (
+            <Field key={k} label={label}>
+              <input style={inputStyle} type={type === 'date' ? 'date' : 'text'} value={intake.profile[k] || ''}
+                onChange={e => setProfile(k, e.target.value)} />
+            </Field>
+          ))}
+        </div>
+      )}
+
+      <div style={{ fontSize: 11.5, color: C.textMuted, margin: '2px 0 8px' }}>
+        Tickets read from the cards — untick any you do not want saved. Each ticked one is added to the worker's tickets with its photo attached.
+      </div>
+      {intake.tickets.length === 0 ? (
+        <div style={{ fontSize: 12, color: C.textDim }}>No tickets were found on the photos.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {intake.tickets.map(t => (
+            <div key={t.key} style={{
+              display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 10px', alignItems: 'start',
+              background: C.card, border: `1px solid ${t.keep ? C.border : 'transparent'}`, borderRadius: 7, padding: '8px 10px',
+              opacity: t.keep ? 1 : 0.55,
+            }}>
+              <input type="checkbox" checked={!!t.keep} onChange={e => setTicket(t.key, { keep: e.target.checked })}
+                aria-label={`Save ticket ${t.cert_name}`} style={{ marginTop: 9, accentColor: C.accent, width: 16, height: 16 }} />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '6px 8px' }}>
+                <input style={{ ...inputStyle, gridColumn: '1 / -1', fontWeight: 600 }} value={t.cert_name}
+                  onChange={e => setTicket(t.key, { cert_name: e.target.value })} aria-label="Ticket name" />
+                <input style={inputStyle} value={t.cert_number} placeholder="Number"
+                  onChange={e => setTicket(t.key, { cert_number: e.target.value })} aria-label="Ticket number" />
+                <input style={inputStyle} value={t.issuer} placeholder="Issuer"
+                  onChange={e => setTicket(t.key, { issuer: e.target.value })} aria-label="Issuer" />
+                <input style={inputStyle} type="date" value={t.expiry}
+                  onChange={e => setTicket(t.key, { expiry: e.target.value })} aria-label="Expiry" />
+                <div style={{ fontSize: 11, color: C.textDim, alignSelf: 'center' }}>
+                  {t.class_or_units ? `${t.class_or_units} · ` : ''}
+                  {Number.isInteger(t.source_image_index) ? `photo ${t.source_image_index + 1} attached` : 'no photo matched'}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
