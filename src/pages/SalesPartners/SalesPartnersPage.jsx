@@ -16,7 +16,13 @@ import { fmtDate, fmtDateTime } from '../../utils/dates';
 import { logActivity } from '../../utils/activity';
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-const notifyPartner = (body) => supabase.functions.invoke('notify-partner', { body }).catch(() => ({ error: { message: 'notify failed' } }));
+// Fire-and-forget: the DB change is the truth; the e-mail/SMS hop (edge function
+// cold start + provider) must never hold a button disabled. Failures surface as a toast.
+const notifyPartner = (body, showToast) => {
+  supabase.functions.invoke('notify-partner', { body })
+    .then(({ data, error }) => { if (error || !data?.ok) showToast?.(`Partner notification failed: ${data?.error || error?.message || 'unknown'}`, 'error'); })
+    .catch(e => showToast?.(`Partner notification failed: ${e.message}`, 'error'));
+};
 
 export function SalesPartnersPage({ showToast, currentWorker, isMobile }) {
   const isMoneyUser = canSeeMoney(currentWorker);
@@ -333,7 +339,7 @@ function ReferralAdminModal({ id, d, isMoneyUser, isMobile, onClose, reload, sho
     if (evErr) { setBusy(false); showToast(evErr.message, 'error'); return; }
     if (changed && partner) {
       const firstActive = status === 'active' && !events.some(e => e.kind === 'status' && e.to_status === 'active');
-      await notifyPartner({ partner_id: partner.id, kind: firstActive ? 'first_placement' : 'status_changed', referral_id: r.id, text: visible && note.trim() ? note.trim() : undefined });
+      notifyPartner({ partner_id: partner.id, kind: firstActive ? 'first_placement' : 'status_changed', referral_id: r.id, text: visible && note.trim() ? note.trim() : undefined }, showToast);
     }
     setBusy(false); setNote(''); showToast(changed ? `Moved to ${REFERRAL_STATUSES.find(s => s.id === status)?.label}.` : 'Note added.', 'success'); reload();
   }
@@ -500,7 +506,7 @@ function CommissionAdmin({ d, isMobile, reload, showToast, currentWorker }) {
     if (error) { setBusy(false); showToast(error.message, 'error'); return; }
     const p = pById[l.placement_id];
     await supabase.from('partner_referral_events').insert([{ referral_id: p?.referral_id, kind: 'commission', note: `Commission approved: ${l.kind === 'bonus' ? 'first placement bonus' : 'residual'} ${money(l.amount)}`, visible_to_partner: true, actor_id: currentWorker?.id || null, actor_name: currentWorker?.name || null }]);
-    await notifyPartner({ partner_id: l.partner_id, kind: 'commission_approved', referral_id: p?.referral_id, text: `${l.kind === 'bonus' ? 'first placement bonus' : 'residual'} ${money(l.amount)}` });
+    notifyPartner({ partner_id: l.partner_id, kind: 'commission_approved', referral_id: p?.referral_id, text: `${l.kind === 'bonus' ? 'first placement bonus' : 'residual'} ${money(l.amount)}` }, showToast);
     setBusy(false); showToast('Approved.', 'success'); reload();
   }
   async function voidLine(l) {
@@ -574,7 +580,7 @@ function PayModal({ line: l, placement: p, onClose, reload, showToast, currentWo
     const { error } = await supabase.from('partner_commission_lines').update({ status: 'paid', paid_at: `${date}T12:00:00+10:00`, payment_ref: ref.trim() }).eq('id', l.id);
     if (error) { setBusy(false); showToast(error.message, 'error'); return; }
     await supabase.from('partner_referral_events').insert([{ referral_id: p?.referral_id, kind: 'commission', note: `Commission paid: ${money(l.amount)} · ref ${ref.trim()}`, visible_to_partner: true, actor_id: currentWorker?.id || null, actor_name: currentWorker?.name || null }]);
-    await notifyPartner({ partner_id: l.partner_id, kind: 'commission_paid', referral_id: p?.referral_id, text: `${money(l.amount)} · ref ${ref.trim()}` });
+    notifyPartner({ partner_id: l.partner_id, kind: 'commission_paid', referral_id: p?.referral_id, text: `${money(l.amount)} · ref ${ref.trim()}` }, showToast);
     setBusy(false); showToast('Marked paid.', 'success'); reload(); onClose();
   }
   return (
