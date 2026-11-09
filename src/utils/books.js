@@ -150,3 +150,16 @@ export function isOurs(number, portalNumbers) {
   const n = String(number).trim().toLowerCase();
   return n !== '' && portalNumbers.has(n);
 }
+
+// DSO (days sales outstanding) = open receivables ÷ (cash sales in the last
+// 90 days ÷ 90). Sales = receive-money + invoice-payment cash lines. null when
+// there were no sales to divide by.
+export function dsoDays(openItems, transactions, today) {
+  const ar = (openItems || []).filter((o) => o.item_type === 'ACCREC').reduce((s, o) => s + (Number(o.amount_due) || 0), 0);
+  const from = new Date(`${String(today).slice(0, 10)}T12:00:00Z`); from.setUTCDate(from.getUTCDate() - 90);
+  const f = from.toISOString().slice(0, 10);
+  const sales = (transactions || []).filter((t) => t.is_cash && t.direction === 'in' && t.txn_date >= f && t.txn_date <= today && ['receive', 'invoice_payment'].includes(t.kind))
+    .reduce((s, t) => s + (Number(t.total) || 0), 0);
+  if (sales <= 0) return null;
+  return Math.round(ar / (sales / 90));
+}

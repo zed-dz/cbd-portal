@@ -327,7 +327,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'reports'          && <ReportsPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'plant'            && isMoneyUser && <PlantPage showToast={showToast} />}
           {activePage === 'invoices'         && isMoneyUser && <InvoicesPage showToast={showToast} />}
-          {activePage === 'books'            && isMoneyUser && <BooksPage showToast={showToast} />}
+          {activePage === 'books'            && isMoneyUser && <BooksPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'bulk_messages'    && <BulkMessagesPage showToast={showToast} />}
           {activePage === 'inbox'            && <InboxPage         showToast={showToast} onNavigate={navigate} />}
           {activePage === 'templates'        && <TemplatesPage     showToast={showToast} />}

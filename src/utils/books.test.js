@@ -1,6 +1,7 @@
 import {
   fmtMoney, daysOverdue, ageingBucket, ageingTotals, duplicateKey, findDuplicates,
   monthKey, groupByMonth, monthLabel, basQuarter, monthOptions, monthBounds, isOurs,
+  dsoDays,
 } from './books';
 
 const TODAY = '2026-11-09';
@@ -105,4 +106,18 @@ describe('money + ours', () => {
     expect(isOurs('INV-0043', ours)).toBe(false);
     expect(isOurs('', ours)).toBe(false);
   });
+});
+
+describe('dsoDays', () => {
+  it('receivables over daily sales of the last 90 days', () => {
+    const open = [{ item_type: 'ACCREC', amount_due: 9000 }, { item_type: 'ACCPAY', amount_due: 5000 }];
+    const tx = [
+      { is_cash: true, direction: 'in', kind: 'receive', txn_date: '2026-10-01', total: 18000 },
+      { is_cash: true, direction: 'in', kind: 'invoice_payment', txn_date: '2026-10-20', total: 9000 },
+      { is_cash: true, direction: 'in', kind: 'receive', txn_date: '2026-06-01', total: 99999 },   // older than 90 days
+      { is_cash: true, direction: 'out', kind: 'spend', txn_date: '2026-10-20', total: 500 },
+    ];
+    expect(dsoDays(open, tx, '2026-11-09')).toBe(30);   // 9000 / (27000/90)
+  });
+  it('null with no sales', () => { expect(dsoDays([{ item_type: 'ACCREC', amount_due: 1 }], [], '2026-11-09')).toBeNull(); });
 });

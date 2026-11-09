@@ -5,13 +5,16 @@ import { Spinner } from '../index';
 
 // "Ask the books" — a chat box that posts to portal-assistant with
 // scope:'books'. The function picks from a fixed catalogue of read-only tools
-// (books_sum / books_top / books_bas / books_ageing / books_exceptions) and
+// (books_sum / books_top / books_bas / books_ageing / books_exceptions +
+// books_margin / books_forecast / books_compliance / books_debtors / books_receipts) and
 // answers only from their results. Money users only (403 for anyone else).
 
 const STARTERS = [
+  'Which client has the lowest margin?',
+  'When do we run out of cash?',
+  'Who owes us the most and when were they last chased?',
+  'What is due to the ATO next, and how much?',
   'What are the BAS figures for this quarter?',
-  'Who owes us the most right now?',
-  'What did we spend the most on in the last 3 months?',
   'Any duplicate payments I should check?',
 ];
 
@@ -41,9 +44,6 @@ export function BooksAsk({ disabled }) {
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      <p style={{ margin: 0, fontSize: 13, color: C.textMuted, lineHeight: 1.5 }}>
-        Ask in plain words. Answers come only from the Books tables (cash basis). Payroll journals, manual journals and transfers are not here — read those in Xero.
-      </p>
       {msgs.length === 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           {STARTERS.map((s) => (
