@@ -9,6 +9,7 @@ import { ROLE_GROUPS, roleColor } from '../../constants/roles';
 import { notifyAllocationCreated } from '../../utils/allocationNotify';
 import { logActivity } from '../../utils/activity';
 import { pickSupervisor } from '../../components/allocations/JobFileCard';
+import { nswHoliday, plannedHours, clientColor, cellText, toCsv, downloadText, printWeekHtml, fetchRainChance } from '../../utils/boardExtras';
 
 // Allocation Board v2 — Chris's allocation sheet, inside the portal (2026-11-09).
 //
@@ -134,6 +135,11 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
   const [saving, setSaving] = useState(false);
   const [profileId, setProfileId] = useState(null);
   const [awayForm, setAwayForm] = useState(null);
+  const [filters, setFilters] = useState({ client: '', type: '', spareOnly: false });
+  const [rain, setRain] = useState({});
+  const [history, setHistory] = useState(null);     // null = not loaded
+  const [copying, setCopying] = useState(null);     // {count, rows} preview for Copy last week
+  const [swapTo, setSwapTo] = useState('');
 
   const weekEnd = addDays(weekStart, 6);
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
@@ -177,6 +183,13 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
     setLoading(false);
   }, [weekStart, weekEnd, showToast]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { let on = true; fetchRainChance(weekStart, weekEnd).then(r => { if (on) setRain(r); }); return () => { on = false; }; }, [weekStart, weekEnd]);
+  const loadHistory = useCallback(async () => {
+    const { data } = await supabase.from('activity_events').select('id, actor_name, verb, after, created_at')
+      .eq('verb', 'board edit').gte('after->>day', weekStart).lte('after->>day', weekEnd).order('created_at', { ascending: false }).limit(200);
+    setHistory(data || []);
+  }, [weekStart, weekEnd]);
+  useEffect(() => { if (view === 'history') loadHistory(); }, [view, loadHistory]);
 
   // ── lookups ──────────────────────────────────────────────────────────────
   const byWorker = useMemo(() => { const m = {}; allocs.forEach(a => { (m[a.worker_id] = m[a.worker_id] || []).push(a); }); return m; }, [allocs]);
@@ -194,12 +207,26 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
   const pool = useMemo(() => workers.filter(w => includeOffice || w.role !== 'admin'), [workers, includeOffice]);
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return pool;
     return pool.filter(w => {
-      const jobs = (byWorker[w.id] || []).map(a => `${a.client || ''} ${a.site || ''} ${a.role || ''}`).join(' ');
+      const rows = byWorker[w.id] || [];
+      if (filters.type && (w.worker_type || 'other') !== filters.type) return false;
+      if (filters.client && !rows.some(a => isWork(a) && (a.client_id === filters.client || a.client === filters.client))) return false;
+      if (filters.spareOnly && (rows.some(a => covers(a, selDay)) || leaveOn(w.id, selDay) || awayOn(w.id, selDay))) return false;
+      if (!q) return true;
+      const jobs = rows.map(a => `${a.client || ''} ${a.site || ''} ${a.role || ''}`).join(' ');
       return `${w.name} ${w.job_title || ''} ${w.worker_type || ''} ${jobs}`.toLowerCase().includes(q);
     });
-  }, [pool, search, byWorker]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pool, search, byWorker, filters, selDay, leave, away]);
+  const weekClients = useMemo(() => {
+    const m = new Map();
+    allocs.filter(isWork).forEach(a => { const k = a.client_id || a.client; if (k && !m.has(k)) m.set(k, a.client || clientOf(a.client_id)?.name || 'Client'); });
+    return [...m.entries()].sort((x, y) => x[1].localeCompare(y[1]));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allocs, clients]);
+  const pendingOn = (day) => allocs.filter(a => isWork(a) && a.status === 'pending' && covers(a, day) && pool.some(w => w.id === a.worker_id));
+  const weekHours = (wid) => days.reduce((n, d) => n + workOn(wid, d).reduce((m, a) => m + plannedHours(a), 0), 0);
+  const weekDays = (wid) => days.filter(d => workOn(wid, d).length > 0).length;
   const groups = useMemo(() => {
     const g = {};
     visible.forEach(w => { const k = TYPE_ORDER.includes(w.worker_type) ? w.worker_type : 'other'; (g[k] = g[k] || []).push(w); });
@@ -351,6 +378,100 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
     return rest.length ? rest : [editor.day];
   };
 
+  // ── toolbar actions ──────────────────────────────────────────────────────
+  // Copy last week: every Mon–Fri work day from last week lands on the same
+  // weekday this week, only where the cell is still empty. New rows are
+  // pending and the worker gets the usual SMS to accept.
+  const previewCopyLastWeek = async () => {
+    const from = addDays(weekStart, -7), to = addDays(weekStart, -1);
+    const { data, error } = await supabase.from('allocations')
+      .select('id, worker_id, client, site, client_id, site_id, role, status, allocation_type, shift, start_date, end_date, address, map_link, site_manager, manager_phone')
+      .lte('start_date', to).or(`end_date.gte.${from},and(end_date.is.null,start_date.gte.${from})`);
+    if (error) { showToast(error.message, 'error'); return; }
+    const rows = [];
+    (data || []).filter(a => LIVE.includes(a.status) && isWork(a)).forEach(a => {
+      for (let i = 0; i < 5; i++) {
+        const src = addDays(from, i), dst = addDays(weekStart, i);
+        if (!covers(a, src)) continue;
+        if (!pool.some(w => w.id === a.worker_id)) continue;
+        if (cellAllocs(a.worker_id, dst).length || leaveOn(a.worker_id, dst) || awayOn(a.worker_id, dst)) continue;
+        if (rows.some(r => r.worker_id === a.worker_id && r.day === dst)) continue;
+        rows.push({ worker_id: a.worker_id, day: dst, src: a });
+      }
+    });
+    setCopying({ rows });
+  };
+  const runCopyLastWeek = async () => {
+    const rows = copying?.rows || []; setCopying(null); if (!rows.length) return;
+    setSaving(true);
+    let ok = 0;
+    for (const r of rows) {
+      const a = r.src; const worker = workers.find(w => w.id === r.worker_id);
+      const fields = { client: a.client, client_id: a.client_id, site: a.site, site_id: a.site_id, role: a.role, shift: a.shift, left_early: false, address: a.address, map_link: a.map_link, site_manager: a.site_manager, manager_phone: a.manager_phone };
+      const { data, error } = await supabase.from('allocations').insert([{ ...fields, worker_id: r.worker_id, allocation_type: 'work', status: 'pending', start_date: r.day, end_date: r.day }]).select('id').single();
+      if (error) { showToast(error.message, 'error'); continue; }
+      ok++;
+      notifyAllocationCreated({ ...fields, id: data.id, start_date: r.day }, worker, { showToast, adminQuiet: true });
+      logActivity({ verb: 'board edit', object_type: 'allocation', object_id: data.id, client_id: a.client_id || null, site_id: a.site_id || null, after: { worker: worker?.name || null, day: r.day, choice: 'work', shift: a.shift, copied_from: a.start_date } });
+    }
+    setSaving(false);
+    showToast(`${ok} day${ok === 1 ? '' : 's'} copied from last week.`, 'success');
+    load();
+  };
+  // Nudge: re-send the accept SMS/email for every still-pending job on the day.
+  const nudgePending = async () => {
+    const rows = pendingOn(selDay); if (!rows.length) return;
+    rows.forEach(a => notifyAllocationCreated({ ...a, start_date: selDay }, workers.find(w => w.id === a.worker_id), { showToast, adminQuiet: true }));
+    logActivity({ verb: 'board nudge', object_type: 'allocation', object_id: null, after: { day: selDay, count: rows.length } });
+    showToast(`Reminder sent to ${rows.length} worker${rows.length === 1 ? '' : 's'}.`, 'success');
+  };
+  const sheetRows = () => groups.map(g => ({
+    label: g.label,
+    rows: g.workers.map(w => ({
+      name: w.name, sub: w.job_title || '',
+      cells: days.map(d => {
+        const st = statusOn(w.id, d); const lv = leaveOn(w.id, d); const aw = awayOn(w.id, d);
+        const status = st ? (statusMeta(st.allocation_type)?.label || st.allocation_type) : lv ? 'A/L' : aw ? 'Away' : '';
+        const txt = cellText(workOn(w.id, d), status, sh => shiftMeta(sh)?.label || '');
+        return noteMap[noteKey(w.id, d)] ? `${txt}${txt ? ' · ' : ''}note` : txt;
+      }),
+    })),
+  }));
+  const exportCsv = () => {
+    const head = ['Worker', 'Type', 'Job title', ...days.map((d, i) => `${DAY_NAMES[i]} ${dayNum(d)}`), 'Planned hours', 'Notes'];
+    const out = [head];
+    sheetRows().forEach(g => g.rows.forEach(r => {
+      const w = groups.flatMap(x => x.workers).find(x => x.name === r.name) || {};
+      const notes = dayNotes.filter(n => n.worker_id === w.id).map(n => `${shortDate(n.day)}: ${n.note}`).join(' | ');
+      out.push([r.name, TYPE_LABEL[w.worker_type] || '', r.sub, ...r.cells, weekHours(w.id), notes]);
+    }));
+    downloadText(`allocations-${weekStart}.csv`, toCsv(out));
+  };
+  const printWeek = () => {
+    const html = printWeekHtml({
+      title: `Allocations ${shortDate(weekStart)} – ${shortDate(weekEnd)}`,
+      dayHeads: days.map((d, i) => `${DAY_NAMES[i]} ${dayNum(d)}`),
+      groups: sheetRows(),
+      notes: notesList.map(r => ({ name: r.name, day: `${DAY_NAMES[days.indexOf(r.day)] || ''} ${dayNum(r.day)}`, text: r.text })),
+    });
+    const w = window.open('', '_blank'); if (!w) { showToast('Allow pop-ups to print.', 'error'); return; }
+    w.document.write(html); w.document.close();
+  };
+  // Move this day's job to another (spare) worker: the new worker gets a
+  // pending row + SMS, this worker's row is cancelled.
+  const moveToWorker = async () => {
+    const e = editor; if (!e || !swapTo) return;
+    const target = workers.find(w => w.id === swapTo); if (!target) return;
+    setSaving(true);
+    try {
+      await applyDay({ ...e, workerId: target.id, workerName: target.name, note: '' }, e.day);
+      await applyDay({ ...e, choice: 'none', note: e.note }, e.day);
+      showToast(`${longDay(e.day)}: moved to ${target.name}.`, 'success');
+      setEditor(null); setSwapTo(''); load();
+    } catch (err) { showToast(err.message || 'Could not move.', 'error'); }
+    setSaving(false);
+  };
+
   // ── away + week notes (kept from v1) ─────────────────────────────────────
   const saveAway = async () => {
     if (!awayForm?.from_date || !awayForm?.to_date) { showToast('Pick the first and last day.', 'error'); return; }
@@ -421,7 +542,7 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
     const note = noteMap[noteKey(w.id, day)];
     return (
       <button type="button" onClick={() => openEditor(w.id, day)} title={note ? `Note: ${note.note}` : 'Tap to allocate'}
-        style={{ position: 'relative', display: 'block', width: '100%', minHeight: compact ? 44 : 50, textAlign: 'left', overflow: 'hidden', background: day === today ? 'rgba(249,115,22,0.05)' : 'transparent', border: 'none', borderRadius: 6, padding: compact ? '6px 6px' : '7px 9px', cursor: 'pointer', color: C.text, fontFamily: 'inherit' }}
+        style={{ position: 'relative', display: 'block', width: '100%', minHeight: compact ? 44 : 50, textAlign: 'left', overflow: 'hidden', borderLeft: workOn(w.id, day)[0] ? `3px solid ${clientColor(workOn(w.id, day)[0].client || workOn(w.id, day)[0].site || '')}` : '3px solid transparent', background: day === today ? 'rgba(249,115,22,0.05)' : 'transparent', border: 'none', borderRadius: 6, padding: compact ? '6px 6px' : '7px 9px', cursor: 'pointer', color: C.text, fontFamily: 'inherit' }}
         onMouseEnter={e => { e.currentTarget.style.background = C.cardHover; }}
         onMouseLeave={e => { e.currentTarget.style.background = day === today ? 'rgba(249,115,22,0.05)' : 'transparent'; }}>
         {cellBody(w, day, compact)}
@@ -481,6 +602,12 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
               style={{ padding: isMobile ? '6px 0 5px' : '7px 0 6px', borderRadius: 8, border: `1px solid ${on ? C.text : C.border}`, background: on ? C.text : C.card, color: on ? C.bg : C.text, cursor: 'pointer', textAlign: 'center', minWidth: 0, lineHeight: 1.1 }}>
               <div style={{ fontFamily: MONO, fontSize: isMobile ? 8.5 : 10, letterSpacing: 0.5, textTransform: 'uppercase', color: on ? C.bg : (d === today ? C.accent : C.textMuted), fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden' }}>{DAY_NAMES[i]} {dayNum(d)}</div>
               <div style={{ fontSize: isMobile ? 15 : 18, fontWeight: 900, marginTop: 2 }}>{dayCount(d)}</div>
+              {(nswHoliday(d) || (rain[d]?.chance ?? 0) >= 40) && (
+                <div style={{ display: 'flex', justifyContent: 'center', gap: 4, marginTop: 2, fontFamily: MONO, fontSize: isMobile ? 8 : 9, fontWeight: 800, letterSpacing: 0.3 }}>
+                  {nswHoliday(d) && <span title={nswHoliday(d)} style={{ color: on ? C.bg : '#fde047' }}>PH</span>}
+                  {(rain[d]?.chance ?? 0) >= 40 && <span title={`${rain[d].chance}% chance of rain${rain[d].mm != null ? ` · ${rain[d].mm} mm` : ''}`} style={{ color: on ? C.bg : '#7dd3fc' }}>☔{rain[d].chance}%</span>}
+                </div>
+              )}
             </button>
           );
         })}
@@ -503,6 +630,35 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
               style={{ marginLeft: 'auto', background: includeOffice ? C.text : 'transparent', color: includeOffice ? C.bg : C.textMuted, border: `1px solid ${includeOffice ? C.text : C.border}`, borderRadius: 999, padding: '3px 10px', fontSize: 11, fontFamily: MONO, letterSpacing: 0.6, textTransform: 'uppercase', cursor: 'pointer', whiteSpace: 'nowrap' }}>
               Office staff
             </button>
+          </div>
+        );
+      })()}
+      {(() => {
+        const chip = (label, onClick, { on = false, title } = {}) => (
+          <button key={label} type="button" onClick={onClick} title={title}
+            style={{ flex: '0 0 auto', background: on ? C.text : 'transparent', color: on ? C.bg : C.textMuted, border: `1px solid ${on ? C.text : C.border}`, borderRadius: 999, padding: '4px 10px', fontSize: 11, fontFamily: MONO, letterSpacing: 0.5, textTransform: 'uppercase', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            {label}
+          </button>
+        );
+        const sel = (value, onChange, options, placeholder) => (
+          <select value={value} onChange={onChange}
+            style={{ flex: '0 0 auto', background: value ? C.text : 'transparent', color: value ? C.bg : C.textMuted, border: `1px solid ${value ? C.text : C.border}`, borderRadius: 999, padding: '4px 8px', fontSize: 11, fontFamily: MONO, letterSpacing: 0.5, textTransform: 'uppercase', cursor: 'pointer', maxWidth: 150 }}>
+            <option value="">{placeholder}</option>
+            {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        );
+        const pend = pendingOn(selDay).length;
+        return (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', overflowX: 'auto', paddingBottom: 2 }} data-area="board tools">
+            {sel(filters.client, ev => setFilters(f => ({ ...f, client: ev.target.value })), weekClients, 'All clients')}
+            {sel(filters.type, ev => setFilters(f => ({ ...f, type: ev.target.value })), TYPE_ORDER.map(t => [t, TYPE_LABEL[t]]), 'All types')}
+            {chip('Spare', () => setFilters(f => ({ ...f, spareOnly: !f.spareOnly })), { on: filters.spareOnly, title: `Only people free on ${longDay(selDay)}` })}
+            <span style={{ flex: '0 0 1px', height: 16, background: C.border }} />
+            {chip('Copy last week', previewCopyLastWeek, { title: 'Repeat last week\'s Mon–Fri jobs into empty cells' })}
+            {pend > 0 && chip(`Nudge ${pend}`, nudgePending, { title: 'Re-send the accept SMS to everyone still pending on this day' })}
+            {chip('CSV', exportCsv)}
+            {!isMobile && chip('Print', printWeek)}
+            {chip('History', () => setView(v => (v === 'history' ? (isMobile ? 'day' : 'week') : 'history')), { on: view === 'history' })}
           </div>
         );
       })()}
@@ -551,6 +707,7 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
                   <td style={{ position: 'sticky', left: 0, zIndex: 1, background: C.card, padding: '8px 10px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top', borderRight: `1px solid ${C.border}`, overflow: 'hidden' }}>
                     {nameBtn(w, compact)}
                     {!compact && <div style={{ fontSize: 10.5, color: C.textDim, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.job_title || ''}</div>}
+                    {weekDays(w.id) > 0 && <div title="Days on site · planned hours this week" style={{ fontSize: 10, fontFamily: MONO, color: weekHours(w.id) > 40 ? '#fde047' : C.textDim, marginTop: 2, whiteSpace: 'nowrap' }}>{weekDays(w.id)}d · {weekHours(w.id)}h</div>}
                   </td>
                   {days.map(d => (
                     <td key={d} style={{ padding: 2, borderBottom: `1px solid ${C.border}`, verticalAlign: 'top' }}>{cell(w, d, compact)}</td>
@@ -778,7 +935,20 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
               );
             })}
           </div>
-          <div style={{ fontSize: 11.5, color: C.textDim, marginTop: 5 }}>Tap every day you want this on. Amber means they're already booked that day — saving moves them.</div>
+          {e.choice === 'work' && e.workerId && e.days.some(d => leaveOn(e.workerId, d) || awayOn(e.workerId, d)) && (
+            <div style={{ marginTop: 6, border: '1px solid rgba(239,68,68,0.45)', background: C.errorSoft, borderRadius: R.md, padding: '8px 12px', fontSize: 12, color: '#fca5a5' }}>
+              {e.workerName} is on {e.days.filter(d => leaveOn(e.workerId, d) || awayOn(e.workerId, d)).map(d => `${DAY_NAMES[days.indexOf(d)]} ${dayNum(d)} (${leaveOn(e.workerId, d) ? 'approved leave' : (awayOn(e.workerId, d)?.reason || 'away')})`).join(', ')}. Saving still books them.
+            </div>
+          )}
+          {e.hasExisting && e.choice === 'work' && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+              <select value={swapTo} onChange={ev => setSwapTo(ev.target.value)} style={{ ...inputStyle, flex: '1 1 180px', fontSize: 13 }}>
+                <option value="">Move this day to another worker…</option>
+                {dayStats(e.day).spare.filter(x => x.id !== e.workerId).map(x => <option key={x.id} value={x.id}>{x.name}{x.job_title ? ` · ${x.job_title}` : ''}</option>)}
+              </select>
+              <button type="button" disabled={!swapTo || saving} onClick={moveToWorker} style={{ ...btnSmall, opacity: swapTo ? 1 : 0.5 }}>Move</button>
+            </div>
+          )}
 
           <div style={sectionLabel}>Note for payroll</div>
           <textarea style={{ ...inputStyle, minHeight: 60, resize: 'vertical' }} value={e.note} onChange={ev => ed({ note: ev.target.value })}
@@ -894,6 +1064,27 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
       {loading
         ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>
         : view === 'notes' ? notesPanel
+        : view === 'history' ? (
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: R.lg, padding: 14 }} data-area="board history">
+            <div style={{ fontFamily: MONO, fontWeight: 800, color: C.accent, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.6, marginBottom: 10 }}>Changes this week <span style={{ color: C.textMuted }}>{history ? history.length : ''}</span></div>
+            {history === null && <Spinner />}
+            {history && history.length === 0 && <div style={{ fontSize: 12.5, color: C.textDim }}>No board changes this week.</div>}
+            <div style={{ display: 'grid', gap: 6 }}>
+              {(history || []).map(h => {
+                const a = h.after || {};
+                const what = a.choice === 'none' ? 'cleared' : a.choice === 'work' ? `${a.shift ? shiftMeta(a.shift)?.label || a.shift : 'Day'}${a.copied_from ? ' (copied from last week)' : ''}` : (statusMeta(a.choice)?.label || a.choice || '');
+                return (
+                  <div key={h.id} style={{ display: 'flex', gap: 10, alignItems: 'baseline', fontSize: 12.5, borderTop: `1px solid ${C.border}`, paddingTop: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.textDim, whiteSpace: 'nowrap' }}>{new Date(h.created_at).toLocaleString('en-AU', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Australia/Sydney' })}</span>
+                    <strong style={{ color: C.text }}>{a.worker || 'Worker'}</strong>
+                    <span style={{ color: C.textMuted }}>{a.day ? `${DAY_NAMES[days.indexOf(a.day)] || ''} ${dayNum(a.day)}` : ''} · {what}{a.left_early ? ' · left early' : ''}{a.note ? ' · note' : ''}</span>
+                    <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10.5, color: C.textDim, whiteSpace: 'nowrap' }}>{h.actor_name || ''}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )
         : view === 'day' ? dayView
         : visible.length === 0 ? <EmptyState message="No workers match this search." />
         : <>{weekGrid}<div style={{ marginTop: 14 }}>{notesPanel}</div></>}
@@ -904,6 +1095,24 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
       )}
       {editorModal}
       {profileModal}
+      {copying && (
+        <Modal title="Copy last week" onClose={() => setCopying(null)} width={520}>
+          <div style={{ fontSize: 13, color: C.text }}>
+            {copying.rows.length === 0
+              ? <div style={{ color: C.textMuted }}>Nothing to copy: every Mon–Fri cell with a job last week is already filled this week.</div>
+              : <>
+                  <div><strong>{copying.rows.length}</strong> job{copying.rows.length === 1 ? '' : 's'} will be added to empty cells this week as pending. Each worker gets the usual SMS to accept.</div>
+                  <div style={{ display: 'grid', gap: 4, marginTop: 10, maxHeight: 260, overflowY: 'auto' }}>
+                    {copying.rows.map(r => <div key={`${r.worker_id}|${r.day}`} style={{ fontSize: 12, color: C.textMuted }}><strong style={{ color: C.text }}>{workers.find(w => w.id === r.worker_id)?.name}</strong> · {DAY_NAMES[days.indexOf(r.day)]} {dayNum(r.day)} · {r.src.client}{r.src.site ? ` · ${r.src.site}` : ''}</div>)}
+                  </div>
+                </>}
+            <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
+              <button type="button" style={btnSecondary} onClick={() => setCopying(null)}>Cancel</button>
+              {copying.rows.length > 0 && <button type="button" style={btnPrimary} disabled={saving} onClick={runCopyLastWeek}>{saving ? 'Copying…' : `Copy ${copying.rows.length}`}</button>}
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
