@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../../supabaseClient';
 import { C, R, MONO, inputStyle, btnPrimary, btnSecondary, btnSmall } from '../../theme';
 import { WORKER_SAFE_COLS } from '../../utils/workerCols';
@@ -96,7 +96,7 @@ function Chip({ on, amber, color, children, onClick, title, small }) {
 }
 const sectionLabel = { fontSize: 10, color: C.accent, fontFamily: MONO, letterSpacing: 1.6, textTransform: 'uppercase', fontWeight: 700, margin: '14px 0 6px' };
 const RainTag = ({ tag }) => (
-  <span style={{ display: 'inline-block', padding: '0 5px', borderRadius: 4, fontSize: 9.5, fontWeight: 800, fontFamily: MONO, letterSpacing: 0.6, background: 'rgba(56,189,248,0.16)', color: '#7dd3fc', border: '1px solid rgba(56,189,248,0.45)', marginLeft: 5, verticalAlign: 'middle' }}>
+  <span style={{ display: 'inline-block', padding: '0 5px', borderRadius: 4, fontSize: 9.5, fontWeight: 800, fontFamily: MONO, letterSpacing: 0.6, background: 'rgba(56,189,248,0.16)', color: '#7dd3fc', border: '1px solid rgba(56,189,248,0.45)', marginLeft: 0, verticalAlign: 'middle', whiteSpace: 'nowrap', flex: '0 0 auto' }}>
     {tag || 'RAIN'}
   </span>
 );
@@ -107,6 +107,13 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
   const [weekStart, setWeekStart] = useState(() => mondayOf(today));
   const [view, setView] = useState(isMobile ? 'day' : 'week');     // 'week' | 'day' | 'notes'
   const [selDay, setSelDay] = useState(today);
+  const gridRef = useRef(null);
+  // Phone: the week grid scrolls sideways; keep the picked day in view.
+  useEffect(() => {
+    const el = gridRef.current; if (!el || !isMobile) return;
+    const i = days.indexOf(selDay); if (i < 0) return;
+    el.scrollTo({ left: Math.max(0, i * 112 - 8), behavior: 'smooth' });
+  }, [selDay, view, isMobile]);  // eslint-disable-line react-hooks/exhaustive-deps
   const [workers, setWorkers] = useState([]);
   const [allocs, setAllocs] = useState([]);
   const [clients, setClients] = useState([]);
@@ -371,13 +378,33 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
       return work.map(a => {
         const sh = shiftMeta(a.shift);
         return (
-          <div key={a.id} style={{ lineHeight: 1.25, marginBottom: 2 }}>
-            <span style={{ fontWeight: 700, color: C.text, fontSize: compact ? 12 : 13 }}>{a.client || a.site || 'Job'}</span>
-            {sh?.rain && <RainTag tag={compact ? 'RAIN' : sh.tag} />}
-            {a.left_early && <span title="Left early" style={{ marginLeft: 5, fontSize: 10, color: '#fde047', fontWeight: 800 }}>½</span>}
-            {a.status === 'pending' && <span title="Waiting for the worker to accept" style={{ marginLeft: 5, fontSize: 10 }}>⏳</span>}
-            {a.client && a.site && <div style={{ color: C.textMuted, fontSize: compact ? 10.5 : 11.5, whiteSpace: compact ? 'nowrap' : 'normal', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.site}</div>}
-            {!compact && a.role && <div style={{ fontSize: 10, fontFamily: MONO, color: roleColor(a.role) }}>{a.role}</div>}
+          <div key={a.id} style={{ lineHeight: 1.25, marginBottom: 2, minWidth: 0 }}>
+            {(() => {
+              // Badges sit on the site line so the client name keeps its room;
+              // when there is no site line they follow the client name.
+              const badges = (sh?.rain || a.left_early || a.status === 'pending') && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flex: '0 0 auto' }}>
+                  {sh?.rain && <RainTag tag={compact ? 'RAIN' : sh.tag} />}
+                  {a.left_early && <span title="Left early" style={{ fontSize: 10, color: '#fde047', fontWeight: 800 }}>½</span>}
+                  {a.status === 'pending' && <span title="Waiting for the worker to accept" style={{ fontSize: 10 }}>⏳</span>}
+                </span>
+              );
+              const hasSite = !!(a.client && a.site);
+              return (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                    <span title={a.client || a.site || 'Job'} style={{ fontWeight: 700, color: C.text, fontSize: compact ? 12 : 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '1 1 auto' }}>{a.client || a.site || 'Job'}</span>
+                  </div>
+                  {(hasSite || badges) && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, marginTop: 1 }}>
+                      {hasSite && <span title={a.site} style={{ color: C.textMuted, fontSize: compact ? 10.5 : 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '1 1 auto' }}>{a.site}</span>}
+                      {badges}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+            {!compact && a.role && <div title={a.role} style={{ fontSize: 10, fontFamily: MONO, color: roleColor(a.role), whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.role}</div>}
           </div>
         );
       });
@@ -394,7 +421,7 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
     const note = noteMap[noteKey(w.id, day)];
     return (
       <button type="button" onClick={() => openEditor(w.id, day)} title={note ? `Note: ${note.note}` : 'Tap to allocate'}
-        style={{ position: 'relative', display: 'block', width: '100%', minHeight: compact ? 44 : 50, textAlign: 'left', background: day === today ? 'rgba(249,115,22,0.05)' : 'transparent', border: 'none', borderRadius: 6, padding: compact ? '6px 6px' : '7px 9px', cursor: 'pointer', color: C.text, fontFamily: 'inherit' }}
+        style={{ position: 'relative', display: 'block', width: '100%', minHeight: compact ? 44 : 50, textAlign: 'left', overflow: 'hidden', background: day === today ? 'rgba(249,115,22,0.05)' : 'transparent', border: 'none', borderRadius: 6, padding: compact ? '6px 6px' : '7px 9px', cursor: 'pointer', color: C.text, fontFamily: 'inherit' }}
         onMouseEnter={e => { e.currentTarget.style.background = C.cardHover; }}
         onMouseLeave={e => { e.currentTarget.style.background = day === today ? 'rgba(249,115,22,0.05)' : 'transparent'; }}>
         {cellBody(w, day, compact)}
@@ -404,58 +431,78 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
   };
 
   // ── header pieces ────────────────────────────────────────────────────────
-  const tabBtn = (id, label, onClick) => {
+  // Layout rule (owner, 2026-11-09): nothing wraps, nothing explains itself.
+  // Phone: date nav · segmented tabs · 7 day pills · search + "+" · one-line
+  // count. Desktop adds the page title and a normal "Add allocation" button.
+  const seg = (id, label, onClick) => {
     const on = view === id;
     return (
       <button key={id} type="button" onClick={onClick || (() => setView(id))}
-        style={{ flex: '1 1 0', minWidth: isMobile ? 56 : 70, padding: isMobile ? '10px 4px' : '11px 8px', borderRadius: 9, border: `1px solid ${on ? C.text : C.border}`, background: on ? C.text : C.card, color: on ? C.bg : C.textMuted, fontFamily: MONO, fontSize: isMobile ? 11 : 12, letterSpacing: isMobile ? 0.8 : 1.4, textTransform: 'uppercase', fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+        style={{ flex: '1 1 0', minWidth: 0, padding: isMobile ? '9px 0' : '9px 10px', border: 'none', borderRadius: 7, background: on ? C.text : 'transparent', color: on ? C.bg : C.textMuted, fontFamily: MONO, fontSize: isMobile ? 10.5 : 11.5, letterSpacing: isMobile ? 0.6 : 1.2, textTransform: 'uppercase', fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}>
         {label}
       </button>
     );
   };
+  const navBtn = (label, onClick, aria) => (
+    <button type="button" style={{ ...btnSmall, padding: isMobile ? '7px 10px' : '7px 11px', fontSize: 13, lineHeight: 1 }} onClick={onClick} aria-label={aria}>{label}</button>
+  );
+  const dateNav = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: isMobile ? 0 : 'auto' }}>
+      {navBtn('←', () => setWeekStart(addDays(weekStart, -7)), 'Previous week')}
+      <div style={{ fontFamily: MONO, fontSize: isMobile ? 11.5 : 12, color: C.text, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', whiteSpace: 'nowrap', minWidth: isMobile ? 0 : 118, textAlign: 'center' }}>{shortDate(weekStart)} – {shortDate(weekEnd)}</div>
+      {navBtn('→', () => setWeekStart(addDays(weekStart, 7)), 'Next week')}
+      {navBtn('Today', () => { setWeekStart(mondayOf(today)); setSelDay(today); })}
+    </div>
+  );
+  const addBtn = (
+    <button type="button" onClick={() => openEditor('', selDay)} aria-label="Add allocation"
+      style={{ ...btnPrimary, padding: isMobile ? '0 14px' : '0 16px', height: 42, fontFamily: MONO, letterSpacing: 1, textTransform: 'uppercase', fontWeight: 800, fontSize: 12, whiteSpace: 'nowrap', flex: '0 0 auto' }}>
+      {isMobile ? '+' : '+ Add allocation'}
+    </button>
+  );
   const header = (
-    <div style={{ display: 'grid', gap: 10, marginBottom: 12 }} data-area="board header">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <div style={{ fontWeight: 900, color: C.text, fontSize: isMobile ? 18 : 24, letterSpacing: -0.5, textTransform: 'uppercase', flex: '1 1 auto' }}>Allocations</div>
-        <button style={btnSmall} onClick={() => setWeekStart(addDays(weekStart, -7))} aria-label="Previous week">←</button>
-        <div style={{ fontFamily: MONO, fontSize: 12, color: C.text, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase' }}>{shortDate(weekStart)} – {shortDate(weekEnd)}</div>
-        <button style={btnSmall} onClick={() => setWeekStart(addDays(weekStart, 7))} aria-label="Next week">→</button>
-        <button style={btnSmall} onClick={() => { setWeekStart(mondayOf(today)); setSelDay(today); }}>Today</button>
+    <div style={{ display: 'grid', gap: 8, marginBottom: 10 }} data-area="board header">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: isMobile ? 'center' : 'flex-start' }}>
+        {!isMobile && <div style={{ fontWeight: 900, color: C.text, fontSize: 24, letterSpacing: -0.5, textTransform: 'uppercase' }}>Allocations</div>}
+        {dateNav}
       </div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap', overflowX: 'auto' }}>
-        {tabBtn('day', 'Day')}
-        {tabBtn('week', 'Week')}
-        {tabBtn('notes', 'Notes')}
-        {tabBtn('leave', 'Leave', () => onNavigate?.('leave'))}
-        {tabBtn('sites', 'Sites', () => onNavigate?.('clients'))}
+      <div style={{ display: 'flex', gap: 2, padding: 3, background: C.card, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+        {seg('day', 'Day')}
+        {seg('week', 'Week')}
+        {seg('notes', 'Notes')}
+        {seg('leave', 'Leave', () => onNavigate?.('leave'))}
+        {seg('sites', 'Sites', () => onNavigate?.('clients'))}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 5 }} data-area="day pills">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4 }} data-area="day pills">
         {days.map((d, i) => {
           const on = selDay === d;
           return (
             <button key={d} type="button" onClick={() => { setSelDay(d); if (view === 'notes') setView('day'); }}
-              style={{ padding: isMobile ? '7px 2px' : '9px 6px', borderRadius: 9, border: `1px solid ${on ? C.text : C.border}`, background: on ? C.text : C.card, color: on ? C.bg : C.text, cursor: 'pointer', textAlign: 'center', minWidth: 0 }}>
-              <div style={{ fontFamily: MONO, fontSize: isMobile ? 9 : 10.5, letterSpacing: 0.8, textTransform: 'uppercase', color: on ? C.bg : (d === today ? C.accent : C.textMuted), fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden' }}>{DAY_NAMES[i]} {dayNum(d)}</div>
-              <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 900, lineHeight: 1.1 }}>{dayCount(d)}</div>
+              style={{ padding: isMobile ? '6px 0 5px' : '7px 0 6px', borderRadius: 8, border: `1px solid ${on ? C.text : C.border}`, background: on ? C.text : C.card, color: on ? C.bg : C.text, cursor: 'pointer', textAlign: 'center', minWidth: 0, lineHeight: 1.1 }}>
+              <div style={{ fontFamily: MONO, fontSize: isMobile ? 8.5 : 10, letterSpacing: 0.5, textTransform: 'uppercase', color: on ? C.bg : (d === today ? C.accent : C.textMuted), fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden' }}>{DAY_NAMES[i]} {dayNum(d)}</div>
+              <div style={{ fontSize: isMobile ? 15 : 18, fontWeight: 900, marginTop: 2 }}>{dayCount(d)}</div>
             </button>
           );
         })}
       </div>
-      <input style={{ ...inputStyle, fontSize: 15 }} placeholder="Search a name, client, site or role" value={search} onChange={e => setSearch(e.target.value)} />
-      <button type="button" onClick={() => openEditor('', selDay)}
-        style={{ ...btnPrimary, width: '100%', padding: '13px', fontFamily: MONO, letterSpacing: 1.6, textTransform: 'uppercase', fontWeight: 800, fontSize: 13 }}>
-        + Add allocation
-      </button>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input style={{ ...inputStyle, fontSize: 15, height: 42, flex: '1 1 auto', minWidth: 0 }} placeholder={isMobile ? 'Search' : 'Search a name, client, site or role'} value={search} onChange={e => setSearch(e.target.value)} />
+        {addBtn}
+      </div>
       {(() => {
         const s = dayStats(selDay);
-        const part = (n, label, color) => <span><strong style={{ color: color || C.text }}>{n}</strong> {label}</span>;
+        const part = (n, label, color) => <span style={{ whiteSpace: 'nowrap' }}><strong style={{ color: color || C.text }}>{n}</strong> {label}</span>;
         return (
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 12.5, color: C.textMuted, alignItems: 'center' }} data-area="day summary">
+          <div style={{ display: 'flex', gap: 10, fontSize: 12.5, color: C.textMuted, alignItems: 'center', overflowX: 'auto', whiteSpace: 'nowrap' }} data-area="day summary">
             <span style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: 1, textTransform: 'uppercase', color: C.textDim }}>{longDay(selDay)}</span>
-            {part(s.onSite.length, 'on site')} · {part(s.spare.length, 'spare', C.accent)} · {part(s.unavailable.length, 'unavailable')} · {part(s.expiredOnSite.length, 'with an expired ticket on site', s.expiredOnSite.length ? '#fca5a5' : undefined)}
-            <label style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', fontSize: 12 }}>
-              <input type="checkbox" checked={includeOffice} onChange={e => setIncludeOffice(e.target.checked)} /> office staff
-            </label>
+            {part(s.onSite.length, 'on site')}
+            {part(s.spare.length, 'spare', C.accent)}
+            {s.unavailable.length > 0 && part(s.unavailable.length, 'off')}
+            {s.expiredOnSite.length > 0 && part(s.expiredOnSite.length, 'expired ticket on site', '#fca5a5')}
+            <button type="button" onClick={() => setIncludeOffice(v => !v)} title="Show office staff on the board"
+              style={{ marginLeft: 'auto', background: includeOffice ? C.text : 'transparent', color: includeOffice ? C.bg : C.textMuted, border: `1px solid ${includeOffice ? C.text : C.border}`, borderRadius: 999, padding: '3px 10px', fontSize: 11, fontFamily: MONO, letterSpacing: 0.6, textTransform: 'uppercase', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              Office staff
+            </button>
           </div>
         );
       })()}
@@ -467,24 +514,31 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
       {g.label} <span style={{ color: C.textMuted, marginLeft: 6 }}>{g.workers.length}</span>
     </div>
   );
-  const nameBtn = (w) => (
-    <button type="button" onClick={() => setProfileId(w.id)}
-      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: C.text, fontWeight: 700, fontSize: 13, textAlign: 'left', fontFamily: 'inherit', lineHeight: 1.2 }}>
-      {w.name}
+  const shortName = (name) => { const p = String(name || '').trim().split(/\s+/); return p.length > 1 ? `${p[0]} ${p[p.length - 1][0]}.` : p[0] || ''; };
+  const nameBtn = (w, oneLine = false) => (
+    <button type="button" onClick={() => setProfileId(w.id)} title={w.name}
+      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: C.text, fontWeight: 700, fontSize: 13, textAlign: 'left', fontFamily: 'inherit', lineHeight: 1.2, maxWidth: '100%', whiteSpace: oneLine ? 'nowrap' : 'normal', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>
+      {oneLine ? shortName(w.name) : w.name}
       {expiredCount(w.id) > 0 && <span title={`${expiredCount(w.id)} expired ticket(s)`} style={{ marginLeft: 6, fontSize: 10, color: '#fca5a5', fontWeight: 800 }}>●</span>}
     </button>
   );
 
   // ── week grid ────────────────────────────────────────────────────────────
   const compact = isMobile;
+  const NAME_W = compact ? 104 : 168;
+  const DAY_W = compact ? 112 : 124;
   const weekGrid = (
-    <div style={{ overflowX: 'auto', border: `1px solid ${C.border}`, borderRadius: R.lg, background: C.card }} data-area="week grid">
-      <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, minWidth: compact ? 760 : 980 }}>
+    <div ref={gridRef} style={{ overflowX: 'auto', border: `1px solid ${C.border}`, borderRadius: R.lg, background: C.card, WebkitOverflowScrolling: 'touch' }} data-area="week grid">
+      <table style={{ width: compact ? NAME_W + DAY_W * 7 : '100%', minWidth: NAME_W + DAY_W * 7, borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed' }}>
+        <colgroup>
+          <col style={{ width: compact ? NAME_W : '14%' }} />
+          {days.map(d => <col key={d} style={{ width: compact ? DAY_W : `${(86 / 7).toFixed(3)}%` }} />)}
+        </colgroup>
         <thead>
           <tr style={{ background: C.accent }}>
-            <th style={{ position: 'sticky', left: 0, zIndex: 2, background: C.accent, color: '#fff', textAlign: 'left', padding: '9px 10px', fontFamily: MONO, fontSize: 10.5, letterSpacing: 1.5, textTransform: 'uppercase', minWidth: compact ? 120 : 190 }}>Worker</th>
+            <th style={{ position: 'sticky', left: 0, zIndex: 2, background: C.accent, color: '#fff', textAlign: 'left', padding: '8px 10px', fontFamily: MONO, fontSize: 10.5, letterSpacing: 1.5, textTransform: 'uppercase' }}>Worker</th>
             {days.map((d, i) => (
-              <th key={d} style={{ color: '#fff', textAlign: 'left', padding: '9px 8px', fontFamily: MONO, fontSize: 10.5, letterSpacing: 1.5, textTransform: 'uppercase', minWidth: compact ? 92 : 118, opacity: i >= 5 ? 0.75 : 1 }}>{DAY_NAMES[i]} {dayNum(d)}</th>
+              <th key={d} style={{ color: '#fff', textAlign: 'left', padding: '8px 8px', fontFamily: MONO, fontSize: 10.5, letterSpacing: 1.5, textTransform: 'uppercase', opacity: i >= 5 ? 0.75 : 1, background: d === selDay ? 'rgba(0,0,0,0.18)' : 'transparent', whiteSpace: 'nowrap' }}>{DAY_NAMES[i]} {dayNum(d)}</th>
             ))}
           </tr>
         </thead>
@@ -494,9 +548,9 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
               <tr><td colSpan={8} style={{ padding: 0 }}>{groupHeader(g)}</td></tr>
               {g.workers.map(w => (
                 <tr key={w.id} style={{ borderTop: `1px solid ${C.border}` }}>
-                  <td style={{ position: 'sticky', left: 0, zIndex: 1, background: C.card, padding: '8px 10px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top', borderRight: `1px solid ${C.border}` }}>
-                    {nameBtn(w)}
-                    {!compact && <div style={{ fontSize: 10.5, color: C.textDim, marginTop: 2 }}>{w.job_title || ''}</div>}
+                  <td style={{ position: 'sticky', left: 0, zIndex: 1, background: C.card, padding: '8px 10px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top', borderRight: `1px solid ${C.border}`, overflow: 'hidden' }}>
+                    {nameBtn(w, compact)}
+                    {!compact && <div style={{ fontSize: 10.5, color: C.textDim, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.job_title || ''}</div>}
                   </td>
                   {days.map(d => (
                     <td key={d} style={{ padding: 2, borderBottom: `1px solid ${C.border}`, verticalAlign: 'top' }}>{cell(w, d, compact)}</td>
@@ -518,21 +572,24 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
       const k = `${a.client || 'Job'}|${a.site || ''}`;
       (bySite[k] = bySite[k] || { client: a.client || 'Job', site: a.site || '', rows: [] }).rows.push({ w, a });
     }));
-    const row = (w, right) => {
+    const row = (w, sub, right) => {
       const note = noteMap[noteKey(w.id, selDay)];
       return (
         <button key={w.id} type="button" onClick={() => openEditor(w.id, selDay)}
-          style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', background: 'transparent', border: 'none', borderTop: `1px solid ${C.border}`, padding: '10px 10px', cursor: 'pointer', color: C.text, fontFamily: 'inherit', minHeight: 46 }}>
-          <span style={{ fontWeight: 700, fontSize: 13.5, flex: '1 1 auto', minWidth: 0 }}>{w.name}</span>
-          <span style={{ fontSize: 11.5, color: C.textMuted, textAlign: 'right' }}>{right}</span>
+          style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', background: 'transparent', border: 'none', borderTop: `1px solid ${C.border}`, padding: '9px 12px', paddingRight: note ? 22 : 12, cursor: 'pointer', color: C.text, fontFamily: 'inherit', minHeight: 48 }}>
+          <span style={{ flex: '1 1 auto', minWidth: 0 }}>
+            <span style={{ display: 'block', fontWeight: 700, fontSize: 13.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.name}</span>
+            {sub && <span style={{ display: 'block', fontSize: 11, marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</span>}
+          </span>
+          {right && <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: C.textMuted, whiteSpace: 'nowrap', flex: '0 0 auto' }}>{right}</span>}
           {note && <Dot />}
         </button>
       );
     };
     const box = (title, count, children, color) => (
       <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: R.lg, overflow: 'hidden' }}>
-        <div style={{ padding: '8px 10px', fontFamily: MONO, fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase', fontWeight: 800, color: color || C.accent, display: 'flex', gap: 8 }}>
-          <span style={{ flex: 1 }}>{title}</span><span style={{ color: C.textMuted }}>{count}</span>
+        <div style={{ padding: '8px 12px', fontFamily: MONO, fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase', fontWeight: 800, color: color || C.accent, display: 'flex', gap: 8, alignItems: 'baseline' }}>
+          <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</span><span style={{ color: C.textMuted }}>{count}</span>
         </div>
         {children}
       </div>
@@ -542,13 +599,15 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
         {Object.values(bySite).sort((a, b) => a.client.localeCompare(b.client)).map(g => box(
           <span><span style={{ color: C.text }}>{g.client}</span>{g.site && <span style={{ color: C.textMuted, fontWeight: 500, textTransform: 'none', letterSpacing: 0, fontFamily: 'inherit', fontSize: 12 }}> · {g.site}</span>}</span>,
           g.rows.length,
-          g.rows.map(({ w, a }) => row(w, <>{a.role && <span style={{ color: roleColor(a.role), fontFamily: MONO, fontSize: 10.5 }}>{a.role}</span>}{shiftMeta(a.shift)?.rain && <RainTag tag={shiftMeta(a.shift).tag} />}{a.left_early ? ' · left early' : ''}{a.status === 'pending' ? ' ⏳' : ''}</>)),
+          g.rows.map(({ w, a }) => row(w,
+            a.role ? <span style={{ color: roleColor(a.role), fontFamily: MONO, fontSize: 10.5 }}>{a.role}</span> : null,
+            <>{shiftMeta(a.shift)?.rain && <RainTag tag={shiftMeta(a.shift).tag} />}{a.left_early && <span title="Left early" style={{ color: '#fde047', fontWeight: 800 }}>½</span>}{a.status === 'pending' && <span title="Waiting for the worker to accept">⏳</span>}</>)),
         ))}
-        {!Object.keys(bySite).length && <EmptyState message={`Nobody is on site on ${longDay(selDay)} yet. Tap a name below to allocate.`} />}
-        {box('Spare', s.spare.length, s.spare.map(w => row(w, TYPE_LABEL[w.worker_type] || '')), C.textMuted)}
+        {!Object.keys(bySite).length && <EmptyState message={`Nobody on site ${longDay(selDay)}.`} />}
+        {box('Spare', s.spare.length, s.spare.map(w => row(w, <span style={{ color: C.textDim }}>{w.job_title || TYPE_LABEL[w.worker_type] || ''}</span>, null)), C.textMuted)}
         {box('Unavailable', s.unavailable.length, s.unavailable.map(w => {
           const st = statusOn(w.id, selDay); const lv = leaveOn(w.id, selDay); const aw = awayOn(w.id, selDay);
-          return row(w, st ? statusMeta(st.allocation_type)?.label || st.allocation_type : lv ? `A/L approved${lv.reason ? ` · ${lv.reason}` : ''}` : `Away${aw?.reason ? ` · ${aw.reason}` : ''}`);
+          return row(w, <span style={{ color: C.textMuted }}>{st ? statusMeta(st.allocation_type)?.label || st.allocation_type : lv ? `A/L approved${lv.reason ? ` · ${lv.reason}` : ''}` : `Away${aw?.reason ? ` · ${aw.reason}` : ''}`}</span>, null);
         }), '#f87171')}
       </div>
     );
@@ -583,9 +642,11 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
   })();
   const notesPanel = (
     <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: R.lg, padding: 14 }} data-area="notes for payroll">
-      <div style={{ fontWeight: 900, color: C.accent, fontSize: 18, textTransform: 'uppercase', letterSpacing: -0.3 }}>Notes for payroll</div>
-      <div style={{ fontSize: 12.5, color: C.textMuted, margin: '4px 0 12px' }}>Every note written on this week, in one place — read these before processing. The days carrying one are dotted on the grid.</div>
-      {notesList.length === 0 && <div style={{ fontSize: 12.5, color: C.textDim }}>No notes this week yet. Tap a day on the board and write one.</div>}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
+        <div style={{ fontFamily: MONO, fontWeight: 800, color: C.accent, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.6 }}>Notes for payroll</div>
+        <div style={{ fontFamily: MONO, fontSize: 11, color: C.textMuted }}>{notesList.length}</div>
+      </div>
+      {notesList.length === 0 && <div style={{ fontSize: 12.5, color: C.textDim }}>No notes this week.</div>}
       <div style={{ display: 'grid', gap: 8 }}>
         {notesList.map(r => (
           <div key={r.key} style={{ borderLeft: `3px solid ${r.auto ? C.border : C.accent}`, background: C.bg, borderRadius: 8, padding: '9px 12px', display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'baseline' }}>
@@ -593,7 +654,7 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
               <div style={{ fontWeight: 700, color: C.text, fontSize: 13.5 }}>{r.name}</div>
               <div style={{ color: r.auto ? C.textMuted : C.text, fontSize: 13, marginTop: 2 }}>{r.text}</div>
             </div>
-            <div style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: 1, textTransform: 'uppercase', color: C.accent, fontWeight: 700, whiteSpace: 'nowrap' }}>
+            <div style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: 1, textTransform: 'uppercase', color: C.accent, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>
               {DAY_NAMES[days.indexOf(r.day)] || ''} {dayNum(r.day)}{r.tag ? ` · ${r.tag}` : ''}
             </div>
           </div>
@@ -828,7 +889,7 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
   })();
 
   return (
-    <div data-area="allocation board">
+    <div data-area="allocation board" style={{ paddingBottom: 72 }}>
       {header}
       {loading
         ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>
@@ -837,8 +898,8 @@ export function AllocationBoardPage({ showToast, onAllocate, onNavigate, isMobil
         : visible.length === 0 ? <EmptyState message="No workers match this search." />
         : <>{weekGrid}<div style={{ marginTop: 14 }}>{notesPanel}</div></>}
       {!loading && view === 'week' && (
-        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 10, fontSize: 11, color: C.textMuted }}>
-          <span>⏳ waiting for the worker to accept</span><span>½ left early</span><span><RainTag /> rain day</span><span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: C.accent }} /> note for payroll</span>
+        <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 11, color: C.textDim, overflowX: 'auto', whiteSpace: 'nowrap' }}>
+          <span>⏳ to accept</span><span>½ left early</span><span><RainTag /> rain</span><span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: C.accent, verticalAlign: 'middle' }} /> payroll note</span>
         </div>
       )}
       {editorModal}
