@@ -40,9 +40,14 @@ const SCOPES = [
   'openid', 'profile', 'email', 'offline_access',
   'payroll.employees', 'payroll.payruns', 'payroll.payslip', 'payroll.settings',
   'accounting.contacts', 'accounting.invoices',
-  // Books (2026-11-09): bank transactions / payments / credit notes for the
-  // cash-basis BAS, the chart of accounts, and reports. Read-only scopes.
-  'accounting.transactions.read', 'accounting.settings.read', 'accounting.reports.read',
+  // Books (2026-11-09): read-only. This Xero app was created after 2 March
+  // 2026, so it only accepts Xero's GRANULAR scopes — the old umbrella
+  // 'accounting.transactions.read' / 'accounting.reports.read' come back as
+  // invalid_scope (proved 2026-11-09 against login.xero.com). Mapping:
+  // banktransactions.read → BankTransactions; payments.read → Payments,
+  // Prepayments, Overpayments; accounting.invoices (above) → Invoices +
+  // CreditNotes; settings.read → Accounts (chart). Books reads no Reports.
+  'accounting.banktransactions.read', 'accounting.payments.read', 'accounting.settings.read',
 ].join(' ');
 
 const CORS = {

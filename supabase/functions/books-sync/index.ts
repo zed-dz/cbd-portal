@@ -48,8 +48,11 @@ const PACE_MS       = 1100;   // Xero: 60 calls / minute
 const WINDOW_MONTHS = 12;     // full sync looks this far back
 const MAX_HOPS      = 24;     // self-invocations per chain (24 × 8 = 192 pages); cron picks up the rest
 const STALE_RUN_MS  = 90_000; // a 'running' run with no heartbeat for this long is resumable
-const REQUIRED_SCOPES    = ['accounting.transactions.read', 'accounting.settings.read'];
-const RECOMMENDED_SCOPES = ['accounting.reports.read'];
+// Granular Xero scopes (this app rejects the umbrella accounting.transactions):
+// bank transactions, payments (+ prepayments/overpayments), chart of accounts.
+// Invoices + credit notes ride on accounting.invoices, which Payroll already had.
+const REQUIRED_SCOPES    = ['accounting.banktransactions.read', 'accounting.payments.read', 'accounting.settings.read', 'accounting.invoices'];
+const RECOMMENDED_SCOPES: string[] = [];
 
 type Endpoint = 'BankTransactions' | 'Payments' | 'CreditNotes' | 'Prepayments' | 'Overpayments' | 'Invoices' | 'Accounts';
 const ENDPOINTS: Endpoint[] = ['BankTransactions', 'Payments', 'CreditNotes', 'Prepayments', 'Overpayments', 'Invoices', 'Accounts'];
