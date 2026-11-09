@@ -12,8 +12,9 @@
 //
 // GATE: MONEY (access_level admin/accounts) — Xero is payroll.
 // State: random hex token stored in integration_secrets as
-// 'oauth_state:xero:<state>' with its expiry (10 minutes) as the value;
-// xero-callback verifies and consumes it (single use).
+// 'oauth_state:xero:<state>' with value '<expiry ISO>|<auth user id>|<email>'
+// (2026-11-09: bound to the admin who started the flow — audit fix #2);
+// xero-callback verifies and consumes it (single use) and records who connected.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -39,6 +40,9 @@ const SCOPES = [
   'openid', 'profile', 'email', 'offline_access',
   'payroll.employees', 'payroll.payruns', 'payroll.payslip', 'payroll.settings',
   'accounting.contacts', 'accounting.invoices',
+  // Books (2026-11-09): bank transactions / payments / credit notes for the
+  // cash-basis BAS, the chart of accounts, and reports. Read-only scopes.
+  'accounting.transactions.read', 'accounting.settings.read', 'accounting.reports.read',
 ].join(' ');
 
 const CORS = {
@@ -62,7 +66,7 @@ function json(body: unknown, status = 200) {
 // `ilike` would treat `_` and `%` as wildcards.
 type GateLevel = 'office' | 'money';
 type GateResult =
-  | { ok: true; via: 'service' | 'user'; email: string | null; worker: { id: string; name: string | null; role: string | null; access_level: string | null } | null }
+  | { ok: true; via: 'service' | 'user'; email: string | null; worker: { id: string; name: string | null; role: string | null; access_level: string | null } | null; userId?: string }
   | { ok: false; status: number; error: string };
 async function gateCaller(req: Request, level: GateLevel): Promise<GateResult> {
   const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
@@ -80,7 +84,7 @@ async function gateCaller(req: Request, level: GateLevel): Promise<GateResult> {
   if (level === 'money' ? !money : !office) {
     return { ok: false, status: 403, error: level === 'money' ? 'Admin or accounts only' : 'Office staff only' };
   }
-  return { ok: true, via: 'user', email: user.email, worker: w };
+  return { ok: true, via: 'user', email: user.email, worker: w, userId: user.id };
 }
 
 serve(async (req) => {
@@ -98,11 +102,15 @@ serve(async (req) => {
   }
 
   // One-time state, 10-minute life, verified and consumed by xero-callback.
+  // The value carries WHO started the flow, so the callback can refuse a state
+  // minted by someone who is no longer a money user and record the connector.
+  // A service-role caller cannot start a browser flow: there is nobody to bind.
+  if (gate.via !== 'user' || !gate.userId) return json({ error: 'A signed-in admin must start the Xero connection' }, 403);
   const state = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
   const expires = new Date(Date.now() + STATE_TTL_MS).toISOString();
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   const { error: stErr } = await sb.from('integration_secrets')
-    .insert({ key: `oauth_state:xero:${state}`, value: expires, updated_at: new Date().toISOString() });
+    .insert({ key: `oauth_state:xero:${state}`, value: `${expires}|${gate.userId}|${(gate.email || '').toLowerCase()}`, updated_at: new Date().toISOString() });
   if (stErr) return json({ error: 'could not create oauth state', detail: stErr.message }, 500);
 
   const params = new URLSearchParams({

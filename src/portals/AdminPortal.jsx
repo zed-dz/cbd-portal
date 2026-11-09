@@ -25,6 +25,7 @@ import { LicenceAgentPage } from '../pages/LicenceAgent/LicenceAgentPage';
 import { ReportsPage } from '../pages/Reports/ReportsPage';
 import { PlantPage } from '../pages/Plant/PlantPage';
 import { InvoicesPage } from '../pages/Invoices/InvoicesPage';
+import { BooksPage } from '../pages/Books/BooksPage';
 import { BulkMessagesPage } from '../pages/BulkMessages/BulkMessagesPage';
 import { InboxPage } from '../pages/Inbox/InboxPage';
 import { TemplatesPage } from '../pages/Templates/TemplatesPage';
@@ -145,6 +146,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
         { id: 'default_rates', label: '💲 Default Rates' },
         { id: 'payroll', label: '💰 Payroll', badge: badges.payroll || null, badgeColor: 'green' },
         { id: 'invoices', label: '🧾 Invoices' },
+        { id: 'books', label: '📒 Books' },
         { id: 'contracts', label: '📝 Contracts' },
         // Payments (Stripe) is hidden until its maths matches payroll/billing and
         // the Stripe keys are set (audit P2). Set REACT_APP_PAYMENTS_ENABLED=1 to show it.
@@ -325,6 +327,7 @@ export function AdminPortal({ currentWorker, onSignOut, showToast, isMobile, sid
           {activePage === 'reports'          && <ReportsPage showToast={showToast} currentWorker={currentWorker} />}
           {activePage === 'plant'            && isMoneyUser && <PlantPage showToast={showToast} />}
           {activePage === 'invoices'         && isMoneyUser && <InvoicesPage showToast={showToast} />}
+          {activePage === 'books'            && isMoneyUser && <BooksPage showToast={showToast} />}
           {activePage === 'bulk_messages'    && <BulkMessagesPage showToast={showToast} />}
           {activePage === 'inbox'            && <InboxPage         showToast={showToast} onNavigate={navigate} />}
           {activePage === 'templates'        && <TemplatesPage     showToast={showToast} />}

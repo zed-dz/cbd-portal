@@ -18,7 +18,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { getXeroAccessToken } from './xeroToken.ts';
+import { getXeroAccessToken } from './xeroTokens.ts';   // shared, vault-backed (_shared/xeroTokens.ts)
 
 const XERO_CLIENT_ID       = Deno.env.get('XERO_CLIENT_ID')!;
 const XERO_CLIENT_SECRET   = Deno.env.get('XERO_CLIENT_SECRET')!;
@@ -350,7 +350,7 @@ serve(async (req) => {
 
 // ── Token + HTTP helpers ─────────────────────────────────────────────────────
 async function getAccessToken(sb: ReturnType<typeof createClient>): Promise<string | null> {
-  return getXeroAccessToken(sb, XERO_CLIENT_ID, XERO_CLIENT_SECRET);   // shared, lock-safe refresh (xeroToken.ts)
+  return getXeroAccessToken(sb, XERO_CLIENT_ID, XERO_CLIENT_SECRET);   // shared, lock-safe refresh (xeroTokens.ts)
 }
 function xeroHeaders(token: string, tenantId: string) {
   return { 'Authorization': `Bearer ${token}`, 'Xero-Tenant-Id': tenantId, 'Content-Type': 'application/json', 'Accept': 'application/json' };
