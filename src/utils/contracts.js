@@ -9,7 +9,7 @@ export const PLACEHOLDER_RE = /\{\{\s*([a-z0-9_]+)\s*\}\}/gi;
 // "specific detail" the office types when sending.
 export const KNOWN_FIELDS = [
   ['worker_name', 'Worker full name'], ['email', 'Email'], ['mobile', 'Mobile'], ['address', 'Residential address'],
-  ['job_title', 'Job title / role'], ['worker_type', 'Worker type'], ['date_of_birth', 'Date of birth'],
+  ['job_title', 'Job title / role'], ['worker_type', 'Worker type'], ['start_date', 'Start date'], ['date_of_birth', 'Date of birth'],
   ['abn', 'ABN (subcontractors)'], ['pay_rate', 'Base hourly rate (rate A)'], ['casual_loading', 'Casual loading, e.g. 25%'],
   ['emergency_name', 'Emergency contact name'], ['emergency_phone', 'Emergency contact phone'],
   ['company_name', 'Company name'], ['sender_name', 'The admin sending it'], ['today', "Today's date"],
@@ -26,13 +26,17 @@ const money = (v) => (v == null || v === '' || Number.isNaN(Number(v)) ? '' : Nu
 // Values the portal knows for this worker. Empty strings mean "unknown".
 export function knownValues(worker, sender, company = {}) {
   const w = worker || {};
-  const loading = w.worker_type === 'casual' ? `${Number(w.casual_loading_pct ?? 25)}%` : '';
+  // casual_loading_pct is stored as a fraction (0.25) since the MYOB split; older
+  // rows may hold 25. Either way the contract must read "25%", never "0.25%".
+  const rawLoading = Number(w.casual_loading_pct ?? 25);
+  const loading = w.worker_type === 'casual' ? `${Number.isNaN(rawLoading) ? 25 : (rawLoading <= 1 ? Math.round(rawLoading * 100) : rawLoading)}%` : '';
   return {
     worker_name: w.name || '', email: w.email || '', mobile: w.mobile || '', address: w.address || '',
     job_title: w.job_title || '', worker_type: w.worker_type || '', date_of_birth: fmtDate(w.date_of_birth),
     abn: w.subcontractor_abn || '', pay_rate: money(w.pay_rate_a ?? w.pay_rate_regular), casual_loading: loading,
     emergency_name: w.emergency_name || '', emergency_phone: w.emergency_phone || '',
     company_name: company.name || 'CBD Plant & Labour Pty Ltd', sender_name: (sender && sender.name) || '',
+    start_date: fmtDate(w.start_date),
     today: fmtDate(new Date().toISOString()),
   };
 }

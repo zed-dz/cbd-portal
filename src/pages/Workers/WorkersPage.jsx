@@ -73,10 +73,18 @@ function applyCasualLoading(f) {
   return { ...f, pay_rate_a: a.toFixed(2) };
 }
 
+// Local calendar date N days from today (null = next Monday), as YYYY-MM-DD.
+function quickDate(days) {
+  const d = new Date(); d.setHours(12, 0, 0, 0);
+  if (days == null) { const add = ((8 - d.getDay()) % 7) || 7; d.setDate(d.getDate() + add); }
+  else d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 const workerDefaults = {
   name: '', email: '', mobile: '', role: 'worker', job_title: '', licences: '',
   address: '', access_level: 'employee', status: 'available', app_status: 'Active',
-  site: '', client: '', worker_type: 'casual',
+  site: '', client: '', worker_type: 'casual', start_date: '',
   pay_rate_a: '', pay_rate_b: '', pay_rate_c: '',
   pay_rate_base: '', casual_loading: true,
   subcontractor_abn: '', qualified: false,
@@ -239,7 +247,7 @@ export function WorkersPage({ showToast, currentWorker }) {
       job_title: w.job_title || '', licences: dedupeLicences(w.licences || ''), address: w.address || '',
       access_level: w.access_level || 'employee', status: w.status,
       app_status: w.app_status || 'Active', site: w.site || '', client: w.client || '',
-      worker_type: w.worker_type || 'casual',
+      worker_type: w.worker_type || 'casual', start_date: w.start_date || '',
       pay_rate_a: w.pay_rate_a ?? w.pay_rate_regular ?? '',
       pay_rate_base: w.pay_rate_base ?? '',
       casual_loading: w.pay_rate_base != null ? w.casual_loading_pct != null : true,
@@ -304,6 +312,7 @@ export function WorkersPage({ showToast, currentWorker }) {
     const autoC = isSub || A == null ? null : +(A * 2).toFixed(2);
     const payload = {
       ...rest,
+      start_date: form.start_date || null,
       pay_rate_a: A,
       pay_rate_b: n(form.pay_rate_b) ?? autoB,
       pay_rate_c: n(form.pay_rate_c) ?? autoC,
@@ -790,7 +799,14 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
                 {WORKER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </Field>
-            <div /> {/* spacer */}
+            <Field label="Start date" hint={modal === 'add' ? 'Goes straight into the contract — with it the contract sends itself on save.' : 'Used by the employment contract.'}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                <input style={{ ...inputStyle, flex: '1 1 150px' }} type="date" value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} data-testid="worker-start-date" />
+                {[['Tomorrow', 1], ['Next Mon', null]].map(([lbl, days]) => (
+                  <button key={lbl} type="button" style={{ ...btnSmall, padding: '6px 10px' }} onClick={() => setForm(f => ({ ...f, start_date: quickDate(days) }))}>{lbl}</button>
+                ))}
+              </div>
+            </Field>
 
             <div style={{ gridColumn: '1 / -1', marginTop: 2, marginBottom: 2 }}>
               <label style={{

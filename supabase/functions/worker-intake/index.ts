@@ -34,7 +34,7 @@ const TOTAL_BUDGET_MS     = 125000;
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-digest-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 const json = (b: unknown, s = 200) =>
@@ -291,9 +291,52 @@ function b64(bytes: Uint8Array) {
   return btoa(s);
 }
 
+// ── Housekeeping (2026-11-09): staged photos are deleted after 30 days ──────
+// pg_cron (intake-cleanup-daily) posts here with the shared x-digest-secret
+// header — same guard as send-timesheet-bundle-daily. Lists every uid folder
+// in the bucket and removes the files older than INTAKE_RETENTION_DAYS. The
+// ticket photos the form attached were COPIED to cert-photos/<workerId>/ at
+// save time, so nothing a worker record points at is touched.
+const DIGEST_SECRET          = Deno.env.get('DIGEST_SECRET') || '';
+const INTAKE_RETENTION_DAYS  = 30;
+async function cleanupStale(): Promise<Response> {
+  const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+  const cutoff = Date.now() - INTAKE_RETENTION_DAYS * 86400000;
+  const { data: folders, error: fErr } = await sb.storage.from(BUCKET).list('', { limit: 1000 });
+  if (fErr) return json({ ok: false, error: fErr.message }, 500);
+  const stale: string[] = [];
+  for (const f of folders || []) {
+    if (f.id) continue;                      // a file at the root — not ours, leave it
+    const { data: files } = await sb.storage.from(BUCKET).list(f.name, { limit: 1000 });
+    for (const o of files || []) {
+      const t = Date.parse(o.created_at || o.updated_at || '');
+      if (o.id && t && t < cutoff) stale.push(`${f.name}/${o.name}`);
+    }
+  }
+  let removed = 0;
+  for (let i = 0; i < stale.length; i += 100) {
+    const batch = stale.slice(i, i + 100);
+    const { error } = await sb.storage.from(BUCKET).remove(batch);
+    if (error) return json({ ok: false, error: error.message, removed }, 500);
+    removed += batch.length;
+  }
+  if (removed) {
+    await sb.from('activity_events').insert([{
+      actor_id: null, actor_name: 'system', verb: 'intake cleanup', object_type: 'storage', object_id: null,
+      after: { bucket: BUCKET, removed, older_than_days: INTAKE_RETENTION_DAYS },
+    }]).then(({ error }) => { if (error) console.error('activity insert failed:', error.message); });
+  }
+  return json({ ok: true, removed, kept: stale.length - removed });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST')    return json({ error: 'method_not_allowed' }, 405);
+  const digest = req.headers.get('x-digest-secret');
+  if (digest !== null) {
+    if (!DIGEST_SECRET || digest !== DIGEST_SECRET) return json({ error: 'unauthorized' }, 401);
+    return cleanupStale();
+  }
   const started = Date.now();
   const deadline = started + TOTAL_BUDGET_MS;
 

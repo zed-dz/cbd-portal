@@ -225,6 +225,26 @@ function AppShell() {
     }
   }, [showToast]);
 
+  // Xero OAuth, leg 2 (2026-11-09): Xero sends the browser to xero-callback,
+  // which checks the state and bounces here with ?xero_finish=1&code=&state=.
+  // The exchange is finished from THIS logged-in tab, so the function can
+  // prove the person finishing is the admin who started. If nobody is logged
+  // in yet the query string stays put and this runs right after sign-in.
+  const xeroFinishRan = useRef(false);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('xero_finish') !== '1' || !session || xeroFinishRan.current) return;
+    xeroFinishRan.current = true;
+    const code = params.get('code'), state = params.get('state');
+    window.history.replaceState({}, '', window.location.pathname);
+    supabase.functions.invoke('xero-callback', { body: { code, state } })
+      .then(({ data, error }) => {
+        if (error || !data?.ok) showToast(`Xero connection failed: ${data?.error || error?.message || 'unknown'}`, 'error');
+        else showToast('Xero connected successfully!', 'success');
+      })
+      .catch(e => showToast(`Xero connection failed: ${e.message}`, 'error'));
+  }, [session, showToast]);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
