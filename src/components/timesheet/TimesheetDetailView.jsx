@@ -109,6 +109,20 @@ function StatusTimeline({ header }) {
   );
 }
 
+// Phones: the hours table hid Finish and Total behind a sideways scroll (supervisors missed the total).
+// Under 640 px each shift becomes a stacked card instead.
+function useNarrowScreen(px = 640) {
+  const q = `(max-width: ${px - 1}px)`;
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia(q).matches);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined;
+    const mq = window.matchMedia(q); const on = () => setNarrow(mq.matches);
+    on(); if (mq.addEventListener) mq.addEventListener('change', on); else mq.addListener(on);
+    return () => { if (mq.removeEventListener) mq.removeEventListener('change', on); else mq.removeListener(on); };
+  }, [q]);
+  return narrow;
+}
+
 // Full, client-presentable view of one daily timesheet (header + line rows).
 // Shows hours only — no pay or charge rates — so it's safe to hand to a client
 // or to the worker. Print/Save-PDF opens a light print-friendly window.
@@ -126,6 +140,7 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
   const totalOT    = sumBy(lines, lineOT);
   const totalMeal  = sumBy(lines, l => parseFloat(l.meal_allowance) || 0);
   const adjusted   = lines.filter(isAdjusted);
+  const narrow     = useNarrowScreen();
 
   // Plant used on this sheet (hours only; the plant charge is never read here).
   const [plant, setPlant] = useState([]);
@@ -179,6 +194,39 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
         ))}
       </div>
 
+      {narrow ? (
+        <div style={{ display: 'grid', gap: 8 }}>
+          {lines.map((l, i) => (
+            <div key={l.id || i} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+                  {dayFromDate(l.date) || ''} {fmtDate(l.date)}
+                  {isAdjusted(l) && <span title={`Adjusted by ${l.adjusted_by}`} style={{ color: C.warning, marginLeft: 4 }}>✎</span>}
+                  <span style={{ fontWeight: 500, color: C.textMuted }}> · {l.shift_type || 'Day'}</span>
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: C.text, whiteSpace: 'nowrap' }}>{Number(l.total_hours || 0).toFixed(2)} h</div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginTop: 8 }}>
+                {[['Start', fmtTime(l.start_time)], ['Break', l.total_break_hours ? `${l.total_break_hours}h` : (l.break_minutes ? `${l.break_minutes}m` : '—')], ['Finish', fmtTime(l.end_time)]].map(([k, v]) => (
+                  <div key={k}>
+                    <div style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>{k}</div>
+                    <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              {showPayDetail && (
+                <div style={{ fontSize: 12, color: C.textMuted, marginTop: 8 }}>
+                  Normal {Number(l.regular_hours ?? l.total_hours ?? 0).toFixed(2)} · RDO {lineRdo(l) > 0 ? lineRdo(l).toFixed(2) : '—'} · OT {lineOT(l) > 0 ? lineOT(l).toFixed(2) : '—'} · Meal {(parseFloat(l.meal_allowance) || 0) > 0 ? `$${Number(l.meal_allowance).toFixed(2)}` : '—'}
+                </div>
+              )}
+            </div>
+          ))}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '8px 12px', borderRadius: 10, border: `1px solid ${C.accent}` }}>
+            <span style={{ fontSize: 13, color: C.textMuted, fontWeight: 600 }}>Total hours</span>
+            <span style={{ fontSize: 20, fontWeight: 800, color: C.accent }}>{totalHours.toFixed(2)}</span>
+          </div>
+        </div>
+      ) : (
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
@@ -222,6 +270,7 @@ export function TimesheetDetailView({ header, lines = [], workerName, brand = BR
           </tfoot>
         </table>
       </div>
+      )}
 
       {adjusted.length > 0 && (
         <div style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 8, padding: '10px 14px', marginTop: 14 }}>
