@@ -13,6 +13,7 @@ import { PublicProfilePage } from './pages/PublicProfile/PublicProfilePage';
 import { OnboardProfilePage } from './pages/OnboardProfile/OnboardProfilePage';
 import { ApplyPage } from './pages/Apply/ApplyPage';
 import { ClientApprovePage } from './pages/ClientApprove/ClientApprovePage';
+import { ClientVideosPage } from './pages/ClientVideos/ClientVideosPage';
 import { OmniHelpBubble } from './components/help/OmniHelpBubble';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { OfflineBanner } from './components/OfflineBanner';
@@ -23,6 +24,7 @@ const PUBLIC_ROUTE_PATTERNS = [
   { kind: 'onboard',  re: /^\/onboard\/([0-9a-f-]{36})\/?$/i },
   { kind: 'apply',    re: /^\/apply\/?$/i },
   { kind: 'approvets', re: /^\/approve-ts\/([0-9a-f-]{36})\/?$/i },
+  { kind: 'videos',   re: /^\/videos\/([A-Za-z0-9]{10,40})\/?$/ },
 ];
 
 function matchPublicRoute(pathname) {
@@ -148,6 +150,7 @@ export default function App() {
          : publicRoute.kind === 'onboard' ? <OnboardProfilePage token={publicRoute.token} />
          : publicRoute.kind === 'apply'   ? <ApplyPage />
          : publicRoute.kind === 'approvets' ? <ClientApprovePage token={publicRoute.token} />
+         : publicRoute.kind === 'videos' ? <ClientVideosPage token={publicRoute.token} />
          : null}
       </ErrorBoundary>
     );
