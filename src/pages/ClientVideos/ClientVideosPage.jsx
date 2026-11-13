@@ -52,7 +52,7 @@ export function ClientVideosPage({ token }) {
         <div style={{ fontWeight: 800, fontSize: 15, letterSpacing: 0.3 }}>CBD <span style={{ color: C.accent }}>Plant &amp; Labour</span></div>
         <h1 style={{ fontSize: 'clamp(26px, 6vw, 40px)', lineHeight: 1.1, margin: '10px 0 6px' }}>Video guides</h1>
         <p style={{ color: C.textMuted, margin: '0 0 8px', fontSize: 15, maxWidth: 620 }}>
-          Short videos on how to use the CBD portal. Captions are on. Tap a video to play it.
+          Short videos on how to use the CBD portal. Captions are built in. Tap a video to play it.
         </p>
         {GROUPS.map(g => {
           const list = items.filter(i => i.group === g.key);
@@ -68,7 +68,7 @@ export function ClientVideosPage({ token }) {
                     <video controls playsInline preload="none" crossOrigin="anonymous" poster={`${BASE}/${token}/${v.slug}.jpg`}
                       style={{ width: '100%', aspectRatio: wide ? '16 / 9' : '9 / 16', background: '#000', borderRadius: 10, display: 'block' }}>
                       <source src={`${BASE}/${token}/${v.slug}.mp4`} type="video/mp4" />
-                      <track kind="captions" srcLang="en" label="English" src={`${BASE}/${token}/${v.slug}.vtt`} default />
+                      <track kind="captions" srcLang="en" label="English" src={`${BASE}/${token}/${v.slug}.vtt`} />
                     </video>
                     <figcaption style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '10px 4px 2px', fontSize: 14 }}>
                       <span style={{ fontWeight: 700 }}>{v.title}</span>
