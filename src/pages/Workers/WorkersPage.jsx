@@ -1009,7 +1009,8 @@ function isWorking(w) { return !!busyIds && busyIds.has(w.id); }
             </div>
           )}
 
-          {modal !== 'add' && payroll && (
+          {/* Pay data: money users only. Others could not save it anyway (RLS). */}
+          {modal !== 'add' && payroll && canSeeRates && (
             <SensitivePanel
               title="💵 Payroll Details"
               subtitle="Tax, bank, super. Only visible to admin / manager roles."
