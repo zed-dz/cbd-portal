@@ -394,10 +394,13 @@ export function WorkersPage({ showToast, currentWorker }) {
         if (rrErr) { showToast(`Rates by role: ${rrErr}`, 'error'); setSaving(false); return; }
       }
 
-      // Upsert sensitive details. RLS gates these — non-admin users won't
-      // even get the payroll/medical fields rendered in the modal, so this
-      // only runs when the admin can see them.
-      if (payroll) {
+      // Upsert sensitive details. Payroll (TFN, bank, super) is money data:
+      // RLS lets only money users (admin, not allocator) write it, and openEdit
+      // seeds an EMPTY_PAYROLL object for everyone, so a manager or allocator
+      // saving a worker hit "new row violates row-level security policy"
+      // (Zeff, 2026-11-20). Skip the write when this user cannot see pay.
+      // Medical stays: its policy allows admin and manager.
+      if (payroll && canSeeRates) {
         const blank = v => (v === '' || v == null) ? null : v;
         const { error: pErr } = await supabase.from('worker_payroll_details').upsert({
           worker_id:           modal.id,
